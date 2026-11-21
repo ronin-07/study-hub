@@ -66,6 +66,13 @@ class FirestoreStore:
 
 
 def get_store():
-    if os.getenv('STORAGE_BACKEND', 'sqlite') == 'firestore':
+    backend = os.getenv('STORAGE_BACKEND', 'sqlite')
+    if os.getenv('VERCEL') and (backend != 'firestore' or os.getenv('STUDY_HUB_AUTH_MODE') != 'firebase'):
+        # Never persist private study records in an ephemeral serverless SQLite file,
+        # or accidentally expose the local-only bypass on a public deployment.
+        raise RuntimeError('Vercel requires STORAGE_BACKEND=firestore and STUDY_HUB_AUTH_MODE=firebase')
+    if backend == 'firestore':
         return FirestoreStore()
+    if backend != 'sqlite':
+        raise RuntimeError('Unknown STORAGE_BACKEND')
     return SQLiteStore(os.getenv('SQLITE_PATH', './data/studyhub.sqlite3'))

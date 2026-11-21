@@ -1,4 +1,5 @@
 """Firebase token verification, localhost-only private development mode."""
+import json
 import os
 from dataclasses import dataclass
 from functools import lru_cache
@@ -15,12 +16,26 @@ class User:
 def firebase_app():
     import firebase_admin
     if not firebase_admin._apps:
-        firebase_admin.initialize_app()
+        raw = os.getenv('FIREBASE_SERVICE_ACCOUNT_JSON', '').strip()
+        if raw:
+            from firebase_admin import credentials
+            try:
+                service_account = json.loads(raw)
+                firebase_admin.initialize_app(credentials.Certificate(service_account))
+            except (ValueError, TypeError, KeyError) as exc:
+                raise RuntimeError('Invalid FIREBASE_SERVICE_ACCOUNT_JSON environment configuration') from exc
+        elif os.getenv('VERCEL'):
+            # Vercel does not automatically receive Google Cloud ADC.
+            raise RuntimeError('FIREBASE_SERVICE_ACCOUNT_JSON is required on Vercel')
+        else:
+            firebase_admin.initialize_app()
     return firebase_admin.get_app()
 
 
 async def current_user(request: Request, authorization: str | None = Header(default=None)) -> User:
     mode = os.getenv('STUDY_HUB_AUTH_MODE', 'local')
+    if os.getenv('VERCEL') and mode != 'firebase':
+        raise HTTPException(503, 'Cloud deployment requires Firebase authentication')
     if mode == 'local':
         host = request.client.host if request.client else ''
         if host not in ('127.0.0.1', '::1', 'localhost', 'testclient'):

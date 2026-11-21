@@ -14,7 +14,7 @@ from urllib.parse import urlencode
 import httpx
 from cryptography.fernet import Fernet
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import RedirectResponse, Response
+from fastapi.responses import RedirectResponse, StreamingResponse
 
 from .security import User, current_user
 
@@ -160,26 +160,63 @@ async def files(folder_id: str = 'root', page_token: str | None = None, user: Us
 
 @router.get('/files/{file_id}/pdf')
 async def pdf(file_id: str, user: User = Depends(current_user)):
+    """Stream Drive PDFs through our authenticated same-origin API.
+
+    Streaming avoids Vercel's buffered response limit and avoids holding large
+    Goodnotes PDFs in the Python process. Nothing is persisted on Vercel disk.
+    """
     if not DRIVE_ID.fullmatch(file_id):
         raise HTTPException(400, 'Invalid Google Drive file ID')
     token = await access_token(_store(), user.uid)
-    async with httpx.AsyncClient(timeout=60, follow_redirects=False) as client:
-        meta = await client.get(f'{DRIVE_FILES}/{file_id}', params={'fields': 'id,mimeType,size'}, headers={'Authorization': f'Bearer {token}'})
-        if meta.status_code != 200:
-            raise HTTPException(404, 'Cannot access this Google Drive file')
-        info = meta.json()
-        if info.get('mimeType') != 'application/pdf':
-            raise HTTPException(415, 'Only PDFs may be previewed')
-        if int(info.get('size', 0)) > 50 * 1024 * 1024:
-            raise HTTPException(413, 'PDF exceeds the 50 MB preview limit')
-        result = await client.get(f'{DRIVE_FILES}/{file_id}', params={'alt': 'media'}, headers={'Authorization': f'Bearer {token}'})
-    if result.status_code != 200:
-        raise HTTPException(502, f'Could not retrieve PDF ({result.status_code})')
-    if len(result.content) > 50 * 1024 * 1024:
+    headers = {'Authorization': f'Bearer {token}'}
+    async with httpx.AsyncClient(timeout=30) as meta_client:
+        meta = await meta_client.get(f'{DRIVE_FILES}/{file_id}',
+                                     params={'fields': 'id,mimeType,size'}, headers=headers)
+    if meta.status_code != 200:
+        raise HTTPException(404, 'Cannot access this Google Drive file')
+    info = meta.json()
+    if info.get('mimeType') != 'application/pdf':
+        raise HTTPException(415, 'Only PDFs may be previewed')
+    max_bytes = 50 * 1024 * 1024
+    if int(info.get('size', 0)) > max_bytes:
         raise HTTPException(413, 'PDF exceeds the 50 MB preview limit')
-    if not result.content.startswith(b'%PDF-'):
-        raise HTTPException(415, 'The file is not a valid PDF')
-    return Response(result.content, media_type='application/pdf', headers={'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Disposition': 'inline'})
+
+    client = httpx.AsyncClient(timeout=90, follow_redirects=False)
+    try:
+        request = client.build_request('GET', f'{DRIVE_FILES}/{file_id}',
+                                       params={'alt': 'media'}, headers=headers)
+        upstream = await client.send(request, stream=True)
+        if upstream.status_code != 200:
+            await upstream.aclose()
+            raise HTTPException(502, f'Could not retrieve PDF ({upstream.status_code})')
+        chunks = upstream.aiter_bytes(chunk_size=65536)
+        first = await anext(chunks, b'')
+        if not first.startswith(b'%PDF-'):
+            await upstream.aclose()
+            raise HTTPException(415, 'The file is not a valid PDF')
+    except Exception:
+        await client.aclose()
+        raise
+
+    async def read_chunks():
+        total = 0
+        try:
+            yield first
+            total += len(first)
+            async for chunk in chunks:
+                total += len(chunk)
+                if total > max_bytes:
+                    break
+                yield chunk
+        finally:
+            await upstream.aclose()
+            await client.aclose()
+
+    return StreamingResponse(
+        read_chunks(), media_type='application/pdf',
+        headers={'Cache-Control': 'private, no-store',
+                 'X-Content-Type-Options': 'nosniff',
+                 'Content-Disposition': 'inline'})
 
 
 @router.delete('/disconnect')
