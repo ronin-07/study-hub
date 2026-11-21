@@ -1,0 +1,122 @@
+from __future__ import annotations
+
+from datetime import date
+from typing import Literal
+from uuid import uuid4
+
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
+
+
+def new_id() -> str:
+    return uuid4().hex
+
+
+class BaseDocument(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    id: str = Field(default_factory=new_id, pattern=r'^[a-zA-Z0-9_-]{1,80}$')
+
+
+class Course(BaseDocument):
+    code: str = Field(min_length=2, max_length=40)
+    title: str = Field(min_length=1, max_length=180)
+    semester: str = Field(default='Autumn 2026', max_length=60)
+    week_count: int = Field(default=13, ge=1, le=30)
+
+
+class Week(BaseDocument):
+    course_id: str
+    number: int = Field(ge=1, le=30)
+    title: str = Field(min_length=1, max_length=180)
+    objectives: str = Field(default='', max_length=3000)
+
+
+ItemKind = Literal['lecture', 'notes', 'reading', 'revision', 'assignment', 'personal']
+
+
+class Item(BaseDocument):
+    title: str = Field(min_length=1, max_length=240)
+    kind: ItemKind = 'personal'
+    course_id: str | None = None
+    week_number: int | None = Field(default=None, ge=1, le=30)
+    is_task: bool = False
+    done: bool = False
+    submitted: bool = False
+    planned_date: date | None = None
+    due_date: date | None = None
+    priority: Literal['low', 'medium', 'high'] = 'medium'
+    notes: str = Field(default='', max_length=5000)
+
+    @model_validator(mode='after')
+    def coherent(self):
+        if self.kind == 'assignment' or self.planned_date is not None:
+            # Planning a study item makes it actionable in the single Tasks view.
+            self.is_task = True
+        if self.kind == 'personal':
+            self.course_id = None
+            self.week_number = None
+            self.is_task = True
+        if self.week_number is not None and self.course_id is None:
+            raise ValueError('A week must belong to a course')
+        if self.submitted and self.kind != 'assignment':
+            raise ValueError('Only an assignment may be marked submitted')
+        return self
+
+
+class ItemPatch(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    title: str | None = Field(default=None, min_length=1, max_length=240)
+    done: bool | None = None
+    submitted: bool | None = None
+    is_task: bool | None = None
+    planned_date: date | None = None
+    due_date: date | None = None
+    priority: Literal['low', 'medium', 'high'] | None = None
+    notes: str | None = Field(default=None, max_length=5000)
+
+
+class Resource(BaseDocument):
+    course_id: str
+    week_number: int = Field(ge=1, le=30)
+    title: str = Field(min_length=1, max_length=240)
+    kind: Literal['slides', 'annotated', 'handwritten', 'textbook', 'other'] = 'other'
+    source: Literal['drive', 'dtu', 'link']
+    url: HttpUrl | None = None
+    drive_file_id: str | None = Field(default=None, pattern=r'^[A-Za-z0-9_-]{5,200}$')
+    item_id: str | None = None
+    last_page: int = Field(default=1, ge=1, le=20000)
+
+    @model_validator(mode='after')
+    def valid_location(self):
+        if self.source == 'drive' and not self.drive_file_id:
+            raise ValueError('A Drive resource requires a Google Drive file ID')
+        if self.source != 'drive' and not self.url:
+            raise ValueError('A link resource needs an HTTP(S) URL')
+        return self
+
+
+class FocusSession(BaseDocument):
+    course_id: str | None = None
+    item_id: str | None = None
+    week_number: int | None = Field(default=None, ge=1, le=30)
+    mode: Literal['25', '50', '90', 'free'] = '50'
+    status: Literal['running', 'paused', 'finished'] = 'running'
+    started_at: int
+    pause_started_at: int | None = None
+    accumulated_pause_seconds: int = 0
+    ended_at: int | None = None
+    focus_seconds: int | None = None
+
+
+class StartFocus(BaseModel):
+    course_id: str | None = None
+    item_id: str | None = None
+    week_number: int | None = Field(default=None, ge=1, le=30)
+    mode: Literal['25', '50', '90', 'free'] = '50'
+
+
+class FinishFocus(BaseModel):
+    confirmed_seconds: int | None = Field(default=None, ge=0, le=86400)
+
+
+class ReadingPosition(BaseModel):
+    page: int = Field(ge=1, le=20000)
