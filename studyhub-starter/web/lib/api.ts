@@ -1,6 +1,7 @@
 import { type User } from 'firebase/auth';
 
-const BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000').replace(/\/$/, '');
+// '/' means same-origin requests: Vercel Services routes /api/* to FastAPI.
+const BASE = (process.env.NEXT_PUBLIC_API_URL || (process.env.NODE_ENV === 'production' ? '/' : 'http://127.0.0.1:8000')).replace(/\/$/, '');
 export async function api<T>(route: string, user: User | null, options?: { method?: string; body?: unknown }): Promise<T> {
   const token = user ? await user.getIdToken() : null;
   const res = await fetch(BASE + route, {

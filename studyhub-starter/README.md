@@ -1,5 +1,8 @@
 # Study Hub — Private personal study workspace (v0.3 Drive library)
 
+> **Cloud deployment update (v0.3.1):** The project can now be deployed as **one Vercel Services project** with Next.js + FastAPI, a dedicated Firebase Auth/Firestore backend, server-only Firebase credentials, and streamed Goodnotes PDFs. See **[Vercel & Firebase deployment guide](docs/deploy-vercel-firebase.md)** for exact dashboard and environment-variable steps. Cloud deployment has **not** been performed or tested against your accounts yet.
+
+
 A **standalone** application for DTU study planning, linked personal and course tasks, focus-time logging, Goodnotes Google Drive PDF backups and an in-app PDF viewer. **RepLap is not modified.**
 
 ## What is implemented
