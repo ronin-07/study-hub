@@ -21,6 +21,10 @@ class Course(BaseDocument):
     title: str = Field(min_length=1, max_length=180)
     semester: str = Field(default='Autumn 2026', max_length=60)
     week_count: int = Field(default=13, ge=1, le=30)
+    semester_id: str | None = None
+    exam_date: date | None = None
+    goals: str = Field(default='', max_length=2000)
+    archived: bool = False
 
 
 class Week(BaseDocument):
@@ -45,9 +49,15 @@ class Item(BaseDocument):
     due_date: date | None = None
     priority: Literal['low', 'medium', 'high'] = 'medium'
     notes: str = Field(default='', max_length=5000)
+    chapter: str = Field(default='', max_length=120)
+    page_start: int | None = Field(default=None, ge=1, le=20000)
+    page_end: int | None = Field(default=None, ge=1, le=20000)
+    resource_id: str | None = None  # Reference to a shared book/notebook or weekly PDF.
 
     @model_validator(mode='after')
     def coherent(self):
+        if self.page_start is not None and self.page_end is not None and self.page_end < self.page_start:
+            raise ValueError('End page cannot precede start page')
         if self.kind == 'assignment' or self.planned_date is not None:
             # Planning a study item makes it actionable in the single Tasks view.
             self.is_task = True
@@ -72,11 +82,15 @@ class ItemPatch(BaseModel):
     due_date: date | None = None
     priority: Literal['low', 'medium', 'high'] | None = None
     notes: str | None = Field(default=None, max_length=5000)
+    chapter: str | None = Field(default=None, max_length=120)
+    page_start: int | None = Field(default=None, ge=1, le=20000)
+    page_end: int | None = Field(default=None, ge=1, le=20000)
+    resource_id: str | None = None
 
 
 class Resource(BaseDocument):
     course_id: str
-    week_number: int = Field(ge=1, le=30)
+    week_number: int | None = Field(default=None, ge=1, le=30)  # None = shared Course Library.
     title: str = Field(min_length=1, max_length=240)
     kind: Literal['slides', 'annotated', 'handwritten', 'textbook', 'other'] = 'other'
     source: Literal['drive', 'dtu', 'link']
@@ -84,9 +98,16 @@ class Resource(BaseDocument):
     drive_file_id: str | None = Field(default=None, pattern=r'^[A-Za-z0-9_-]{5,200}$')
     item_id: str | None = None
     last_page: int = Field(default=1, ge=1, le=20000)
+    chapter: str = Field(default='', max_length=120)
+    page_start: int | None = Field(default=None, ge=1, le=20000)
+    page_end: int | None = Field(default=None, ge=1, le=20000)
 
     @model_validator(mode='after')
     def valid_location(self):
+        if self.week_number is None and self.item_id is not None:
+            raise ValueError('Shared course resources cannot be attached to one weekly item')
+        if self.page_start is not None and self.page_end is not None and self.page_end < self.page_start:
+            raise ValueError('End page cannot precede start page')
         if self.source == 'drive' and not self.drive_file_id:
             raise ValueError('A Drive resource requires a Google Drive file ID')
         if self.source != 'drive' and not self.url:

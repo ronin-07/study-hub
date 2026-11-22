@@ -1,3 +1,7 @@
+> **v0.4.1 development update (feature branch; not merged):** The Academic Planner now uses semester-first navigation, one semester field in course editing, archive/restore instead of permanent deletion, shared Course Library for textbooks/whole-course Goodnotes notebooks, week-specific lecture PDFs, and reading references into a shared source. **Do not deploy to Production until Preview checks pass.** See [v0.4.1 implementation and test plan](docs/v0.4.1-implementation.md).
+
+> **v0.4 development release:** Course/semester editing, split PDF reading workspace, linked lecture materials, preview isolation and CI. See [`docs/v0.4-implementation.md`](docs/v0.4-implementation.md) for source changes, test plan and deployment conditions.
+
 # Study Hub — Private personal study workspace (v0.3 Drive library)
 
 > **Cloud deployment update (v0.3.1):** The project can now be deployed as **one Vercel Services project** with Next.js + FastAPI, a dedicated Firebase Auth/Firestore backend, server-only Firebase credentials, and streamed Goodnotes PDFs. See **[Vercel & Firebase deployment guide](docs/deploy-vercel-firebase.md)** for exact dashboard and environment-variable steps. Cloud deployment has **not** been performed or tested against your accounts yet.

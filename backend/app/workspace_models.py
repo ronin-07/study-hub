@@ -1,0 +1,53 @@
+"""v0.4 backwards-compatible workspace update schemas."""
+from datetime import date
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
+from .models import BaseDocument
+
+
+class Semester(BaseDocument):
+    name: str = Field(min_length=1, max_length=60)
+    start_date: date | None = None
+    end_date: date | None = None
+
+    @model_validator(mode='after')
+    def coherent(self):
+        if self.start_date and self.end_date and self.start_date > self.end_date:
+            raise ValueError('Semester must end after it begins')
+        return self
+
+
+class SemesterPatch(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    name: str | None = Field(default=None, min_length=1, max_length=60)
+    start_date: date | None = None
+    end_date: date | None = None
+
+
+class CoursePatch(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    code: str | None = Field(default=None, min_length=2, max_length=40)
+    title: str | None = Field(default=None, min_length=1, max_length=180)
+    semester: str | None = Field(default=None, min_length=1, max_length=60)
+    semester_id: str | None = None
+    week_count: int | None = Field(default=None, ge=1, le=30)
+    exam_date: date | None = None
+    goals: str | None = Field(default=None, max_length=2000)
+
+
+class WeekPatch(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    title: str | None = Field(default=None, min_length=1, max_length=180)
+    objectives: str | None = Field(default=None, max_length=3000)
+
+
+class ResourcePatch(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    week_number: int | None = Field(default=None, ge=1, le=30)
+    title: str | None = Field(default=None, min_length=1, max_length=240)
+    kind: str | None = Field(default=None, pattern=r'^(slides|annotated|handwritten|textbook|other)$')
+    item_id: str | None = None
+    chapter: str | None = Field(default=None, max_length=120)
+    page_start: int | None = Field(default=None, ge=1, le=20000)
+    page_end: int | None = Field(default=None, ge=1, le=20000)
+    # Source file/URL is immutable. Week scope can change without moving or copying the source.
+
