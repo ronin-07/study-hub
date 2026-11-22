@@ -48,6 +48,8 @@ class Item(BaseDocument):
     planned_date: date | None = None
     due_date: date | None = None
     priority: Literal['low', 'medium', 'high'] = 'medium'
+    repeat: Literal['none', 'daily', 'weekly', 'monthly'] = 'none'
+    repeat_series_id: str | None = Field(default=None, max_length=80)
     notes: str = Field(default='', max_length=5000)
     chapter: str = Field(default='', max_length=120)
     page_start: int | None = Field(default=None, ge=1, le=20000)
@@ -58,7 +60,7 @@ class Item(BaseDocument):
     def coherent(self):
         if self.page_start is not None and self.page_end is not None and self.page_end < self.page_start:
             raise ValueError('End page cannot precede start page')
-        if self.kind == 'assignment' or self.planned_date is not None:
+        if self.kind == 'assignment' or self.planned_date is not None or self.due_date is not None:
             # Planning a study item makes it actionable in the single Tasks view.
             self.is_task = True
         if self.kind == 'personal':
@@ -67,6 +69,11 @@ class Item(BaseDocument):
             self.is_task = True
         if self.week_number is not None and self.course_id is None:
             raise ValueError('A week must belong to a course')
+        if self.repeat != 'none':
+            if self.planned_date is None:
+                raise ValueError('Repeating tasks require a planned date')
+            if self.kind == 'assignment':
+                raise ValueError('Use individual deadlines for assignments rather than repetition')
         if self.submitted and self.kind != 'assignment':
             raise ValueError('Only an assignment may be marked submitted')
         return self
@@ -81,6 +88,7 @@ class ItemPatch(BaseModel):
     planned_date: date | None = None
     due_date: date | None = None
     priority: Literal['low', 'medium', 'high'] | None = None
+    repeat: Literal['none', 'daily', 'weekly', 'monthly'] | None = None
     notes: str | None = Field(default=None, max_length=5000)
     chapter: str | None = Field(default=None, max_length=120)
     page_start: int | None = Field(default=None, ge=1, le=20000)
@@ -133,6 +141,18 @@ class StartFocus(BaseModel):
     item_id: str | None = None
     week_number: int | None = Field(default=None, ge=1, le=30)
     mode: Literal['25', '50', '90', 'free'] = '50'
+    requested_at: int | None = Field(default=None, ge=1)
+
+
+class PauseFocus(BaseModel):
+    # A voluntary downward correction prevents API latency from adding focus time.
+    # Never permit an increase beyond the server-calculated unpaused duration.
+    displayed_seconds: int | None = Field(default=None, ge=0, le=86400)
+
+
+class ResumeFocus(BaseModel):
+    # Optional click timestamp to prevent network latency extending a pause.
+    requested_at: int | None = Field(default=None, ge=1)
 
 
 class FinishFocus(BaseModel):

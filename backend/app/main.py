@@ -3,19 +3,21 @@ from __future__ import annotations
 
 import os
 import time
+import asyncio
 from datetime import date
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import ValidationError
 
 from .workspace_models import Semester
-from .models import Course, FocusSession, FinishFocus, Item, ItemPatch, ReadingPosition, Resource, StartFocus, Week
+from .models import Course, FocusSession, FinishFocus, Item, ItemPatch, PauseFocus, ResumeFocus, ReadingPosition, Resource, StartFocus, Week
 from .security import User, current_user, firebase_app
 from .deployment import validate_deployment_environment
-from .storage import get_store
+from .storage import (ActiveSessionExists, DocumentAlreadyExists, DocumentMissing,
+                      SessionStateConflict, get_store)
 
 validate_deployment_environment()
 
@@ -23,7 +25,17 @@ if os.getenv('STUDY_HUB_AUTH_MODE', 'local') == 'firebase' or os.getenv('STORAGE
     firebase_app()
 
 app_store = get_store()
-app = FastAPI(title='Study Hub API', version='0.4.1')
+app = FastAPI(title='Study Hub API', version='0.5.0')
+
+@app.middleware('http')
+async def api_server_timing(request: Request, call_next):
+    started = time.perf_counter()
+    response = await call_next(request)
+    if request.url.path.startswith('/api/'):
+        response.headers['Server-Timing'] = f'api;dur={(time.perf_counter()-started)*1000:.1f}'
+        response.headers['Cache-Control'] = 'private, no-store'
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+    return response
 if os.getenv('STUDY_HUB_AUTH_MODE', 'local') == 'local':
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=['127.0.0.1', 'localhost', 'testserver'])
 app.add_middleware(CORSMiddleware,
@@ -33,17 +45,13 @@ app.add_middleware(CORSMiddleware,
 
 from .drive import router as drive_router  # noqa: E402
 app.include_router(drive_router)
-from .workspace import router as workspace_router, ensure_course_active, validate_item_reference  # noqa: E402
+from .workspace import router as workspace_router, ensure_course_active, validate_item_reference, normalized_code  # noqa: E402
 app.include_router(workspace_router)
 
 
 def all_docs(uid: str, kind: str) -> list[dict]:
     return app_store.list(uid, kind)
 
-
-def exists(uid: str, kind: str, identifier: str):
-    if not app_store.get(uid, kind, identifier):
-        raise HTTPException(404, f'{kind} not found')
 
 
 def validate_context(uid: str, course_id: str | None, week_number: int | None):
@@ -63,124 +71,232 @@ async def health():
 
 
 @app.get('/api/snapshot')
-async def snapshot(user: User = Depends(current_user)):
-    return {kind: all_docs(user.uid, kind) for kind in ('courses', 'weeks', 'items', 'resources', 'sessions', 'semesters')}
+async def snapshot(user: User = Depends(current_user), compact: bool = False,
+                   week_start: int | None = Query(default=None, ge=0)):
+    # Old clients retain the complete-session response. New clients opt into a
+    # compact view with persistent totals and only relevant session history.
+    kinds = ('courses', 'weeks', 'items', 'resources', 'semesters') if compact else (
+        'courses', 'weeks', 'items', 'resources', 'sessions', 'semesters')
+    if compact:
+        now = int(time.time())
+        if week_start is None or week_start < now - 8 * 86400 or week_start > now + 86400:
+            raise HTTPException(422, 'week_start must be the start of the current local week')
+    if os.getenv('STORAGE_BACKEND') == 'firestore':
+        tasks = [asyncio.to_thread(all_docs, user.uid, kind) for kind in kinds]
+        if compact:
+            tasks.append(asyncio.to_thread(app_store.focus_overview, user.uid, week_start))
+        rows = await asyncio.gather(*tasks)
+    else:
+        rows = [all_docs(user.uid, kind) for kind in kinds]
+        if compact:
+            rows.append(app_store.focus_overview(user.uid, week_start))
+    result = dict(zip(kinds, rows))
+    if compact:
+        result.update(rows[-1])
+    return result
+
+
+@app.get('/api/items', response_model=list[Item])
+def list_items(user: User = Depends(current_user)):
+    return all_docs(user.uid, 'items')
 
 
 @app.post('/api/courses', response_model=Course, status_code=201)
-async def add_course(value: Course, user: User = Depends(current_user)):
-    if value.semester_id:
-        semester = app_store.get(user.uid, 'semesters', value.semester_id)
+def add_course(value: Course, user: User = Depends(current_user)):
+    if not value.semester_id:
+        raise HTTPException(422, 'A registered semester_id is required')
+    value.code = value.code.strip()
+    if not value.code:
+        raise HTTPException(422, 'Course code cannot be blank')
+
+    def operation(tx):
+        semester = tx.get('semesters', value.semester_id)
         if not semester:
-            raise HTTPException(404, 'Semester not found')
+            raise HTTPException(422, 'Semester does not exist')
         value.semester = semester['name']
-    app_store.put(user.uid, 'courses', value.model_dump(mode='json'))
-    return value
+        if any(c.get('semester_id') == value.semester_id
+               and normalized_code(c.get('code', '')) == normalized_code(value.code)
+               for c in tx.list('courses')):
+            raise HTTPException(409, 'Course code already exists in this semester')
+        tx.create('courses', value.model_dump(mode='json'))
+        return value
+
+    try:
+        return app_store.workspace_atomic(user.uid, operation)
+    except DocumentAlreadyExists:
+        raise HTTPException(409, 'Course ID already exists') from None
 
 
 @app.post('/api/weeks', response_model=Week, status_code=201)
-async def add_week(value: Week, user: User = Depends(current_user)):
-    validate_context(user.uid, value.course_id, value.number)
-    for week in all_docs(user.uid, 'weeks'):
-        if week['course_id'] == value.course_id and week['number'] == value.number:
+def add_week(value: Week, user: User = Depends(current_user)):
+    def operation(tx):
+        course = tx.get('courses', value.course_id)
+        if not course:
+            raise HTTPException(404, 'courses not found')
+        if course.get('archived', False):
+            raise HTTPException(409, 'Course is archived; restore it before making changes')
+        if value.number > course['week_count']:
+            raise HTTPException(422, 'Week exceeds course length')
+        if any(w.get('course_id') == value.course_id and w['number'] == value.number
+               for w in tx.list('weeks')):
             raise HTTPException(409, 'This course week already exists')
-    app_store.put(user.uid, 'weeks', value.model_dump(mode='json'))
-    return value
+        tx.create('weeks', value.model_dump(mode='json'))
+        return value
+
+    try:
+        return app_store.workspace_atomic(user.uid, operation)
+    except DocumentAlreadyExists:
+        raise HTTPException(409, 'Week ID already exists') from None
 
 
 @app.post('/api/items', response_model=Item, status_code=201)
-async def add_item(value: Item, user: User = Depends(current_user)):
-    validate_context(user.uid, value.course_id, value.week_number)
-    validate_item_reference(user.uid, value.course_id, value.week_number, value.resource_id)
-    app_store.put(user.uid, 'items', value.model_dump(mode='json'))
-    return value
+def add_item(value: Item, user: User = Depends(current_user)):
+    if value.planned_date and value.due_date and value.planned_date > value.due_date:
+        raise HTTPException(422, 'Planned work date cannot be after the deadline')
+
+    def operation(tx):
+        if value.week_number is not None and not value.course_id:
+            raise HTTPException(422, 'Week requires course')
+        if value.course_id:
+            course = tx.get('courses', value.course_id)
+            if not course:
+                raise HTTPException(404, 'courses not found')
+            if course.get('archived', False):
+                raise HTTPException(409, 'Course is archived; restore it before making changes')
+            if value.week_number is not None and value.week_number > course['week_count']:
+                raise HTTPException(422, 'Week exceeds course length')
+        if value.resource_id:
+            resource = tx.get('resources', value.resource_id)
+            if not resource:
+                raise HTTPException(404, 'resources not found')
+            if not value.course_id or resource['course_id'] != value.course_id:
+                raise HTTPException(422, 'Referenced resource belongs to another course')
+            if resource.get('week_number') is not None and resource['week_number'] != value.week_number:
+                raise HTTPException(422, 'Referenced weekly resource belongs to another week')
+        tx.create('items', value.model_dump(mode='json'))
+        return value
+
+    try:
+        return app_store.workspace_atomic(user.uid, operation)
+    except DocumentAlreadyExists:
+        raise HTTPException(409, 'Item ID already exists') from None
 
 
 @app.patch('/api/items/{identifier}', response_model=Item)
-async def patch_item(identifier: str, updates: ItemPatch, user: User = Depends(current_user)):
-    original = app_store.get(user.uid, 'items', identifier)
-    if not original:
-        raise HTTPException(404, 'Item not found')
-    if original.get('course_id'):
-        ensure_course_active(user.uid, original['course_id'])
-    merged = {**original, **updates.model_dump(exclude_unset=True, mode='json')}
-    validate_item_reference(user.uid, merged.get('course_id'), merged.get('week_number'), merged.get('resource_id'))
-    try:
-        value = Item.model_validate(merged)
-    except ValidationError as exc:
-        raise HTTPException(422, str(exc)) from None
-    app_store.put(user.uid, 'items', value.model_dump(mode='json'))
-    return value
+def patch_item(identifier: str, updates: ItemPatch, user: User = Depends(current_user)):
+    fields = updates.model_dump(exclude_unset=True, mode='json')
 
+    def update(original: dict) -> tuple[dict, dict | None]:
+        if original.get('course_id'):
+            ensure_course_active(user.uid, original['course_id'])
+        merged = {**original, **fields}
+        # Enforce on date changes but keep legacy records completable/editable.
+        if ('planned_date' in fields or 'due_date' in fields) and merged.get('planned_date') and merged.get('due_date') and merged['planned_date'] > merged['due_date']:
+            raise HTTPException(422, 'Planned work date cannot be after the deadline')
+        validate_item_reference(user.uid, merged.get('course_id'), merged.get('week_number'), merged.get('resource_id'))
+        try:
+            value = Item.model_validate(merged)
+        except ValidationError as exc:
+            raise HTTPException(422, str(exc)) from None
+        successor = None
+        if not original.get('done', False) and value.done and value.repeat != 'none':
+            from .recurrence import next_occurrence
+            successor = next_occurrence(value).model_dump(mode='json')
+        return value.model_dump(mode='json'), successor
+
+    try:
+        result = app_store.update_item_atomic(user.uid, identifier, update)
+    except DocumentMissing:
+        raise HTTPException(404, 'Item not found') from None
+    return Item.model_validate(result)
 
 @app.delete('/api/items/{identifier}', status_code=204)
-async def delete_item(identifier: str, user: User = Depends(current_user)):
-    item = app_store.get(user.uid, 'items', identifier)
-    if not item: raise HTTPException(404, 'Item not found')
-    if item.get('course_id'): ensure_course_active(user.uid, item['course_id'])
-    if any(r.get('item_id') == identifier for r in all_docs(user.uid, 'resources')):
-        raise HTTPException(409, 'Detach linked PDF resources before deleting this study item')
-    app_store.delete(user.uid, 'items', identifier)
+def delete_item(identifier: str, user: User = Depends(current_user)):
+    def operation(tx):
+        item = tx.get('items', identifier)
+        if not item:
+            raise HTTPException(404, 'Item not found')
+        if item.get('course_id'):
+            course = tx.get('courses', item['course_id'])
+            if not course:
+                raise HTTPException(404, 'courses not found')
+            if course.get('archived', False):
+                raise HTTPException(409, 'Course is archived; restore it before making changes')
+        if any(r.get('item_id') == identifier for r in tx.list('resources')):
+            raise HTTPException(409, 'Detach linked PDF resources before deleting this study item')
+        tx.delete('items', identifier)
+
+    app_store.workspace_atomic(user.uid, operation)
 
 
 @app.post('/api/resources', response_model=Resource, status_code=201)
-async def add_resource(value: Resource, user: User = Depends(current_user)):
-    validate_context(user.uid, value.course_id, value.week_number)
-    if value.item_id:
-        linked_item = app_store.get(user.uid, 'items', value.item_id)
-        if not linked_item:
-            raise HTTPException(404, 'Linked study item not found')
-        if linked_item.get('course_id') != value.course_id or linked_item.get('week_number') != value.week_number:
-            raise HTTPException(422, 'Linked study item belongs to a different course/week')
-    if value.source == 'drive':
-        for existing in all_docs(user.uid, 'resources'):
-            if (existing.get('source') == 'drive'
-                    and existing.get('drive_file_id') == value.drive_file_id
-                    and existing.get('course_id') == value.course_id
-                    and (existing.get('week_number') == value.week_number
-                         or existing.get('week_number') is None or value.week_number is None)):
+def add_resource(value: Resource, user: User = Depends(current_user)):
+    def operation(tx):
+        course = tx.get('courses', value.course_id)
+        if not course:
+            raise HTTPException(404, 'courses not found')
+        if course.get('archived', False):
+            raise HTTPException(409, 'Course is archived; restore it before making changes')
+        if value.week_number is not None and value.week_number > course['week_count']:
+            raise HTTPException(422, 'Week exceeds course length')
+        if value.item_id:
+            item = tx.get('items', value.item_id)
+            if not item:
+                raise HTTPException(404, 'Linked study item not found')
+            if item.get('course_id') != value.course_id or item.get('week_number') != value.week_number:
+                raise HTTPException(422, 'Linked study item belongs to a different course/week')
+        if value.source == 'drive':
+            if any(existing.get('source') == 'drive'
+                   and existing.get('drive_file_id') == value.drive_file_id
+                   and existing.get('course_id') == value.course_id
+                   and (existing.get('week_number') == value.week_number
+                        or existing.get('week_number') is None or value.week_number is None)
+                   for existing in tx.list('resources')):
                 raise HTTPException(409, 'This PDF is already linked to that course and week')
-    app_store.put(user.uid, 'resources', value.model_dump(mode='json'))
-    return value
+        tx.create('resources', value.model_dump(mode='json'))
+        return value
+
+    try:
+        return app_store.workspace_atomic(user.uid, operation)
+    except DocumentAlreadyExists:
+        raise HTTPException(409, 'Resource ID already exists') from None
 
 
 @app.patch('/api/resources/{identifier}/reading-position', response_model=Resource)
-async def update_reading_position(identifier: str, value: ReadingPosition, user: User = Depends(current_user)):
-    entry = app_store.get(user.uid, 'resources', identifier)
-    if not entry:
-        raise HTTPException(404, 'Resource not found')
-    # Saving a reading bookmark is allowed on archived, read-only courses.
-    entry['last_page'] = value.page
-    app_store.put(user.uid, 'resources', entry)
-    return Resource.model_validate(entry)
+def update_reading_position(identifier: str, value: ReadingPosition, user: User = Depends(current_user)):
+    def operation(tx):
+        entry = tx.get('resources', identifier)
+        if not entry:
+            raise HTTPException(404, 'Resource not found')
+        # Bookmarks remain editable for archived courses. Merge with the latest
+        # persisted resource so a concurrent title/edit is not overwritten.
+        entry['last_page'] = value.page
+        tx.put('resources', entry)
+        return Resource.model_validate(entry)
+
+    return app_store.workspace_atomic(user.uid, operation)
 
 
 @app.delete('/api/resources/{identifier}', status_code=204)
-async def delete_resource(identifier: str, user: User = Depends(current_user)):
-    entry = app_store.get(user.uid, 'resources', identifier)
-    if not entry: raise HTTPException(404, 'Resource not found')
-    ensure_course_active(user.uid, entry['course_id'])
-    if any(i.get('resource_id') == identifier for i in all_docs(user.uid, 'items')):
-        raise HTTPException(409, 'Unlink this resource from study items before removing it')
-    app_store.delete(user.uid, 'resources', identifier)
+def delete_resource(identifier: str, user: User = Depends(current_user)):
+    def operation(tx):
+        entry = tx.get('resources', identifier)
+        if not entry:
+            raise HTTPException(404, 'Resource not found')
+        course = tx.get('courses', entry['course_id'])
+        if not course:
+            raise HTTPException(404, 'courses not found')
+        if course.get('archived', False):
+            raise HTTPException(409, 'Course is archived; restore it before making changes')
+        if any(i.get('resource_id') == identifier for i in tx.list('items')):
+            raise HTTPException(409, 'Unlink this resource from study items before removing it')
+        tx.delete('resources', identifier)
+
+    app_store.workspace_atomic(user.uid, operation)
 
 
 def now_s():
     return int(time.time())
-
-
-def active_session(uid: str):
-    for entry in all_docs(uid, 'sessions'):
-        if entry['status'] in ('running', 'paused'):
-            return entry
-    return None
-
-
-def session_or_404(uid: str, identifier: str):
-    session = app_store.get(uid, 'sessions', identifier)
-    if not session:
-        raise HTTPException(404, 'Session not found')
-    return session
 
 
 def focus_seconds(session: dict, now: int):
@@ -191,9 +307,7 @@ def focus_seconds(session: dict, now: int):
 
 
 @app.post('/api/sessions/start', response_model=FocusSession, status_code=201)
-async def start_session(value: StartFocus, user: User = Depends(current_user)):
-    if active_session(user.uid):
-        raise HTTPException(409, 'A focus session is already active; resume or finish it first')
+def start_session(value: StartFocus, user: User = Depends(current_user)):
     validate_context(user.uid, value.course_id, value.week_number)
     if value.item_id:
         item = app_store.get(user.uid, 'items', value.item_id)
@@ -209,56 +323,101 @@ async def start_session(value: StartFocus, user: User = Depends(current_user)):
         if value.week_number is None and item.get('week_number'):
             value.week_number = item['week_number']
     if value.course_id: ensure_course_active(user.uid, value.course_id)
-    session = FocusSession(**value.model_dump(), started_at=now_s())
-    app_store.put(user.uid, 'sessions', session.model_dump(mode='json'))
+    timestamp = now_s()
+    # Accept up to five seconds of network latency, but never trust an arbitrary
+    # client-supplied start time. Old callers that omit requested_at are unchanged.
+    started_at = max(timestamp - 5, min(timestamp, value.requested_at)) if value.requested_at is not None else timestamp
+    session = FocusSession(**value.model_dump(exclude={'requested_at'}), started_at=started_at)
+    try:
+        app_store.start_focus_atomic(user.uid, session.model_dump(mode='json'))
+    except ActiveSessionExists:
+        raise HTTPException(409, 'A focus session is already active; resume or finish it first') from None
+    except SessionStateConflict:
+        raise HTTPException(409, 'Course is no longer available for Focus; refresh and retry') from None
     return session
 
 
+def update_focus_or_error(uid: str, identifier: str, mutate):
+    try:
+        return app_store.update_focus_atomic(uid, identifier, mutate)
+    except DocumentMissing:
+        raise HTTPException(404, 'Session not found') from None
+    except SessionStateConflict:
+        raise HTTPException(409, 'Session state is inconsistent; refresh and retry') from None
+
+
 @app.post('/api/sessions/{identifier}/pause', response_model=FocusSession)
-async def pause_session(identifier: str, user: User = Depends(current_user)):
-    entry = session_or_404(user.uid, identifier)
-    if entry['status'] != 'running':
-        raise HTTPException(409, 'Only a running session can be paused')
-    entry['status'] = 'paused'
-    entry['pause_started_at'] = now_s()
-    app_store.put(user.uid, 'sessions', entry)
-    return entry
+def pause_session(identifier: str, value: PauseFocus | None = None, user: User = Depends(current_user)):
+    timestamp = now_s()
+
+    def pause(entry: dict) -> dict:
+        if entry['status'] != 'running':
+            raise HTTPException(409, 'Only a running session can be paused')
+        # The user's stopwatch stops on click, not when the server response arrives.
+        # A caller can only shorten focus time; inflating it is not allowed.
+        if value is not None and value.displayed_seconds is not None:
+            actual = focus_seconds(entry, timestamp)
+            corrected = min(value.displayed_seconds, actual)
+            entry['accumulated_pause_seconds'] += actual - corrected
+        entry['status'] = 'paused'
+        entry['pause_started_at'] = timestamp
+        return entry
+
+    return update_focus_or_error(user.uid, identifier, pause)
 
 
 @app.post('/api/sessions/{identifier}/resume', response_model=FocusSession)
-async def resume_session(identifier: str, user: User = Depends(current_user)):
-    entry = session_or_404(user.uid, identifier)
-    if entry['status'] != 'paused':
-        raise HTTPException(409, 'Only a paused session can be resumed')
-    entry['accumulated_pause_seconds'] += max(0, now_s() - entry['pause_started_at'])
-    entry['pause_started_at'] = None
-    entry['status'] = 'running'
-    app_store.put(user.uid, 'sessions', entry)
-    return entry
+def resume_session(identifier: str, value: ResumeFocus | None = None, user: User = Depends(current_user)):
+    timestamp = now_s()
+
+    def resume(entry: dict) -> dict:
+        if entry['status'] != 'paused':
+            raise HTTPException(409, 'Only a paused session can be resumed')
+        # Count the pause only until the user clicked Resume, not until this
+        # request reached Vercel. Clamp to a five-second trust window.
+        requested = value.requested_at if value is not None else None
+        resumed_at = max(timestamp - 5, min(timestamp, requested)) if requested is not None else timestamp
+        resumed_at = max(entry['pause_started_at'], resumed_at)
+        entry['accumulated_pause_seconds'] += max(0, resumed_at - entry['pause_started_at'])
+        entry['pause_started_at'] = None
+        entry['status'] = 'running'
+        return entry
+
+    return update_focus_or_error(user.uid, identifier, resume)
 
 
 @app.post('/api/sessions/{identifier}/finish', response_model=FocusSession)
-async def finish_session(identifier: str, value: FinishFocus, user: User = Depends(current_user)):
-    entry = session_or_404(user.uid, identifier)
-    if entry['status'] == 'finished':
-        raise HTTPException(409, 'Session already finished')
+def finish_session(identifier: str, value: FinishFocus, user: User = Depends(current_user)):
     timestamp = now_s()
-    calculated = focus_seconds(entry, timestamp)
-    if value.confirmed_seconds is not None:
-        # Manual correction must never exceed total elapsed wall time.
-        if value.confirmed_seconds > timestamp - entry['started_at']:
-            raise HTTPException(422, 'Confirmed focus time cannot exceed elapsed time')
-    entry['focus_seconds'] = calculated if value.confirmed_seconds is None else value.confirmed_seconds
-    entry['ended_at'] = timestamp
-    entry['status'] = 'finished'
-    entry['pause_started_at'] = None
-    app_store.put(user.uid, 'sessions', entry)
-    return entry
+
+    def finish(entry: dict) -> dict:
+        if entry['status'] == 'finished':
+            raise HTTPException(409, 'Session already finished')
+        calculated = focus_seconds(entry, timestamp)
+        if value.confirmed_seconds is not None and value.confirmed_seconds > calculated:
+            raise HTTPException(422, 'Confirmed focus time cannot exceed unpaused time')
+        confirmed = calculated if value.confirmed_seconds is None else value.confirmed_seconds
+        if confirmed == 0:
+            raise HTTPException(422, 'A zero-duration session cannot be saved; discard it instead')
+        entry['focus_seconds'] = confirmed
+        entry['ended_at'] = timestamp
+        entry['status'] = 'finished'
+        entry['pause_started_at'] = None
+        return entry
+
+    return update_focus_or_error(user.uid, identifier, finish)
 
 
 @app.delete('/api/sessions/{identifier}', status_code=204)
-async def delete_session(identifier: str, user: User = Depends(current_user)):
-    session = session_or_404(user.uid, identifier)
+def delete_session(identifier: str, user: User = Depends(current_user)):
+    session = app_store.get(user.uid, 'sessions', identifier)
+    if not session:
+        raise HTTPException(404, 'Session not found')
     if session.get('course_id'):
         ensure_course_active(user.uid, session['course_id'])
-    app_store.delete(user.uid, 'sessions', identifier)
+    try:
+        app_store.delete_focus_atomic(user.uid, identifier)
+    except DocumentMissing:
+        raise HTTPException(404, 'Session not found') from None
+    except SessionStateConflict:
+        raise HTTPException(409, 'Session state is inconsistent; refresh and retry') from None

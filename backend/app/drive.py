@@ -1,5 +1,6 @@
 """Google Drive OAuth for a single-user private app; encrypted tokens never leave backend."""
 from __future__ import annotations
+import asyncio
 
 import base64
 import hashlib
@@ -241,8 +242,7 @@ async def pdf(file_id: str, user: User = Depends(current_user)):
 @router.delete('/disconnect')
 async def disconnect(user: User = Depends(current_user)):
     _store().delete(user.uid, 'secrets', 'drive-token')
-    for record in _store().list(user.uid, 'drive-index'):
-        _store().delete(user.uid, 'drive-index', record['id'])
+    await asyncio.to_thread(_store().sync_index, user.uid, {})
     _store().delete(user.uid, 'drive-settings', 'source-folder')
     return {'ok': True, 'note': 'Local token removed; revoke app access in your Google Account if desired'}
 
@@ -267,7 +267,7 @@ def _selected_folder(store, uid):
     return store.get(uid, 'drive-settings', 'source-folder')
 
 
-def _index_results(store, uid):
+def _index_results(store, uid, indexed=None):
     from .main import all_docs
     courses = [c for c in all_docs(uid, 'courses') if not c.get('archived', False)]
     weeks = all_docs(uid, 'weeks')
@@ -280,7 +280,7 @@ def _index_results(store, uid):
                 'week_number': entry['week_number']
             })
     result = []
-    for item in store.list(uid, 'drive-index'):
+    for item in (indexed if indexed is not None else store.list(uid, 'drive-index')):
         result.append({**item, 'suggestion': suggest(item['path'], item['name'], courses, weeks),
                        'links': linked.get(item['id'], [])})
     return sorted(result, key=lambda f: (f['path'].casefold(), f['name'].casefold()))
@@ -307,8 +307,7 @@ async def choose_source_folder(value: SourceFolder, user: User = Depends(current
         raise HTTPException(422, 'Choose an existing Google Drive folder')
     old = _selected_folder(store, user.uid)
     if not old or old['folder_id'] != value.folder_id:
-        for entry in store.list(user.uid, 'drive-index'):
-            store.delete(user.uid, 'drive-index', entry['id'])
+        await asyncio.to_thread(store.sync_index, user.uid, {})
     setting = {'id': 'source-folder', 'folder_id': value.folder_id,
                'name': info.get('name') or 'Goodnotes backup',
                'scanned_at': old.get('scanned_at') if old and old['folder_id'] == value.folder_id else None}
@@ -381,14 +380,11 @@ async def scan_backup(user: User = Depends(current_user)):
                         raise HTTPException(413, f'Backup contains more than {MAX_SCAN_FILES} PDFs; choose a smaller folder')
     # Persist metadata only after the entire scan succeeds, so failed scans
     # don't remove a previous good index.
-    for old in store.list(user.uid, 'drive-index'):
-        if old['id'] not in found:
-            store.delete(user.uid, 'drive-index', old['id'])
-    for item in found.values():
-        store.put(user.uid, 'drive-index', item)
+    changes = await asyncio.to_thread(store.sync_index, user.uid, found)
     folder['scanned_at'] = int(time.time())
-    store.put(user.uid, 'drive-settings', folder)
-    return {'scanned_at': folder['scanned_at'], 'count': len(found), 'files': _index_results(store, user.uid)}
+    await asyncio.to_thread(store.put, user.uid, 'drive-settings', folder)
+    return {'scanned_at': folder['scanned_at'], 'count': len(found), 'changes': changes,
+            'files': await asyncio.to_thread(_index_results, store, user.uid, list(found.values()))}
 
 
 @router.get('/index')

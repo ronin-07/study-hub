@@ -1,57 +1,164 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { User } from 'firebase/auth';
 import {
   ArrowLeft, ArrowRight, BookOpen, CalendarDays, Check, CheckCircle2, ChevronDown, Clock3,
   Cloud, ExternalLink, FileText, Folder, GraduationCap, Home, Link2, ListTodo, LoaderCircle, FolderCheck, ScanSearch,
-  Pause, Play, Plus, RotateCcw, Search, Square, Timer, Trash2, X, Sparkles, Sun, Moon, Zap, Target, Layers3
+  Pause, Play, Plus, RotateCcw, Square, Timer, X, Sparkles, Sun, Moon, Target, AlertTriangle, BarChart3, LogOut
 } from 'lucide-react';
 import { api, pdfBlob } from '@/lib/api';
-import { Badge, Card, DayStatus, EmptyState, FormRow, SectionTitle } from '@/components/common';
+import { formatLocalClock, formatLocalDate } from '@/lib/clock';
+import { applyMutation, type MutationHint } from '@/lib/snapshot-cache';
+import { describeSnapshotFailure, fetchSnapshotWithRetry, type SnapshotLoadProblem } from '@/lib/snapshot-loading';
+import { Badge, Card, EmptyState, FormRow, SectionTitle } from '@/components/common';
 import { PdfWorkspace } from '@/components/pdf-workspace';
 import { CoursePlanner } from '@/components/course-planner';
+import { ProgressTrack, ProgressValue } from '@/components/progress-motion';
+import { visibleCourseDoneCount } from '@/lib/progress-presentation';
+import { FocusElapsed, FocusDial } from '@/components/focus-elapsed';
+import {
+  previewPause, previewResume, recoverFocusClock, startFocusClock, pauseFocusClock,
+  resumeFocusClock, focusClockSeconds, rekeyFocusClock, type FocusClockAnchor,
+} from '@/lib/focus-timing';
+import { TasksPlanner } from '@/components/tasks-planner';
+import { PhotoEmptyState } from '@/components/photo-empty-state';
+import { CourseActionsMenu } from '@/components/course-actions-menu';
+import { FeedbackToasts, useFeedbackToasts, type FeedbackMessage } from '@/components/feedback-toasts';
+import { COMPLETION_HOLD_MS, COMPLETION_EXIT_MS, presentCompletingItems, type CompletionPhase } from '@/lib/task-completion-presentation';
+import { isActionable, isOverdue, todayPriorities, upcomingDeadlines, focusTasksForContext } from '@/lib/task-view';
+import { todayStudyCourses, nextSevenDays, nextDeadlineDays, agendaForDate } from '@/lib/home-view';
 import { firebaseAuth, onAuthStateChanged, signIn, signOutUser, useFirebase } from '@/lib/auth';
 import { type DriveEntry, type DriveList, type FocusSession, type Item,
   type Resource, type Snapshot, type Tab, type DriveIndexed, type DriveSource, type DriveIndexResponse, type DriveScanResponse, duration,
-  elapsedFocus, formatDate, kindLabels, localToday } from '@/lib/types';
+  formatDate, kindLabels, localToday } from '@/lib/types';
 
 type DriveStatus = { connected: boolean; configured: boolean };
 const empty: Snapshot = {courses:[], weeks:[], items:[], resources:[], sessions:[], semesters:[]};
-const pageNames: Record<Tab,string> = {today:'Today', courses:'Study Planner', tasks:'Tasks', focus:'Focus', library:'Resource Library'};
+const pageNames: Record<Tab,string> = {today:'Today', courses:'Study Planner', tasks:'Tasks', calendar:'Calendar', focus:'Focus', library:'Resource Library'};
 const tabs: {id:Tab; label:string; icon:typeof Home}[] = [
-  {id:'today',label:'Today',icon:Home},{id:'courses',label:'Study',icon:BookOpen},
-  {id:'tasks',label:'Tasks',icon:ListTodo},{id:'focus',label:'Focus',icon:Timer},
-  {id:'library',label:'Library',icon:Folder}
+  {id:'today',label:'Home',icon:Home},{id:'courses',label:'Study',icon:BookOpen},
+  {id:'tasks',label:'Tasks',icon:ListTodo},{id:'calendar',label:'Calendar',icon:CalendarDays},
+  {id:'focus',label:'Focus',icon:Timer},
+  {id:'library',label:'Resources',icon:Folder}
 ];
 function dateText(d: string|null|undefined) { return d ? formatDate(d) : '—'; }
 export default function Page() {
   const [user,setUser] = useState<User|null>(null);
   const [authReady,setAuthReady] = useState(!useFirebase);
   const [tab,setTab] = useState<Tab>('today');
-  const [theme,setTheme] = useState<'light'|'dark'>('light');
-  const [dateLabel,setDateLabel] = useState('Today');
+  const [theme,setTheme] = useState<'light'|'dark'>('dark');
   const [data,setData] = useState<Snapshot>(empty);
   const [loading,setLoading] = useState(true);
+  const [snapshotReady,setSnapshotReady] = useState(false);
+  const [refreshing,setRefreshing] = useState(false);
+  const [snapshotIssue,setSnapshotIssue] = useState<SnapshotLoadProblem|null>(null);
+  const loadedUserRef=useRef<string|null>(null);
+  const loadRequestRef=useRef(0);
   const [busy,setBusy] = useState(false);
+  const mutationBusyRef = useRef(false);
+  const { messages: feedbackMessages, notify, dismiss: dismissFeedback, clearAll: clearFeedback } = useFeedbackToasts();
+  const [focusBusy,setFocusBusy] = useState(false);
+  const [focusPreview,setFocusPreview] = useState<FocusSession|null>(null);
+  const [focusClock,setFocusClock] = useState<FocusClockAnchor|null>(null);
+  const focusBusyRef = useRef(false);
+  const focusRevisionRef = useRef(0);
+  const [pendingItems,setPendingItems] = useState<Set<string>>(()=>new Set());
+  const pendingItemsRef=useRef<Set<string>>(new Set());
+  // Presentation-only completion states. Firebase writes still start immediately;
+  // active lists keep a successfully completed row until its animation can be seen.
+  const [completionPhases,setCompletionPhases] = useState<Record<string,CompletionPhase>>({});
+  const completionTimersRef = useRef(new Map<string,{
+    minimumElapsed:boolean; saved:boolean; leaving:boolean;
+    holdTimer:number; exitTimer?:number;
+  }>());
+  const clearCompletion = (id:string) => {
+    const record=completionTimersRef.current.get(id);
+    if(record){window.clearTimeout(record.holdTimer);if(record.exitTimer!==undefined)window.clearTimeout(record.exitTimer);}
+    completionTimersRef.current.delete(id);
+    setCompletionPhases(previous=>{
+      if(!(id in previous))return previous;
+      const next={...previous};delete next[id];return next;
+    });
+  };
+  const beginCompletionExit = (id:string) => {
+    const record=completionTimersRef.current.get(id);
+    if(!record||record.leaving)return;
+    record.leaving=true;
+    setCompletionPhases(previous=>({...previous,[id]:'leaving'}));
+    record.exitTimer=window.setTimeout(()=>clearCompletion(id),COMPLETION_EXIT_MS);
+  };
+  const startCompletion = (id:string) => {
+    if(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches)return;
+    clearCompletion(id);
+    const record={minimumElapsed:false,saved:false,leaving:false,holdTimer:0,exitTimer:undefined as number|undefined};
+    completionTimersRef.current.set(id,record);
+    setCompletionPhases(previous=>({...previous,[id]:'holding'}));
+    record.holdTimer=window.setTimeout(()=>{
+      record.minimumElapsed=true;
+      if(record.saved)beginCompletionExit(id);
+    },COMPLETION_HOLD_MS);
+  };
+  const completionSaved = (id:string) => {
+    const record=completionTimersRef.current.get(id);
+    if(!record)return;
+    record.saved=true;
+    if(record.minimumElapsed)beginCompletionExit(id);
+  };
+  useEffect(()=>()=>{
+    for(const record of completionTimersRef.current.values()){
+      window.clearTimeout(record.holdTimer);
+      if(record.exitTimer!==undefined)window.clearTimeout(record.exitTimer);
+    }
+    completionTimersRef.current.clear();
+  },[]);
+  const completingIds=useMemo(()=>new Set(Object.keys(completionPhases)),[completionPhases]);
+  const exitingIds=useMemo(()=>new Set(Object.keys(completionPhases).filter(id=>completionPhases[id]==='leaving')),[completionPhases]);
+  const lastLoadedAtRef=useRef(0);
   const [error,setError] = useState('');
   const [courseId,setCourseId] = useState('');
   const [weekNumber,setWeekNumber] = useState(1);
   const [now,setNow] = useState(Math.floor(Date.now()/1000));
+  const [clockReady,setClockReady] = useState(false);
   const [pdf,setPdf] = useState<{url:string;title:string;page:number;resourceId?:string;courseId?:string;weekNumber?:number}|null>(null);
+  const pdfBookmarkTimerRef=useRef<ReturnType<typeof setTimeout>|null>(null);
+  const pdfBookmarkPendingRef=useRef<{id:string;page:number}|null>(null);
+  const pdfBookmarkWriteRef=useRef<Promise<void>>(Promise.resolve());
 
   const [taskForm,setTaskForm] = useState(false);
-  const [taskEditId,setTaskEditId] = useState('');
-  const [taskEditDraft,setTaskEditDraft] = useState({title:'',planned_date:'',due_date:'',priority:'medium',notes:'',chapter:'',page_start:'',page_end:'',submitted:false});
-  const [taskFilter,setTaskFilter] = useState<'today'|'upcoming'|'completed'>('today');
-  const [taskDraft,setTaskDraft] = useState({title:'', planned_date:localToday(), due_date:'',priority:'medium'});
-
+  const [priorityFilter,setPriorityFilter] = useState<'all'|'course'|'personal'>('all');
+  const courseScrollerRef = useRef<HTMLDivElement | null>(null);
+  const [courseScrollIndex, setCourseScrollIndex] = useState(0);
+  const [visibleCourseCards, setVisibleCourseCards] = useState(3);
+  const [canScrollNextCourse, setCanScrollNextCourse] = useState(true);
+  const [quickFocusOpen,setQuickFocusOpen] = useState(false);
+  const [quickFocusMode,setQuickFocusMode] = useState<'25'|'50'|'90'|'free'>('25');
+  const [quickFocusCourse,setQuickFocusCourse] = useState('');
+  const [quickFocusItem,setQuickFocusItem] = useState('');
+  const quickFocusRef = useRef<HTMLDivElement|null>(null);
+  const [calendarJump,setCalendarJump] = useState<{date:string;token:number}|null>(null);
+  const [homeSelectedDate,setHomeSelectedDate] = useState<string|null>(null);
+  const [courseLandingItem,setCourseLandingItem] = useState<{id:string;weekNumber:number|null}|null>(null);
+  const [taskJump,setTaskJump] = useState<{id:string;token:number}|null>(null);
+  const [courseSectionJump,setCourseSectionJump] = useState<{courseId:string;section:'course-library'|'tasks';token:number}|null>(null);
+  const [taskLandingMode,setTaskLandingMode] = useState<'today'|'upcoming'|'completed'>('today');
   const [focusCourse,setFocusCourse] = useState('');
   const [focusItem,setFocusItem] = useState('');
   const [focusMode,setFocusMode] = useState<'25'|'50'|'90'|'free'>('50');
   const [finishReview,setFinishReview] = useState(false);
   const [finishSeconds,setFinishSeconds] = useState('0');
+  const [reviewLimit,setReviewLimit] = useState(0);
   const [weeklyGoal,setWeeklyGoal] = useState(20);
+  useEffect(()=>{
+    if(!quickFocusOpen)return;
+    const onKey=(event:KeyboardEvent)=>{if(event.key==='Escape')setQuickFocusOpen(false);};
+    const onOutside=(event:PointerEvent)=>{
+      if(quickFocusRef.current&&!quickFocusRef.current.contains(event.target as Node))setQuickFocusOpen(false);
+    };
+    document.addEventListener('keydown',onKey);
+    document.addEventListener('pointerdown',onOutside);
+    return ()=>{document.removeEventListener('keydown',onKey);document.removeEventListener('pointerdown',onOutside);};
+  },[quickFocusOpen]);
 
   const [drive,setDrive] = useState<DriveStatus>({connected:false,configured:false});
   const [driveFiles,setDriveFiles] = useState<DriveEntry[]>([]);
@@ -61,6 +168,7 @@ export default function Page() {
   const [sourceFolder,setSourceFolder] = useState<DriveSource|null>(null);
   const [driveIndex,setDriveIndex] = useState<DriveIndexed[]>([]);
   const [scanBusy,setScanBusy] = useState(false);
+  const scanBusyRef = useRef(false);
   const [indexFilter,setIndexFilter] = useState<'unlinked'|'all'|'needs-review'>('unlinked');
   const [visibleCount,setVisibleCount] = useState(30);
   const [linkCourse,setLinkCourse] = useState('');
@@ -68,16 +176,36 @@ export default function Page() {
   const [linkScope,setLinkScope] = useState<'course'|'week'>('week');
   const [linkKind,setLinkKind] = useState<Resource['kind']>('handwritten');
   const [linkItem,setLinkItem] = useState('');
+  const [linkingFileId,setLinkingFileId] = useState<string|null>(null);
 
   useEffect(()=>{
     if (!firebaseAuth) return;
-    return onAuthStateChanged(firebaseAuth, u=>{setUser(u);setAuthReady(true);});
+    return onAuthStateChanged(firebaseAuth, u=>{
+      pendingItemsRef.current.clear();setPendingItems(new Set());
+      for(const record of completionTimersRef.current.values()){
+        window.clearTimeout(record.holdTimer);
+        if(record.exitTimer!==undefined)window.clearTimeout(record.exitTimer);
+      }
+      completionTimersRef.current.clear();setCompletionPhases({});
+      focusBusyRef.current=false;focusRevisionRef.current++;setFocusBusy(false);setFocusPreview(null);setFocusClock(null);
+      setFinishReview(false);setQuickFocusOpen(false);
+      clearFeedback();
+      setUser(u);setAuthReady(true);
+    });
   },[]);
-  useEffect(()=>{ const id=window.setInterval(()=>setNow(Math.floor(Date.now()/1000)),1000);return ()=>clearInterval(id);},[]);
   useEffect(()=>{
-    setDateLabel(new Intl.DateTimeFormat('en-DK',{month:'short',day:'numeric',year:'numeric'}).format(new Date()));
+    // Render the clock only after hydration to avoid server/client time mismatches.
+    setNow(Math.floor(Date.now()/1000));
+    setClockReady(true);
+    // FocusElapsed owns the second-level clock: do not rerender the full planner on every tick.
+    const refresh = () => setNow(Math.floor(Date.now()/1000));
+    const id=window.setInterval(refresh,30000);
+    document.addEventListener('visibilitychange',refresh);
+    return ()=>{clearInterval(id);document.removeEventListener('visibilitychange',refresh);};
+  },[]);
+  useEffect(()=>{
     const preference=window.localStorage.getItem('studyhub-theme');
-    if(preference==='dark')setTheme('dark');
+    if(preference==='dark'||preference==='light')setTheme(preference);
   },[]);
   const toggleTheme=()=>setTheme(previous=>{const next=previous==='light'?'dark':'light';window.localStorage.setItem('studyhub-theme',next);return next;});
   useEffect(()=>{
@@ -85,65 +213,426 @@ export default function Page() {
     if (stored && Number(stored)>=1 && Number(stored)<=80) setWeeklyGoal(Number(stored));
   },[]);
 
-  const load = useCallback(async()=>{
-    if (!authReady || (useFirebase && !user)) {setLoading(false);return;}
+  const load = useCallback(async():Promise<boolean>=>{
+    // Do not finish the initial loading state while Firebase is still restoring
+    // authentication: otherwise the error screen flashes before the first request.
+    if (!authReady) return false;
+    if (useFirebase && !user) {
+      loadRequestRef.current++;
+      loadedUserRef.current=null;
+      setData(empty);setSnapshotReady(false);setSnapshotIssue(null);setLoading(false);
+      return false;
+    }
+    const uid=user?.uid||'local';
+    const hadSnapshot=loadedUserRef.current===uid;
+    const requestNumber=++loadRequestRef.current;
+    const focusRevisionAtStart=focusRevisionRef.current;
+    if (!hadSnapshot) {
+      // Never show data from a previously signed-in account.
+      setData(empty);setSnapshotReady(false);setSnapshotIssue(null);setLoading(true);
+    } else setRefreshing(true);
     try {
-      const snap=await api<Snapshot>('/api/snapshot',user);
-      setData(snap);
-      setCourseId(previous=>snap.courses.some(c=>c.id===previous&&!c.archived)?previous:(snap.courses.find(c=>!c.archived)?.id||''));
+      // Compact response preserves all-time totals while loading only this
+      // week's sessions, five recent completions, and the active session.
+      const localDay = new Date();
+      localDay.setHours(0,0,0,0);
+      localDay.setDate(localDay.getDate() - (localDay.getDay()+6)%7);
+      const weekStart = Math.floor(localDay.getTime()/1000);
+      const snap=await fetchSnapshotWithRetry(()=>api<Snapshot>(`/api/snapshot?compact=true&week_start=${weekStart}`,user,{timeoutMs:15000}));
+      if (requestNumber!==loadRequestRef.current) return false;
+      // Keep pending checkbox changes visible if a manual refresh finishes mid-save.
+      setData(previous=>{
+        const items=pendingItemsRef.current.size ? snap.items.map(item=>
+          pendingItemsRef.current.has(item.id)?previous.items.find(old=>old.id===item.id)||item:item
+        ) : snap.items;
+        // An older snapshot must not undo a Focus mutation that committed while it was loading.
+        const focusUnchanged = focusRevisionAtStart===focusRevisionRef.current;
+        const sessions = focusUnchanged ? snap.sessions : previous.sessions;
+        // A snapshot launched before Finish must not roll back its new totals.
+        const focus_stats = focusUnchanged ? snap.focus_stats : previous.focus_stats;
+        return {...snap,items,sessions,focus_stats};
+      });
+      lastLoadedAtRef.current=Date.now();
+      loadedUserRef.current=uid;
+      setSnapshotReady(true);
+      setSnapshotIssue(null);
+      setCourseId(previous=>{
+        const saved=window.localStorage.getItem('studyhub-last-course')||'';
+        const preferred=previous||saved;
+        return snap.courses.some(c=>c.id===preferred&&!c.archived)?preferred:(snap.courses.find(c=>!c.archived)?.id||'');
+      });
       setLinkCourse(previous=>snap.courses.some(c=>c.id===previous&&!c.archived)?previous:(snap.courses.find(c=>!c.archived)?.id||''));
       setError('');
-    } catch(e) {setError(e instanceof Error ? e.message : 'Cannot connect to the API');}
-    finally {setLoading(false);}
+      return true;
+    } catch(e) {
+      if (requestNumber!==loadRequestRef.current) return false;
+      const issue=describeSnapshotFailure(e);
+      setSnapshotIssue(issue);
+      if (hadSnapshot) setError(`Refresh failed: ${issue.title}. Your last loaded data is still displayed.`);
+      else setError('');
+      return false;
+    } finally {
+      if (requestNumber===loadRequestRef.current) {setLoading(false);setRefreshing(false);}
+    }
   },[authReady,user]);
   useEffect(()=>{void load();},[load]);
+  // Refresh after returning to the tab so changes from another device become visible.
+  useEffect(()=>{
+    const refreshOnReturn=()=>{
+      // Switching browser tabs repeatedly should not download six collections each time.
+      if(document.visibilityState==='visible'&&!busy&&Date.now()-lastLoadedAtRef.current>=30000)void load();
+    };
+    document.addEventListener('visibilitychange',refreshOnReturn);
+    return ()=>document.removeEventListener('visibilitychange',refreshOnReturn);
+  },[load,busy]);
 
-  const act = async(fn:()=>Promise<unknown>):Promise<boolean>=>{
+  // Collection-scoped mutations remove an otherwise mandatory six-collection refresh.
+  // Other operations keep the existing full refresh for compatibility.
+  const act = async(fn:()=>Promise<unknown>, mutation?:MutationHint, feedback?:FeedbackMessage):Promise<boolean>=>{
+    // An immediate ref guard prevents double submits before React commits busy=true.
+    if (mutationBusyRef.current) return false;
+    mutationBusyRef.current=true;
     setBusy(true);setError('');
-    try {await fn();await load();return true;} catch(e) {setError(e instanceof Error?e.message:'Action failed');return false;}
-    finally {setBusy(false);}
+    const uid=user?.uid||'local';
+    const sameUser=()=>!useFirebase||firebaseAuth?.currentUser?.uid===uid;
+    try {
+      const result=await fn();
+      if(!sameUser())return false;
+      let synchronized = true;
+      if(mutation){
+        if(mutation.collection!=='none') {
+          if(!mutation.deleteId&&(!result||typeof result!=='object'||!('id' in result))){
+            // A write may have succeeded even if the response shape changed. Reconcile once.
+            synchronized=await load();
+          }else setData(previous=>applyMutation(previous,mutation,result));
+        }
+      } else synchronized=await load();
+      if(!synchronized) {
+        notify({kind:'error',title:'Saved, but sync failed',detail:'Your change may be saved. Refresh to verify before trying again.'});
+        return true; // Avoid creating a duplicate if the user retries a successful write.
+      }
+      if(feedback)notify({kind:'success',...feedback});
+      return true;
+    } catch(e) {
+      if(sameUser())notify({kind:'error',title:'Could not save changes',detail:e instanceof Error?e.message:'Please try again. Your edits are still here.'});
+      return false;
+    } finally {mutationBusyRef.current=false;setBusy(false);}
+  };
+  const scrollCourses = (direction: -1 | 1) => {
+    const scroller = courseScrollerRef.current;
+    if (!scroller) return;
+    const card = scroller.querySelector<HTMLElement>('.home-course-tile');
+    if (!card) return;
+    const gap = Number.parseFloat(window.getComputedStyle(scroller).columnGap) || 0;
+    scroller.scrollBy({ left: direction * (card.getBoundingClientRect().width + gap), behavior: 'smooth' });
+  };
+  const syncCourseScroll = () => {
+    const scroller = courseScrollerRef.current;
+    const card = scroller?.querySelector<HTMLElement>('.home-course-tile');
+    if (!scroller || !card) return;
+    const gap = Number.parseFloat(window.getComputedStyle(scroller).columnGap) || 0;
+    const cardStep = card.getBoundingClientRect().width + gap;
+    setCourseScrollIndex(Math.round(scroller.scrollLeft / cardStep));
+    setVisibleCourseCards(Math.max(1, Math.round((scroller.clientWidth + gap) / cardStep)));
+    setCanScrollNextCourse(scroller.scrollLeft + scroller.clientWidth < scroller.scrollWidth - 2);
   };
   const selectedCourse = data.courses.find(c=>c.id===courseId&&!c.archived);
-  const selectedWeek = data.weeks.find(w=>w.course_id===courseId && w.number===weekNumber);
-  const activeCourseIds = new Set(data.courses.filter(c=>!c.archived).map(c=>c.id));
-  const tasks = data.items.filter(i=>i.is_task&&(!i.course_id||activeCourseIds.has(i.course_id)));
+  const activeCourseIds = useMemo(()=>new Set(data.courses.filter(c=>!c.archived).map(c=>c.id)),[data.courses]);
+  // An optimistic write updates canonical data immediately. Only the *list projection*
+  // temporarily treats the animating item as open, so it doesn't vanish mid-checkmark.
+  const presentedItems=useMemo(()=>presentCompletingItems(data.items,completionPhases),[data.items,completionPhases]);
+  const tasks = useMemo(()=>presentedItems.filter(i=>isActionable(i)&&(!i.course_id||activeCourseIds.has(i.course_id))),[presentedItems,activeCourseIds]);
   const today=localToday();
-  const openTasks = tasks.filter(i=>!i.done);
-  const plannedToday=openTasks.filter(i=>i.planned_date===today);
-  const overdue=openTasks.filter(i=>i.due_date && i.due_date < today);
-  const upcoming=openTasks.filter(i=>i.due_date).sort((a,b)=>(a.due_date||'').localeCompare(b.due_date||''));
-  const active=data.sessions.find(s=>s.status==='running'||s.status==='paused');
+  const openTasks = useMemo(()=>tasks.filter(i=>!i.done),[tasks]);
+  const todayWork = useMemo(()=>todayPriorities(openTasks,today),[openTasks,today]);
+  const overdue = useMemo(()=>todayWork.filter(i=>isOverdue(i,today)),[todayWork,today]);
+  const upcoming = useMemo(()=>upcomingDeadlines(openTasks,today),[openTasks,today]);
+  const studyGroups = useMemo(()=>todayStudyCourses(data.courses,presentedItems,today),[data.courses,presentedItems,today]);
+  const completedItemIds = useMemo(()=>new Set(data.items.filter(item=>item.done).map(item=>item.id)),[data.items]);
+  useEffect(() => {
+    // Keep carousel labels accurate across responsive breakpoints and data changes.
+    const refresh = () => syncCourseScroll();
+    refresh();
+    window.addEventListener('resize', refresh);
+    return () => window.removeEventListener('resize', refresh);
+  }, [studyGroups.length, tab, snapshotReady]);
+  const calendarDays=useMemo(()=>nextSevenDays(today,openTasks),[today,openTasks]);
+  const homeAgenda=useMemo(()=>homeSelectedDate?agendaForDate(openTasks,homeSelectedDate):[],[homeSelectedDate,openTasks]);
+  const filteredPriorities=useMemo(()=>todayWork.filter(i=>priorityFilter==='all'||(priorityFilter==='course'?!!i.course_id:!i.course_id)),[todayWork,priorityFilter]);
+  const hour=new Date(now*1000).getHours();
+  const hello=hour<12?'Good morning':hour<17?'Good afternoon':'Good evening';
+  const firstName=user?.displayName?.trim().split(/\s+/)[0]||'';
+  const profileName=user?.displayName?.trim()||'Study Hub';
+  const profileInitials=profileName.split(/\s+/).slice(0,2).map(part=>part[0]?.toUpperCase()||'').join('');
+  const dateLabel=clockReady?formatLocalDate(now*1000):'—';
+  const timeLabel=clockReady?formatLocalClock(now*1000):'--:--';
+  const active=focusPreview??data.sessions.find(s=>s.status==='running'||s.status==='paused');
+  // A Firestore snapshot only initializes a clock when it truly represents a
+  // new session or externally changed status; local API responses never reset
+  // the clock's fractional second and therefore cannot make it jump backward.
+  useEffect(()=>{
+    setFocusClock(previous=>{
+      if(!active)return null;
+      if(previous?.sessionId===active.id&&previous.status===active.status)return previous;
+      return recoverFocusClock(active,Date.now(),performance.now());
+    });
+  },[active?.id,active?.status,active?.started_at,active?.pause_started_at,active?.accumulated_pause_seconds]);
+  const focusClockAt=(session:FocusSession,wallMs:number,monoMs:number)=>
+    focusClock?.sessionId===session.id&&focusClock.status===session.status
+      ?focusClock:recoverFocusClock(session,wallMs,monoMs);
   const currentWeekStart=useMemo(()=>{const d=new Date();d.setHours(0,0,0,0);const weekday=(d.getDay()+6)%7;d.setDate(d.getDate()-weekday);return Math.floor(d.getTime()/1000);},[today]);
-  const weekSeconds=data.sessions.filter(s=>s.status==='finished'&&s.ended_at && s.ended_at>=currentWeekStart).reduce((n,s)=>n+(s.focus_seconds||0),0);
-  const totalSeconds=data.sessions.filter(s=>s.status==='finished').reduce((n,s)=>n+(s.focus_seconds||0),0);
+  const {weekSeconds,totalSeconds}=useMemo(()=>{
+    let weekly=0,all=0;
+    for(const session of data.sessions){
+      if(session.status!=='finished')continue;
+      const seconds=session.focus_seconds||0;
+      all+=seconds;
+      if(session.ended_at&&session.ended_at>=currentWeekStart)weekly+=seconds;
+    }
+    return {weekSeconds:weekly,totalSeconds:data.focus_stats?.total_seconds ?? all};
+  },[data.sessions,data.focus_stats,currentWeekStart]);
   const weekPct=Math.min(100,Math.round((weekSeconds/(weeklyGoal*3600))*100));
-  const listForTasks = taskFilter==='today' ? tasks.filter(i=>i.planned_date===today || (!i.done&&!!i.due_date&&i.due_date<today)) : taskFilter==='completed' ? tasks.filter(i=>i.done) : tasks.filter(i=>!i.done);
-  const sortedTasks=[...listForTasks].sort((a,b)=>(a.due_date||a.planned_date||'9999').localeCompare(b.due_date||b.planned_date||'9999'));
-
-  const startTaskEdit=(i:Item)=>{setTaskEditId(i.id);setTaskEditDraft({title:i.title,planned_date:i.planned_date||'',due_date:i.due_date||'',priority:i.priority,notes:i.notes||'',chapter:i.chapter||'',page_start:i.page_start?String(i.page_start):'',page_end:i.page_end?String(i.page_end):'',submitted:i.submitted});};
-  const saveTask=(e:FormEvent)=>{e.preventDefault();void act(async()=>{
-    await api(`/api/items/${taskEditId}`,user,{method:'PATCH',body:{...taskEditDraft,planned_date:taskEditDraft.planned_date||null,due_date:taskEditDraft.due_date||null,page_start:taskEditDraft.page_start?Number(taskEditDraft.page_start):null,page_end:taskEditDraft.page_end?Number(taskEditDraft.page_end):null}});
-    setTaskEditId('');
-  });};
-  const newTask=(e:FormEvent)=>{e.preventDefault();void act(async()=>{
-    await api('/api/items',user,{method:'POST',body:{...taskDraft,kind:'personal',planned_date:taskDraft.planned_date||null,due_date:taskDraft.due_date||null}});
-    setTaskForm(false);setTaskDraft({title:'',planned_date:today,due_date:'',priority:'medium'});
-  });};
-  const toggle=(i:Item)=>void act(async()=>{await api(`/api/items/${i.id}`,user,{method:'PATCH',body:{done:!i.done}});});
+  const toggle=(item:Item)=>{
+    if(pendingItemsRef.current.has(item.id)||completingIds.has(item.id))return;
+    if(!item.done)startCompletion(item.id);
+    pendingItemsRef.current.add(item.id);
+    setPendingItems(new Set(pendingItemsRef.current));
+    setError('');
+    // Instant feedback across Home, Tasks, Calendar, Course and PDF views.
+    setData(previous=>({...previous,items:previous.items.map(i=>i.id===item.id?{...i,done:!item.done}:i)}));
+    const activeUid=user?.uid||'local';
+    void (async()=>{
+      try {
+        const saved=await api<Item>(`/api/items/${item.id}`,user,{method:'PATCH',body:{done:!item.done}});
+        if(useFirebase&&firebaseAuth?.currentUser?.uid!==activeUid)return;
+        setData(previous=>applyMutation(previous,{collection:'items'},saved));
+        if(!item.done&&saved.done)completionSaved(item.id);
+        else if(!item.done)clearCompletion(item.id);
+        if(!item.done&&saved.done&&saved.repeat&&saved.repeat!=='none'){
+          // Recurring completion creates a successor on the server. Fetch items only.
+          // A failed follow-up read must not undo a successfully committed completion.
+          try {
+            const allItems=await api<Item[]>('/api/items',user);
+            if(useFirebase&&firebaseAuth?.currentUser?.uid!==activeUid)return;
+            setData(previous=>({...previous,items:allItems.map(i=>
+              pendingItemsRef.current.has(i.id)&&i.id!==item.id?previous.items.find(old=>old.id===i.id)||i:i)}));
+          }catch{
+            notify({kind:'error',title:'Task saved, sync incomplete',detail:'The next recurring task did not load. Refresh to sync.'});
+          }
+        }
+      }catch(e){
+        if(useFirebase&&firebaseAuth?.currentUser?.uid!==activeUid)return;
+        // Roll back only the completion bit; don't clobber a concurrent metadata edit.
+        clearCompletion(item.id);
+        setData(previous=>({...previous,items:previous.items.map(i=>i.id===item.id?{...i,done:item.done}:i)}));
+        notify({kind:'error',title:'Task update failed',detail:`${item.title}: ${e instanceof Error?e.message:'Please retry.'}`});
+      }finally{
+        pendingItemsRef.current.delete(item.id);
+        setPendingItems(new Set(pendingItemsRef.current));
+      }
+    })();
+  };
+  const rememberCourse=(id:string)=>{setCourseId(id);if(id)window.localStorage.setItem('studyhub-last-course',id);};
+  const rememberWeek=(week:number)=>{setWeekNumber(week);if(courseId)window.localStorage.setItem(`studyhub-last-week-${courseId}`,String(week));};
+  const openCourse=(id:string,week?:number,landingItem?:Item,section?:'course-library'|'tasks')=>{
+    const course=data.courses.find(c=>c.id===id&&!c.archived);
+    if(!course){setTab('courses');return;}
+    const saved=Number(window.localStorage.getItem(`studyhub-last-week-${id}`))||1;
+    const selected=Math.max(1,Math.min(course.week_count,week||saved));
+    setCourseLandingItem(landingItem?{id:landingItem.id,weekNumber:landingItem.week_number}:null);
+    setCourseSectionJump(section?previous=>({courseId:id,section,token:(previous?.token||0)+1}):null);
+    rememberCourse(id);setWeekNumber(selected);
+    window.localStorage.setItem(`studyhub-last-week-${id}`,String(selected));
+    setTab('courses');
+  };
+  // Home date chips and sidebar Calendar share one destination: the selected-day agenda.
+  const openCalendarDate=(date:string)=>{
+    setTaskForm(false);
+    setTaskJump(null);
+    setCalendarJump(p=>({date,token:(p?.token||0)+1}));
+    setTab('calendar');
+  };
+  // Course deadlines resolve to their exact semester/course/week and highlight the activity.
+  // Personal deadlines stay in Tasks, highlighted without forcing an edit dialog.
+  const openDeadlineDestination=(item:Item)=>{
+    if(item.course_id && data.courses.some(c=>c.id===item.course_id&&!c.archived)){
+      openCourse(item.course_id,item.week_number||undefined,item);
+      return;
+    }
+    setTaskForm(false);
+    setTaskLandingMode(item.planned_date===today||item.due_date===today||isOverdue(item,today)?'today':'upcoming');
+    setTaskJump(p=>({id:item.id,token:(p?.token||0)+1}));
+    setTab('tasks');
+  };
+  const toggleHomeAgenda=(date:string)=>setHomeSelectedDate(previous=>previous===date?null:date);
+  const showUpcomingTasks=()=>{
+    setTaskForm(false);
+    setTaskJump(null);
+    setTaskLandingMode('upcoming');
+    setTab('tasks');
+  };
+  const navigate=(target:Tab)=>{
+    setQuickFocusOpen(false);
+    if(target==='calendar'){openCalendarDate(today);return;}
+    if(target==='tasks'){setTaskLandingMode('today');setTaskJump(null);}
+    if(target==='courses')setCourseLandingItem(null);
+    setTaskForm(false);
+    setTab(target);
+  };
+  // Focus actions use an optimistic overlay and a separate in-flight lock: the controls
+  // change immediately, without waiting for a six-collection refresh or blocking other UI.
+  const focusRequest=async(
+    preview:FocusSession|null,route:string,body?:unknown,
+    onSuccess?:(saved:FocusSession)=>void,onFailure?:()=>void
+  ):Promise<boolean>=>{
+    if(focusBusyRef.current)return false;
+    focusBusyRef.current=true;focusRevisionRef.current++;
+    setFocusBusy(true);setFocusPreview(preview);setError('');
+    const uid=user?.uid||'local';
+    const sameUser=()=>!useFirebase||firebaseAuth?.currentUser?.uid===uid;
+    try {
+      const saved=await api<FocusSession>(route,user,{method:'POST',...(body!==undefined?{body}:{})});
+      if(!sameUser())return false;
+      setData(previous=>{
+        const original = previous.sessions.find(s=>s.id===saved.id);
+        const changedToFinished = saved.status==='finished' && original?.status!=='finished';
+        const next = applyMutation(previous,{collection:'sessions'},saved);
+        if (!changedToFinished || !previous.focus_stats) return next;
+        return {...next,focus_stats:{...previous.focus_stats,
+          total_seconds:previous.focus_stats.total_seconds + Math.max(0,saved.focus_seconds||0),
+          completed_sessions:previous.focus_stats.completed_sessions+1}};
+      });
+      onSuccess?.(saved);
+      return true;
+    }catch(e){
+      if(sameUser()){
+        notify({kind:'error',title:'Focus action failed',detail:`${e instanceof Error?e.message:'Please retry.'} Refresh if another tab changed the session.`});
+        onFailure?.();
+      }
+      return false;
+    }finally{
+      if(sameUser()){
+        focusBusyRef.current=false;
+        setFocusPreview(null);setFocusBusy(false);
+      }
+    }
+  };
+  const startFocus=async(course:string,itemId:string,mode:'25'|'50'|'90'|'free')=>{
+    if(active||focusBusyRef.current||busy)return;
+    const item=data.items.find(i=>i.id===itemId);
+    const wallMs=Date.now();
+    const monoMs=performance.now();
+    const timestamp=Math.floor(wallMs/1000);
+    const optimistic:FocusSession={
+      id:`pending-${wallMs}`,course_id:course||null,item_id:itemId||null,
+      week_number:item?.week_number||null,mode,status:'running',started_at:timestamp,
+      pause_started_at:null,accumulated_pause_seconds:0,ended_at:null,focus_seconds:null
+    };
+    setQuickFocusOpen(false);
+    setFocusClock(startFocusClock(optimistic.id,wallMs,monoMs));
+    await focusRequest(optimistic,'/api/sessions/start',{
+      item_id:itemId||null,course_id:course||null,week_number:item?.week_number||null,mode,
+      requested_at:timestamp
+    }, saved=>setFocusClock(previous=>
+      previous?.sessionId===optimistic.id ? rekeyFocusClock(previous,saved.id)
+        :recoverFocusClock(saved,Date.now(),performance.now())),
+    ()=>setFocusClock(null));
+  };
+  // Explicit course action starts the currently selected timer mode. Existing sessions are never replaced.
+  const focusOnCourse=(id:string)=>{
+    setFocusCourse(id);setFocusItem('');setTab('focus');
+    if(!active&&!busy&&!focusBusyRef.current)void startFocus(id,'',focusMode);
+  };
+  const startQuickFocus=async()=>{
+    if(active){setQuickFocusOpen(false);return;}
+    setFocusCourse(quickFocusCourse);setFocusItem(quickFocusItem);setFocusMode(quickFocusMode);
+    await startFocus(quickFocusCourse,quickFocusItem,quickFocusMode);
+  };
   const startFrom=(i?:Item)=>{
-    setFocusItem(i?.id||'');setFocusCourse(i?.course_id||'');
+    // Personal tasks have no course; the selector still needs to retain their item ID.
+    setFocusCourse(i?.course_id||'');setFocusItem(i?.id||'');
     setTab('focus');
   };
-  const beginFocus=()=>void act(async()=>{
-    const item=data.items.find(i=>i.id===focusItem);
-    await api('/api/sessions/start',user,{method:'POST',body:{item_id:focusItem||null,course_id:focusCourse||null,week_number:item?.week_number||null,mode:focusMode}});
-  });
-  const sessionAction=(verb:'pause'|'resume')=>{if(!active)return;void act(async()=>{await api(`/api/sessions/${active.id}/${verb}`,user,{method:'POST'});});};
-  const reviewFinish=()=>{if(!active)return;setFinishSeconds(String(elapsedFocus(active,now)));setFinishReview(true);};
-  const finish=()=>{if(!active)return;void act(async()=>{
-    await api(`/api/sessions/${active.id}/finish`,user,{method:'POST',body:{confirmed_seconds:Math.round(Number(finishSeconds))}});
-    setFinishReview(false);
-  });};
+  const beginFocus=()=>void startFocus(focusCourse,focusItem,focusMode);
+  const sessionAction=(verb:'pause'|'resume')=>{
+    if(!active||focusBusyRef.current)return;
+    const wallMs=Date.now();
+    const monoMs=performance.now();
+    const existing=focusClockAt(active,wallMs,monoMs);
+    const nextClock=verb==='pause'
+      ?pauseFocusClock(existing,wallMs,monoMs)
+      :resumeFocusClock(existing,wallMs,monoMs);
+    setFocusClock(nextClock);
+    const preview=verb==='pause'
+      ?previewPause(active,Math.floor(wallMs/1000))
+      :previewResume(active,Math.floor(wallMs/1000));
+    const body=verb==='pause'
+      ?{displayed_seconds:focusClockSeconds(nextClock,wallMs,monoMs)}
+      :{requested_at:Math.floor(wallMs/1000)};
+    void focusRequest(preview,`/api/sessions/${active.id}/${verb}`,body,
+      undefined,()=>setFocusClock(existing));
+  };
+  const reviewFinish=()=>{
+    if(!active||focusBusyRef.current)return;
+    const wallMs=Date.now();
+    const monoMs=performance.now();
+    const existing=focusClockAt(active,wallMs,monoMs);
+    const stopped=pauseFocusClock(existing,wallMs,monoMs);
+    const seconds=Math.min(86400,focusClockSeconds(stopped,wallMs,monoMs));
+    setFocusClock(stopped);
+    setReviewLimit(seconds);setFinishSeconds(String(seconds));setFinishReview(true);
+    if(active.status==='running'){
+      // Freeze at the clicked second even if the network takes several seconds.
+      void focusRequest(previewPause(active,Math.floor(wallMs/1000)),`/api/sessions/${active.id}/pause`,
+        {displayed_seconds:seconds},
+        saved=>{
+          // The backend can only reduce the counted duration, never inflate it.
+          const serverLimit=Math.max(0,saved.started_at!==undefined
+            ?Math.floor((saved.pause_started_at! - saved.started_at - saved.accumulated_pause_seconds)) :seconds);
+          const limit=Math.min(seconds,serverLimit);
+          setReviewLimit(limit);
+          setFinishSeconds(previous=>String(Math.min(Number(previous)||0,limit)));
+          // A server correction is exceptional (e.g. device clock skew); ensure
+          // the visible paused stopwatch still agrees with what can be saved.
+          if(limit<seconds)setFocusClock(current=>current?.sessionId===active.id
+            ?{...current,elapsedMs:limit*1000}:current);
+        },()=>{setFocusClock(existing);setFinishReview(false);});
+    }
+  };
+  const discardEmptyFocus=async(identifier:string)=>{
+    if(focusBusyRef.current)return;
+    focusBusyRef.current=true;
+    focusRevisionRef.current++;
+    setFocusBusy(true);
+    const uid=user?.uid||'local';
+    const sameUser=()=>!useFirebase||firebaseAuth?.currentUser?.uid===uid;
+    try{
+      // Zero-second sessions have no study time to record. Deleting also releases
+      // the active-session guard atomically, without changing focus statistics.
+      await api<void>(`/api/sessions/${identifier}`,user,{method:'DELETE'});
+      if(!sameUser())return;
+      setData(previous=>({...previous,sessions:previous.sessions.filter(s=>s.id!==identifier)}));
+      setFocusPreview(null);
+      setFocusClock(null);
+      setFinishReview(false);
+      notify({kind:'info',title:'Empty session discarded',detail:'No study time was recorded.'});
+    }catch(e){
+      if(sameUser())notify({kind:'error',title:'Could not discard session',detail:e instanceof Error?e.message:'Please try again.'});
+    }finally{
+      if(sameUser()){
+        focusBusyRef.current=false;
+        setFocusBusy(false);
+      }
+    }
+  };
+  const finish=()=>{
+    if(!active||focusBusyRef.current||active.status!=='paused')return;
+    const confirmed=Number(finishSeconds);
+    if(!Number.isInteger(confirmed)||confirmed<0||confirmed>reviewLimit)return;
+    if(confirmed===0){void discardEmptyFocus(active.id);return;}
+    void focusRequest(null,`/api/sessions/${active.id}/finish`,{confirmed_seconds:confirmed},
+      ()=>{setFinishReview(false);setFocusClock(null);notify({kind:'success',title:'Focus session saved',detail:`${duration(confirmed)} recorded.`});});
+  };
   const loadDriveStatus=useCallback(async()=>{
     if (useFirebase&&!user) return;
     try {setDrive(await api<DriveStatus>('/api/drive/status',user));}catch{/* noncritical */}
@@ -165,130 +654,260 @@ export default function Page() {
   },[user]);
   const openFolder=(folder:DriveEntry)=>{setFolderPath(p=>[...p,{id:folder.id,name:folder.name}]);void browseDrive(folder.id);};
   const backFolder=()=>{if(folderPath.length===1)return;const next=folderPath.slice(0,-1);setFolderPath(next);void browseDrive(next.at(-1)!.id);};
-  const connectDrive=()=>void act(async()=>{const result=await api<{authorization_url:string}>('/api/drive/connect',user);window.location.assign(result.authorization_url);});
+  const connectDrive=()=>void act(async()=>{const result=await api<{authorization_url:string}>('/api/drive/connect',user);window.location.assign(result.authorization_url);},{collection:'none'});
   const previewPdf=(fileId:string,title:string,resourceId?:string,lastPage=1)=>void act(async()=>{
     const url=await pdfBlob(`/api/drive/files/${fileId}/pdf`,user);
     if (pdf) URL.revokeObjectURL(pdf.url);
     const r=data.resources.find(entry=>entry.id===resourceId);
     setPdf({url,title,resourceId,courseId:r?.course_id,weekNumber:r?.week_number??weekNumber,page:lastPage||1});
-  });
-  const closePdf=()=>{if(pdf)URL.revokeObjectURL(pdf.url);setPdf(null);};
+  },{collection:'none'});
+  const flushPdfBookmark=useCallback(()=>{
+    if(pdfBookmarkTimerRef.current){clearTimeout(pdfBookmarkTimerRef.current);pdfBookmarkTimerRef.current=null;}
+    const latest=pdfBookmarkPendingRef.current;
+    pdfBookmarkPendingRef.current=null;
+    if(!latest)return;
+    // Serialize bookmark writes so a slow previous page cannot overwrite a newer page.
+    pdfBookmarkWriteRef.current=pdfBookmarkWriteRef.current.catch(()=>{}).then(async()=>{
+      try{await api(`/api/resources/${latest.id}/reading-position`,user,{method:'PATCH',body:{page:latest.page}});}
+      catch(e){setError(`Page bookmark could not be saved. ${e instanceof Error?e.message:''}`);}
+    });
+  },[user]);
+  const closePdf=()=>{flushPdfBookmark();if(pdf)URL.revokeObjectURL(pdf.url);setPdf(null);};
+  const openTaskResource=(item:Item)=>{
+    const r=data.resources.find(entry=>entry.id===item.resource_id);
+    if(!r){setError('The linked document is no longer available. Check the Course Library.');return;}
+    if(r.source==='drive'&&r.drive_file_id)previewPdf(r.drive_file_id,r.title,r.id,r.last_page);
+    else if(r.url)window.open(r.url,'_blank','noopener,noreferrer');
+  };
+
+  useEffect(()=>{
+    const saveWhenHidden=()=>{if(document.visibilityState==='hidden'&&pdfBookmarkPendingRef.current)flushPdfBookmark();};
+    document.addEventListener('visibilitychange',saveWhenHidden);
+    return ()=>document.removeEventListener('visibilitychange',saveWhenHidden);
+  },[flushPdfBookmark]);
   const changePdfPage=(next:number)=>{
     if (!pdf) return;
     const page=Math.max(1,Math.min(20000,Math.floor(next)||1));
     setPdf(p=>p?{...p,page}:p);
-    if (pdf.resourceId) void act(async()=>{
-      await api(`/api/resources/${pdf.resourceId}/reading-position`,user,{method:'PATCH',body:{page}});
-    });
+    if (pdf.resourceId) {
+      const id=pdf.resourceId;
+      setData(previous=>({...previous,resources:previous.resources.map(r=>r.id===id?{...r,last_page:page}:r)}));
+      pdfBookmarkPendingRef.current={id,page};
+      if(pdfBookmarkTimerRef.current)clearTimeout(pdfBookmarkTimerRef.current);
+      pdfBookmarkTimerRef.current=setTimeout(flushPdfBookmark,650);
+    }
   };
-  const linkDriveFile=(file:DriveEntry)=>void act(async()=>{
+  const linkDriveFile=(file:DriveEntry)=>{
+    if(mutationBusyRef.current)return;
+    setLinkingFileId(file.id);
+    void act(async()=>{
     if(!linkCourse)throw new Error('Select a course before linking a PDF');
-    await api('/api/resources',user,{method:'POST',body:{course_id:linkCourse,week_number:linkScope==='course'?null:linkWeek,title:file.name,kind:linkKind,source:'drive',drive_file_id:file.id,item_id:linkScope==='course'?null:(linkItem||null)}});
-    await loadIndex();
-  });
+    const saved=await api<Resource>('/api/resources',user,{method:'POST',body:{course_id:linkCourse,week_number:linkScope==='course'?null:linkWeek,title:file.name,kind:linkKind,source:'drive',drive_file_id:file.id,item_id:linkScope==='course'?null:(linkItem||null)}});
+    // Reindex in the background; the returned resource updates the course immediately.
+    void loadIndex();
+    return saved;
+    },{collection:'resources'},{title:'PDF linked',detail:`${file.name} added to your course.`}).finally(()=>setLinkingFileId(null));
+  };
   const selectBackupFolder=()=>void act(async()=>{
     if(currentFolder.id==='root')throw new Error('Choose the Goodnotes backup folder, not the root of your Drive');
     const result=await api<{folder:DriveSource}>('/api/drive/source-folder',user,{method:'POST',body:{folder_id:currentFolder.id}});
     setSourceFolder(result.folder);setDriveIndex([]);
-  });
+  },{collection:'none'},{title:'Backup folder selected',detail:'Ready to scan Goodnotes PDFs.'});
   const scanBackup=async()=>{
-    setScanBusy(true);setError('');
+    if(scanBusyRef.current)return;
+    scanBusyRef.current=true;setScanBusy(true);setError('');
     try {
       const result=await api<DriveScanResponse>('/api/drive/scan',user,{method:'POST'});
       setDriveIndex(result.files);
       setSourceFolder(f=>f?{...f,scanned_at:result.scanned_at}:f);
       setVisibleCount(30);
-    }catch(e){setError(e instanceof Error?e.message:'Backup scan failed');}
-    finally{setScanBusy(false);}
+      notify({kind:'success',title:'Drive scan completed',detail:`${result.count} PDFs indexed.`});
+    }catch(e){notify({kind:'error',title:'Drive scan failed',detail:e instanceof Error?e.message:'Try again.',action:{label:'Retry scan',onClick:()=>{void scanBackup();}}});}
+    finally{scanBusyRef.current=false;setScanBusy(false);}
   };
-  const confirmSuggestion=(entry:DriveIndexed)=>void act(async()=>{
+  const confirmSuggestion=(entry:DriveIndexed)=>{
+    if(mutationBusyRef.current)return;
+    setLinkingFileId(entry.id);
+    void act(async()=>{
     if (!entry.suggestion)throw new Error('This PDF needs manual course/week selection');
     const suggestion=entry.suggestion;
-    await api('/api/resources',user,{method:'POST',body:{course_id:suggestion.course_id,
+    const saved=await api<Resource>('/api/resources',user,{method:'POST',body:{course_id:suggestion.course_id,
       week_number:['textbook','handwritten'].includes(suggestion.kind)?null:suggestion.week_number,title:entry.name,kind:suggestion.kind,source:'drive',drive_file_id:entry.id}});
-    await loadIndex();
-  });
+    // Reindex in the background; the returned resource updates the course immediately.
+    void loadIndex();
+    return saved;
+    },{collection:'resources'},{title:'PDF linked',detail:`${entry.name} added to your course.`}).finally(()=>setLinkingFileId(null));
+  };
   const indexedVisible=driveIndex.filter(f=>indexFilter==='all'||(indexFilter==='unlinked'?f.links.length===0:(!f.suggestion&&f.links.length===0)));
   const currentFolder=folderPath.at(-1)!;
   useEffect(()=>{if(tab==='library'&&drive.connected&&driveFiles.length===0)void browseDrive(currentFolder.id);},[tab,drive.connected]); // initial browse only
 
   if (useFirebase&&!authReady) return <div className="boot"><LoaderCircle className="spin"/><p>Checking sign-in…</p></div>;
-  if (useFirebase&&!user) return <main className="login-shell"><Card className="login-card"><span className="brand-mark"><GraduationCap/></span><h1>Your private Study Hub</h1><p>Courses, notes, deadlines and focus time in one workspace. Only your authorized account can access the deployed app.</p><button className="btn primary" onClick={()=>void signIn()}>Sign in with Google</button></Card></main>;
+  if (useFirebase&&!user) return <main className="login-shell"><Card className="login-card"><span className="brand-mark"><GraduationCap/></span><h1>Study Hub</h1><p>Sign in to continue.</p><button className="btn primary" onClick={()=>void signIn()}>Sign in with Google</button></Card></main>;
 
   return <div className={`app-shell ${theme==='dark'?'theme-dark':''}`}>
+    <FeedbackToasts messages={feedbackMessages} dismiss={dismissFeedback}/>
     <aside className="sidebar">
-      <div className="brand"><span className="brand-mark"><GraduationCap size={21}/></span><div><strong>Study Hub</strong><small>Personal workspace</small></div></div>
+      <div className="brand"><span className="brand-mark"><BookOpen size={21}/></span><div><strong>Study Hub</strong><small>DTU</small></div></div>
       <div className="nav-label">MY WORKSPACE</div>
-      <nav className="side-nav" aria-label="Main navigation">{tabs.map(t=><button key={t.id} onClick={()=>setTab(t.id)} className={'nav-btn '+(tab===t.id?'current':'')}><t.icon size={18}/>{t.label}{t.id==='tasks'&&openTasks.length>0&&<span className="nav-count">{openTasks.length}</span>}</button>)}</nav>
+      <nav className="side-nav" aria-label="Main navigation">{tabs.map(t=><button key={t.id} type="button" onClick={()=>navigate(t.id)} className={'nav-btn '+(tab===t.id?'current':'')} aria-current={tab===t.id?"page":undefined}><t.icon size={18}/>{t.label}{t.id==='tasks'&&openTasks.length>0&&<span className="nav-count">{openTasks.length}</span>}</button>)}</nav>
       <div className="sidebar-spacer"/>
-      <div className="sidebar-bottom"><div className="privacy"><span className="live-dot"/><span>{useFirebase?'Private Firebase account':'Local private development'}</span></div><p>RepLap stays in its own project.</p><button className="theme-toggle" onClick={toggleTheme}>{theme==='light'?<Moon size={15}/>:<Sun size={15}/>} {theme==='light'?'Switch to dark theme':'Switch to light theme'}</button>{useFirebase&&<button className="link-btn" onClick={()=>void signOutUser()}>Sign out</button>}</div>
+      <div className="sidebar-bottom">
+        <div className="sidebar-profile">
+          <span className="sidebar-profile-avatar" aria-hidden="true">{profileInitials}</span>
+          <div><strong title={profileName}>{profileName}</strong><small>DTU student</small></div>
+        </div>
+        <div className="sidebar-footer-row">
+          <span className="sidebar-account"><span className="live-dot" aria-hidden="true"/>{useFirebase?'Private workspace':'Local development'}</span>
+          {useFirebase&&<button type="button" className="sidebar-signout" aria-label="Sign out of Study Hub" onClick={()=>void signOutUser()}><LogOut size={15}/> Sign out</button>}
+        </div>
+      </div>
     </aside>
     <div className="main-area">
-      <header className="topbar"><div className="breadcrumb"><Sparkles size={16}/> PERSONAL HUB <span>/</span> <strong>{pageNames[tab]}</strong></div><div className="topbar-right"><span className="topbar-date">{dateLabel}</span><button className="topbar-theme" aria-label={theme==='light'?'Switch to dark theme':'Switch to light theme'} title={theme==='light'?'Dark theme':'Light theme'} onClick={toggleTheme}>{theme==='light'?<Moon size={17}/>:<Sun size={17}/>}</button><button className="topbar-focus" onClick={()=>setTab('focus')}><Zap size={15}/> Quick focus</button><span className="avatar">SH</span></div></header>
-      <main className="page-content">
+      <header className={'topbar'+(tab==='today'?' dashboard-topbar':'')}><div className="breadcrumb"><Sparkles size={16}/> PERSONAL HUB <span>/</span> <strong>{pageNames[tab]}</strong></div><div className="topbar-right">
+          <span className="topbar-datetime"><span className="topbar-date-section"><CalendarDays size={15} aria-hidden="true"/>{dateLabel}</span><span className="topbar-datetime-divider" aria-hidden="true"/><span title="Your local time (24-hour clock)" aria-label={`Local time ${timeLabel}`}><Clock3 size={15} aria-hidden="true"/><time dateTime={clockReady?new Date(now*1000).toISOString():undefined}>{timeLabel}</time></span></span>
+          <div className="topbar-focus-wrap" ref={quickFocusRef}>
+            {active?<>
+              <button type="button" className="topbar-focus-session" aria-expanded={quickFocusOpen} aria-controls="active-focus-menu" onClick={()=>setQuickFocusOpen(value=>!value)} title="Manage focus session" aria-label={`${active.status==='paused'?'Paused':'Running'} focus session; manage session`}>
+                <span className={'topbar-focus-dot'+(active.status==='paused'?' paused':'')}/>
+                <span>{active.status==='paused'?'Paused':'Focus'} · <FocusElapsed session={active} anchor={focusClock}/></span>
+                <ChevronDown size={15} aria-hidden="true"/>
+              </button>
+              {quickFocusOpen&&<div id="active-focus-menu" className="active-focus-menu" role="group" aria-label="Focus session controls">
+                <button type="button" disabled={focusBusy} onClick={()=>{setQuickFocusOpen(false);sessionAction(active.status==='running'?'pause':'resume');}}>
+                  {active.status==='running'?<Pause size={16}/>:<Play size={16}/>} {active.status==='running'?'Pause session':'Resume session'}
+                </button>
+                <button type="button" disabled={focusBusy} onClick={()=>{setQuickFocusOpen(false);reviewFinish();}}><Square size={15}/> End session</button>
+              </div>}
+            </>:<>
+              <button type="button" className="topbar-quick-focus" aria-expanded={quickFocusOpen} aria-controls="quick-focus-menu" onClick={()=>setQuickFocusOpen(value=>!value)} disabled={busy||focusBusy||!snapshotReady}>
+                <Timer size={16}/> Quick focus <ChevronDown size={14}/>
+              </button>
+              {quickFocusOpen&&<div className="quick-focus-menu" id="quick-focus-menu" role="group" aria-label="Quick focus setup">
+                <div className="quick-focus-menu-heading"><Timer size={17}/><strong>Start a focus session</strong></div>
+                <label>Focus duration
+                  <select value={quickFocusMode} onChange={e=>setQuickFocusMode(e.target.value as typeof quickFocusMode)}>
+                    <option value="25">Pomodoro · 25 min</option><option value="50">Focus · 50 min</option><option value="90">Deep work · 90 min</option><option value="free">Stopwatch</option>
+                  </select>
+                </label>
+                <label>Course (optional)
+                  <select value={quickFocusCourse} onChange={e=>{setQuickFocusCourse(e.target.value);setQuickFocusItem('');}}>
+                    <option value="">Personal / general</option>
+                    {data.courses.filter(c=>!c.archived).map(c=><option key={c.id} value={c.id}>{c.code} · {c.title}</option>)}
+                  </select>
+                </label>
+                <label>Task (optional)
+                  <select value={quickFocusItem} onChange={e=>setQuickFocusItem(e.target.value)}>
+                    <option value="">No linked task</option>
+                    {focusTasksForContext(data.items,quickFocusCourse).map(item=><option key={item.id} value={item.id}>{item.title}</option>)}
+                  </select>
+                </label>
+                <button type="button" className="btn primary quick-focus-start" disabled={busy||focusBusy} onClick={()=>void startQuickFocus()}><Play size={15}/> Start focus</button>
+                <p>Timed sessions end manually.</p>
+              </div>}
+            </>}
+          </div>
+          <button className="topbar-theme" disabled={loading||refreshing||busy} aria-label="Refresh study data" title="Refresh study data" onClick={()=>void load()}>{loading||refreshing?<LoaderCircle size={17} className="spin"/>:<RotateCcw size={17}/>}</button>
+          <button className="topbar-theme" aria-label={theme==='light'?'Switch to dark theme':'Switch to light theme'} title={theme==='light'?'Dark theme':'Light theme'} onClick={toggleTheme}>{theme==='light'?<Moon size={17}/>:<Sun size={17}/>}</button>
+        </div></header>
+      <main className={'page-content'+(tab==='today'?' dashboard-page':'')}>
         {error&&<div className="alert" role="alert"><span>{error}</span><button onClick={()=>setError('')} aria-label="Dismiss error"><X size={17}/></button></div>}
-        {loading?<div className="loading-state"><LoaderCircle className="spin"/> Loading your workspace…</div>:<>
-          {tab==='today'&&<>
-            <div className="page-heading"><div><span className="eyebrow"><Sparkles size={13}/> YOUR DAILY WORKSPACE</span><h1>Make today count.</h1><p>Everything you need to move forward, in one calm space.</p></div><button className="btn secondary" onClick={()=>{setTab('tasks');setTaskForm(true);}}><Plus size={16}/> Quick task</button></div>
-            <div className="welcome-hero"><div className="hero-copy"><span className="hero-label"><Sparkles size={15}/> A FRESH PAGE, EVERY DAY</span><h2>Small steps. Big progress.</h2><p>Pick a priority, settle in, and find your flow. You've got this.</p><div className="hero-actions"><button className="btn hero-primary" onClick={()=>setTab('courses')}><BookOpen size={15}/> Continue studying</button><button className="btn hero-secondary" onClick={()=>setTab('tasks')}><ListTodo size={15}/> My tasks</button></div></div><div className="hero-decoration" aria-hidden="true"><span className="hero-orb"><BookOpen size={57}/></span><span className="hero-float"><Sparkles size={27}/></span></div></div>
-            <div className="stats-grid">
-              <Card className="stat"><span className="stat-icon"><ListTodo/></span><span>Open tasks</span><strong>{openTasks.length}</strong><small>{plannedToday.length} planned today</small></Card>
-              <Card className="stat"><span className="stat-icon"><Clock3/></span><span>Focus this week</span><strong>{(weekSeconds/3600).toFixed(1)}<em>h</em></strong><small>Target: {weeklyGoal} hours</small></Card>
-              <Card className="stat"><span className="stat-icon"><CalendarDays/></span><span>Upcoming deadlines</span><strong>{upcoming.length}</strong><small>{overdue.length?`${overdue.length} overdue`:'All deadlines on track'}</small></Card>
+        {(loading||(!snapshotIssue&&(!snapshotReady||loadedUserRef.current!==(user?.uid||'local'))))?<div className="loading-state" role="status"><LoaderCircle className="spin"/> Securely loading your workspace…</div>:!snapshotReady?<Card className="load-error" >
+          <div className="load-error-icon"><AlertTriangle size={24}/></div>
+          <span className="eyebrow">WORKSPACE UNAVAILABLE</span>
+          <h2>{snapshotIssue?.title||'Could not load your Study Hub'}</h2>
+          <p className="muted">{snapshotIssue?.description||'Your data has not loaded. Retrying is safe; your existing records will not be deleted.'}</p>
+          <div className="load-error-actions"><button className="btn primary" onClick={()=>void load()}><RotateCcw size={16}/> Retry loading</button>{useFirebase&&<button className="btn secondary" onClick={()=>void signOutUser()}>Sign out</button>}</div>
+          {snapshotIssue&&<details className="load-diagnostics"><summary>Technical details for troubleshooting</summary><code>{snapshotIssue.diagnostics}</code></details>}
+        </Card>:<>
+          {tab==='today'&&<div className="dashboard-home">
+            <div className="dashboard-intro">
+              <span className="eyebrow"><Sparkles size={14}/> YOUR STUDY HUB</span>
+              <h1>{hello}{firstName?`, ${firstName}`:''} <span aria-hidden="true">👋</span></h1>
             </div>
-            <div className="two-col-layout">
-              <div className="stack">
-                <Card><SectionTitle title="Today's priorities" aside={<button className="text-button" onClick={()=>setTab('tasks')}>All tasks <ArrowRight size={14}/></button>}/>
-                  {plannedToday.length||overdue.length? [...new Map([...overdue,...plannedToday].map(i=>[i.id,i])).values()].map(i=><div className="task-row" key={i.id}><input aria-label={`Complete ${i.title}`} type="checkbox" checked={i.done} onChange={()=>toggle(i)}/><div className="task-content"><strong>{i.title}</strong><small>{i.course_id?(data.courses.find(c=>c.id===i.course_id)?.code||'Study'):'Personal'} · {kindLabels[i.kind]}</small></div>{i.course_id&&<button className="icon-btn" title="Start focus" onClick={()=>startFrom(i)}><Timer size={16}/></button>}</div>):<EmptyState icon={<CheckCircle2 size={24}/>} title="A clear day" detail="Plan a task or start a free focus session."/>}
-                </Card>
-                <Card><SectionTitle title="Upcoming deadlines" aside={<Badge>{upcoming.length} open</Badge>}/>
-                  {upcoming.slice(0,4).map(i=><div className="deadline-row" key={i.id}><span className="date-tile">{i.due_date?.slice(8)}</span><div><strong>{i.title}</strong><small>{data.courses.find(c=>c.id===i.course_id)?.code||'Personal'} · Due {dateText(i.due_date)}</small></div>{i.due_date&&i.due_date<today&&<Badge tone="danger">Overdue</Badge>}</div>)}
-                  {!upcoming.length&&<p className="muted">No upcoming deadlines yet.</p>}
-                </Card>
+            <div className="home-layout">
+              <div className="home-main-column">
+                <div className="home-stats-grid" aria-label="Study overview">
+                  <div className="home-stat"><span className="home-stat-icon purple"><ListTodo size={23}/></span><strong>{todayWork.length}</strong><span>Tasks today</span></div>
+                  <div className={'home-stat'+(overdue.length?' danger':'')}><span className="home-stat-icon red"><AlertTriangle size={23}/></span><strong>{overdue.length}</strong><span>Overdue</span></div>
+                  <div className="home-stat"><span className="home-stat-icon purple"><CalendarDays size={23}/></span><strong>{upcoming.length}</strong><span>Upcoming deadlines</span></div>
+                  <div className="home-stat"><span className="home-stat-icon blue"><BarChart3 size={23}/></span><strong><ProgressValue value={weekSeconds/3600} decimals={1} suffix=" h"/></strong><span>Focus this week</span></div>
+                </div>
+                <section className="home-panel home-course-panel" aria-labelledby="home-courses-title">
+                  <div className="home-panel-heading"><div className="home-heading-icon"><BookOpen size={21}/></div><div><h2 id="home-courses-title">Today’s study courses</h2></div><span className="home-count-pill">{studyGroups.length} {studyGroups.length===1?'course':'courses'}</span></div>
+                  {studyGroups.length?<>
+                    <div className="home-course-grid" ref={courseScrollerRef} onScroll={syncCourseScroll} role="region" aria-label="Today’s study course cards" tabIndex={0}>
+                      {studyGroups.map((group,index)=>{
+                        const weekLabel=group.weekNumbers.length===1?`Week ${group.weekNumbers[0]}`:group.weekNumbers.length?`Weeks ${group.weekNumbers.join(', ')}`:'Course tasks';
+                        const doneCount=visibleCourseDoneCount(group.doneCount,group.activityCount,group.tasks,completingIds,completedItemIds);
+                        const progress=group.activityCount?Math.round(100*doneCount/group.activityCount):0;
+                        return <div key={group.course.id} className={'home-course-tile tile-'+(index%4)}>
+                          <div className="home-course-heading"><div className="home-course-icon"><BookOpen size={24}/></div><div className="home-course-title"><h3>{group.course.code} · {group.course.title}</h3><span>{weekLabel}</span></div>{group.overdueCount?<span className="home-overdue-pill">{group.overdueCount} overdue</span>:<span className="home-today-pill">Today</span>}</div>
+                          <div className="home-course-progress"><span>{doneCount} / {group.activityCount} activities · <ProgressValue value={progress}/></span><ProgressTrack className="home-progress-track" identity={group.course.id} label={`${group.course.title} selected week activity progress`} value={progress}/></div>
+                          <div className="home-course-activities">
+                            {group.tasks.slice(0,2).map(i=><div className={'home-course-task task-completion-row'+(isOverdue(i,today)?' late':'')+(completingIds.has(i.id)?' is-completing':'')+(exitingIds.has(i.id)?' is-exiting':'')} key={i.id}><input type="checkbox" aria-label={`Complete ${i.title}`} disabled={busy||pendingItems.has(i.id)||completingIds.has(i.id)} className="task-completion-check" checked={i.done||completingIds.has(i.id)} onChange={()=>toggle(i)}/><button className="home-course-task-title" title={`Open ${i.title} in course`} onClick={()=>openCourse(group.course.id,i.week_number||undefined)}>{i.title}{group.weekNumbers.length>1&&i.week_number&&<small>W{i.week_number}</small>}</button>{isOverdue(i,today)&&<span className="home-overdue-pill compact">Overdue</span>}{i.resource_id&&<button className="home-task-resource" disabled={busy} onClick={()=>openTaskResource(i)} aria-label={`Open resource for ${i.title}`} title="Open linked resource"><BookOpen size={15}/></button>}</div>)}
+                            {group.tasks.length>2&&<button className="home-extra-items" onClick={()=>navigate('tasks')}>+ {group.tasks.length-2} more tasks <ArrowRight size={13}/></button>}
+                          </div>
+                          <div className="home-course-actions"><button className="home-open-course" onClick={()=>openCourse(group.course.id,group.tasks[0]?.week_number||undefined)}>Open course <ArrowRight size={16}/></button><CourseActionsMenu courseId={group.course.id} courseTitle={group.course.title} onViewTasks={()=>openCourse(group.course.id,undefined,undefined,'tasks')} onFocus={()=>focusOnCourse(group.course.id)} onLibrary={()=>openCourse(group.course.id,undefined,undefined,'course-library')}/></div>
+                        </div>;
+                      })}
+                    </div>
+                    {studyGroups.length>3&&<div className="home-course-pagination" aria-label="Browse courses"><span>{Math.min(courseScrollIndex+1,studyGroups.length)}–{Math.min(courseScrollIndex+visibleCourseCards,studyGroups.length)} of {studyGroups.length} courses</span><div><button type="button" aria-label="Previous course cards" onClick={()=>scrollCourses(-1)} disabled={courseScrollIndex===0}><ArrowLeft size={16}/></button><button type="button" aria-label="Next course cards" onClick={()=>scrollCourses(1)} disabled={!canScrollNextCourse}><ArrowRight size={16}/></button></div></div>}
+                  </>:<PhotoEmptyState compact scene="home" title="Your day is clear" detail={selectedCourse?'No course work scheduled today. Plan a new activity when you’re ready.':'No study tasks planned for today.'} actionLabel="Add task" onAction={()=>{setTaskForm(true);setTab('tasks');}} secondaryLabel="Open calendar" onSecondary={()=>openCalendarDate(today)}/>}
+                </section>
+                <section className="home-panel home-priorities" aria-labelledby="home-priorities-title">
+                  <div className="home-panel-heading"><div className="home-heading-icon"><CheckCircle2 size={21}/></div><div><h2 id="home-priorities-title">Today’s priorities</h2></div><div className="home-priority-filters" aria-label="Filter priorities">{(['all','course','personal'] as const).map(filter=><button key={filter} onClick={()=>setPriorityFilter(filter)} className={priorityFilter===filter?'active':''} aria-pressed={priorityFilter===filter}>{filter==='all'?'All':filter==='course'?'Course':'Personal'}</button>)}</div></div>
+                  {filteredPriorities.length?<div className="home-priority-list">{filteredPriorities.slice(0,6).map(i=><div key={i.id} className={'home-priority-row task-completion-row'+(isOverdue(i,today)?' overdue':'')+(completingIds.has(i.id)?' is-completing':'')+(exitingIds.has(i.id)?' is-exiting':'')}><input type="checkbox" aria-label={`Complete ${i.title}`} disabled={busy||pendingItems.has(i.id)||completingIds.has(i.id)} className="task-completion-check" checked={i.done||completingIds.has(i.id)} onChange={()=>toggle(i)}/><button type="button" className="home-priority-info" aria-label={`Open ${i.title}`} onClick={()=>openDeadlineDestination(i)}><strong>{i.title}</strong><small>{i.course_id?(data.courses.find(c=>c.id===i.course_id)?.code||'Course'):'Personal'}{i.week_number?` · Week ${i.week_number}`:''}{i.due_date&&i.due_date<today?` · Due ${dateText(i.due_date)}`:i.planned_date&&i.planned_date<today?` · Planned ${dateText(i.planned_date)}`:''}</small></button><span className={'home-priority-tag'+(isOverdue(i,today)?' overdue':'')}>{isOverdue(i,today)?'Overdue':'Today'}</span>{i.resource_id&&<button className="home-row-action" aria-label={`Open resource for ${i.title}`} disabled={busy} onClick={()=>openTaskResource(i)} title="Open linked resource"><BookOpen size={16}/></button>}<button className="home-row-action" aria-label={`Focus on ${i.title}`} disabled={busy} onClick={()=>startFrom(i)} title="Focus on task"><Play size={15}/></button></div>)}</div>:studyGroups.length&&priorityFilter==='all'?<PhotoEmptyState compact scene="home" title="All caught up" detail="No priorities scheduled for today." actionLabel="Add task" onAction={()=>{setTaskForm(true);setTab('tasks');}}/>:<div className="home-list-empty"><CheckCircle2 size={19}/> {priorityFilter==='all'?'No priorities for today.':`No ${priorityFilter} priorities for today.`}</div>}
+                  {filteredPriorities.length>6&&<button className="home-panel-link home-list-footer" onClick={()=>navigate('tasks')}>View {filteredPriorities.length-6} more tasks <ArrowRight size={14}/></button>}
+                </section>
               </div>
-              <div className="stack">
-                <Card className="accent-card"><div className="overline">PICK UP WHERE YOU LEFT OFF</div><div className="accent-icon"><BookOpen size={25}/></div><h2>{selectedCourse?.title||'Start your first course'}</h2><p>{selectedCourse?`${selectedCourse.code} · Week ${weekNumber}${selectedWeek?` · ${selectedWeek.title}`:''}`:'Add your DTU courses and weekly topics to organize all your learning materials.'}</p><button className="btn primary" onClick={()=>setTab('courses')}>{selectedCourse?'Open week planner':'Set up a course'} <ArrowRight size={16}/></button></Card>
-                <Card><SectionTitle title="Weekly focus goal" aside={<span className="quiet-number">{Math.round(weekSeconds/60)} / {weeklyGoal*60} min</span>}/><div className="progress-track"><div style={{width:`${weekPct}%`}}/></div><div className="goal-footer"><span>{weekPct}% of your goal</span><label>Goal <input type="number" min={1} max={80} value={weeklyGoal} onChange={e=>{const n=Math.max(1,Math.min(80,Number(e.target.value)||1));setWeeklyGoal(n);localStorage.setItem('studyhub-focus-goal',String(n));}}/> h / week</label></div></Card>
+              <div className="home-side-column">
+                <section className="home-panel home-deadlines" aria-labelledby="home-deadlines-title"><div className="home-widget-heading"><span className="home-heading-icon"><CalendarDays size={20}/></span><h2 id="home-deadlines-title">Upcoming deadlines</h2><button className="home-panel-link" onClick={showUpcomingTasks}>View all <ArrowRight size={14}/></button></div>{upcoming.slice(0,3).map(i=><button className="home-deadline" key={i.id} onClick={()=>openDeadlineDestination(i)}><span className="home-deadline-date"><strong>{i.due_date!.slice(8,10)}</strong>{new Intl.DateTimeFormat('en-GB',{month:'short'}).format(new Date(i.due_date!+'T12:00:00'))}</span><span className="home-deadline-info"><strong>{i.title}</strong><small>{data.courses.find(c=>c.id===i.course_id)?.code||'Personal'}{i.week_number?` · Week ${i.week_number}`:''}</small></span><span className="home-days-away">{nextDeadlineDays(today,i.due_date!)===0?'Today':`${nextDeadlineDays(today,i.due_date!)}d`}</span></button>)}{!upcoming.length&&<p className="home-side-empty">No upcoming deadlines.</p>}</section>
+                <section className="home-panel home-week-strip" aria-labelledby="home-calendar-title"><div className="home-widget-heading"><span className="home-heading-icon"><CalendarDays size={20}/></span><h2 id="home-calendar-title">Next 7 days</h2><button className="home-panel-link" onClick={()=>openCalendarDate(homeSelectedDate||today)}>Full calendar <ArrowRight size={14}/></button></div><div className="home-day-grid">{calendarDays.map((day,index)=><button key={day.date} className={'home-day'+(index===0?' current':'')+(homeSelectedDate===day.date?' selected':'')} aria-label={`Show ${day.weekday} ${day.day} tasks inline${day.count?`, ${day.count} scheduled items`:''}`} aria-pressed={homeSelectedDate===day.date} aria-controls={homeSelectedDate?'home-day-agenda':undefined} title={`${day.count} planned/due items`} onClick={()=>toggleHomeAgenda(day.date)}><span>{day.weekday}</span><strong>{day.day}</strong><span className={'home-day-dot'+(day.count?' has-work':'')}/></button>)}</div>{homeSelectedDate&&<div id="home-day-agenda" className="home-inline-agenda"><div className="home-inline-agenda-header"><div><strong>{new Intl.DateTimeFormat('en-GB',{weekday:'long',day:'numeric',month:'short'}).format(new Date(homeSelectedDate+'T12:00:00'))}</strong><span>{homeAgenda.length} {homeAgenda.length===1?'item':'items'}</span></div><button type="button" aria-label="Close day details" className="home-agenda-close" onClick={()=>setHomeSelectedDate(null)}><X size={16}/></button></div>{homeAgenda.length?<div className="home-inline-agenda-list">{homeAgenda.slice(0,5).map(({item,reason})=><div className={'home-inline-agenda-item task-completion-row'+(completingIds.has(item.id)?' is-completing':'')+(exitingIds.has(item.id)?' is-exiting':'')} key={item.id}><input type="checkbox" checked={item.done||completingIds.has(item.id)} disabled={busy||pendingItems.has(item.id)||completingIds.has(item.id)} className="task-completion-check" aria-label={`Complete ${item.title}`} onChange={()=>toggle(item)}/><button type="button" className="home-agenda-item-main" onClick={()=>openDeadlineDestination(item)}><strong>{item.title}</strong><small>{data.courses.find(c=>c.id===item.course_id)?.code||'Personal'}{item.week_number?` · Week ${item.week_number}`:''} · {reason==='planned-and-due'?'Planned & due':reason==='planned'?'Planned':'Due'}</small></button><ArrowRight size={15} aria-hidden="true"/></div>)}{homeAgenda.length>5&&<p className="home-agenda-more">+{homeAgenda.length-5} additional items</p>}</div>:<p className="home-side-empty">No tasks planned or due on this day.</p>}<button type="button" className="home-panel-link home-agenda-full" onClick={()=>openCalendarDate(homeSelectedDate)}>Open full day <ArrowRight size={14}/></button></div>}</section>
               </div>
             </div>
-          </>}
+          </div>}
 
-          {tab==='courses'&&<CoursePlanner data={data} user={user} busy={busy}
-            courseId={courseId} weekNumber={weekNumber} selectCourse={setCourseId} selectWeek={setWeekNumber}
+          {tab==='courses'&&<CoursePlanner data={data.items===presentedItems?data:{...data,items:presentedItems}} progressItems={data.items} user={user} busy={busy} pendingItems={pendingItems} completingIds={completingIds} exitingIds={exitingIds}
+            courseId={courseId} weekNumber={weekNumber} landingItem={courseLandingItem} sectionJump={courseSectionJump} selectCourse={rememberCourse} selectWeek={rememberWeek}
             run={act} toggleItem={toggle} focusOn={startFrom}
             openResource={r=>{if(r.source==='drive'&&r.drive_file_id)previewPdf(r.drive_file_id,r.title,r.id,r.last_page);else if(r.url)window.open(r.url,'_blank','noopener,noreferrer');}}
             openDrive={(id,week,kind,scope)=>{setLinkCourse(id);setLinkWeek(week);setLinkScope(scope);setLinkKind(kind);setLinkItem('');setTab('library');}}
           />}
 
-          {tab==='tasks'&&<>
-            <div className="page-heading"><div><span className="eyebrow"><CheckCircle2 size={13}/> YOUR ACTION LIST</span><h1>Clear mind. Clear tasks.</h1><p>Everything on your plate, without the overwhelm.</p></div><button className="btn primary" onClick={()=>setTaskForm(!taskForm)}><Plus size={17}/> New task</button></div>
-            {taskForm&&<Card className="form-card"><h3>New personal task</h3><form className="form-grid" onSubmit={newTask}><FormRow label="What do you need to do?"><input required value={taskDraft.title} onChange={e=>setTaskDraft(p=>({...p,title:e.target.value}))} placeholder="Buy groceries"/></FormRow><FormRow label="Priority"><select value={taskDraft.priority} onChange={e=>setTaskDraft(p=>({...p,priority:e.target.value}))}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></FormRow><FormRow label="Planned date"><input type="date" value={taskDraft.planned_date} onChange={e=>setTaskDraft(p=>({...p,planned_date:e.target.value}))}/></FormRow><FormRow label="Due date"><input type="date" value={taskDraft.due_date} onChange={e=>setTaskDraft(p=>({...p,due_date:e.target.value}))}/></FormRow><div className="form-actions"><button type="button" className="btn secondary" onClick={()=>setTaskForm(false)}>Cancel</button><button className="btn primary" disabled={busy}>Create task</button></div></form></Card>}
-            <Card><div className="filterbar"><div className="segmented">{(['today','upcoming','completed'] as const).map(k=><button key={k} className={taskFilter===k?'selected':''} onClick={()=>setTaskFilter(k)}>{k==='today'?'Today':k==='upcoming'?'Upcoming':'Completed'}</button>)}</div><span className="muted">{sortedTasks.length} tasks</span></div>
-              {sortedTasks.length?sortedTasks.map(i=><div className="task-list-row" key={i.id}><input type="checkbox" checked={i.done} aria-label={`Complete ${i.title}`} onChange={()=>toggle(i)}/><div className="task-content"><strong className={i.done?'complete':''}>{i.title}</strong><div className="inline-meta"><Badge>{i.course_id?(data.courses.find(c=>c.id===i.course_id)?.code||'Study'):'Personal'}</Badge><Badge tone={i.priority==='high'?'warning':'muted'}>{i.priority} priority</Badge>{i.kind==='assignment'&&<Badge tone="good">Assignment</Badge>}</div><DayStatus i={i}/></div>{i.course_id&&<button className="icon-btn" title="Start focus" onClick={()=>startFrom(i)}><Timer size={17}/></button>}<button className="btn secondary small" onClick={()=>startTaskEdit(i)}>Edit</button></div>):<EmptyState icon={<ListTodo size={24}/>} title="Nothing in this view" detail="New personal tasks appear here, along with scheduled revision and course assignments."/>}
-            </Card>
-            {taskEditId&&<Card className="form-card"><h3>Edit study task</h3><form className="mini-form" onSubmit={saveTask}><FormRow label="Title"><input required value={taskEditDraft.title} onChange={e=>setTaskEditDraft(p=>({...p,title:e.target.value}))}/></FormRow><div className="form-grid"><FormRow label="Planned date"><input type="date" value={taskEditDraft.planned_date} onChange={e=>setTaskEditDraft(p=>({...p,planned_date:e.target.value}))}/></FormRow><FormRow label="Due date"><input type="date" value={taskEditDraft.due_date} onChange={e=>setTaskEditDraft(p=>({...p,due_date:e.target.value}))}/></FormRow><FormRow label="Priority"><select value={taskEditDraft.priority} onChange={e=>setTaskEditDraft(p=>({...p,priority:e.target.value}))}><option>low</option><option>medium</option><option>high</option></select></FormRow><FormRow label="Chapter"><input value={taskEditDraft.chapter} onChange={e=>setTaskEditDraft(p=>({...p,chapter:e.target.value}))}/></FormRow><FormRow label="Page start"><input type="number" min={1} value={taskEditDraft.page_start} onChange={e=>setTaskEditDraft(p=>({...p,page_start:e.target.value}))}/></FormRow><FormRow label="Page end"><input type="number" min={1} value={taskEditDraft.page_end} onChange={e=>setTaskEditDraft(p=>({...p,page_end:e.target.value}))}/></FormRow></div><FormRow label="Instructions"><textarea rows={2} value={taskEditDraft.notes} onChange={e=>setTaskEditDraft(p=>({...p,notes:e.target.value}))}/></FormRow>{data.items.find(i=>i.id===taskEditId)?.kind==='assignment'&&<label className="inline-check"><input type="checkbox" checked={taskEditDraft.submitted} onChange={e=>setTaskEditDraft(p=>({...p,submitted:e.target.checked}))}/> Officially submitted</label>}<div className="form-actions"><button type="button" className="btn secondary" onClick={()=>setTaskEditId('')}>Cancel</button><button className="btn primary" disabled={busy}>Save task</button></div></form></Card>}
-            <div className="help-note">Planned date = when you intend to work. Due date = deadline. Editing one never changes the other.</div>
-          </>}
+          {tab==='tasks'&&<TasksPlanner items={tasks} courses={data.courses} user={user} busy={busy} pendingItems={pendingItems} completingIds={completingIds} exitingIds={exitingIds}
+            run={act} onToggle={toggle} onFocus={startFrom} onOpenResource={openTaskResource} createOpen={taskForm} setCreateOpen={setTaskForm}
+            initialTaskMode={taskLandingMode} taskJump={taskJump} onTaskJumpHandled={()=>setTaskJump(null)}/>}
+
+          {tab==='calendar'&&<TasksPlanner items={tasks} courses={data.courses} user={user} busy={busy} pendingItems={pendingItems} completingIds={completingIds} exitingIds={exitingIds}
+            run={act} onToggle={toggle} onFocus={startFrom} onOpenResource={openTaskResource} createOpen={taskForm} setCreateOpen={setTaskForm}
+            calendarOnly calendarJump={calendarJump}/>}
 
           {tab==='focus'&&<>
-            <div className="page-heading"><div><span className="eyebrow"><Target size={13}/> DEEP WORK</span><h1>Find your flow.</h1><p>Settle into a distraction-free session. Every minute counts.</p></div><Badge tone={active?active.status==='running'?'good':'warning':'muted'}>{active?active.status:'Ready'}</Badge></div>
+            <div className="page-heading"><div><span className="eyebrow"><Target size={13}/> DEEP WORK</span><h1>Find your flow.</h1><p>Settle into a distraction-free session. Every minute counts.</p></div></div>
             <div className="focus-layout"><Card className="focus-card">
-              {!active&&<div className="focus-settings"><FormRow label="Course (optional)"><select value={focusCourse} onChange={e=>{setFocusCourse(e.target.value);setFocusItem('');}}><option value="">General study</option>{data.courses.filter(c=>!c.archived).map(c=><option key={c.id} value={c.id}>{c.code} · {c.title}</option>)}</select></FormRow><FormRow label="Study task (optional)"><select value={focusItem} onChange={e=>setFocusItem(e.target.value)}><option value="">No linked task</option>{data.items.filter(i=>i.course_id===focusCourse).map(i=><option key={i.id} value={i.id}>{i.title}</option>)}</select></FormRow></div>}
+              {!active&&<div className="focus-settings"><FormRow label="Course (optional)"><select value={focusCourse} onChange={e=>{setFocusCourse(e.target.value);setFocusItem('');}}><option value="">General / personal</option>{data.courses.filter(c=>!c.archived).map(c=><option key={c.id} value={c.id}>{c.code} · {c.title}</option>)}</select></FormRow><FormRow label="Focus task (optional)"><select value={focusItem} onChange={e=>setFocusItem(e.target.value)}><option value="">No linked task</option>{focusTasksForContext(data.items,focusCourse).map(i=><option key={i.id} value={i.id}>{i.title}</option>)}</select></FormRow></div>}
               {active&&<div className="focus-context"><Badge tone="good">Active session</Badge><strong>{data.items.find(i=>i.id===active.item_id)?.title||data.courses.find(c=>c.id===active.course_id)?.title||'General focus'}</strong></div>}
               <div className="focus-modes">{(['25','50','90','free'] as const).map(m=><button key={m} disabled={!!active} className={focusMode===m?'current':''} onClick={()=>setFocusMode(m)}>{m==='free'?'Stopwatch':`${m} min`}</button>)}</div>
-              <div className="timer-dial"><span className="dial-label">{active?active.status==='paused'?'PAUSED':'FOCUSING':focusMode==='free'?'STOPWATCH':'FOCUS TARGET'}</span><strong>{active?duration(elapsedFocus(active,now)):focusMode==='free'?'00:00:00':duration(Number(focusMode)*60)}</strong><span className="dial-sub">{active?.mode!=='free'&&active?`Target: ${active.mode} minutes`:active?'Count-up session':'Ready when you are'}</span></div>
-              {active? <div className="focus-buttons"><button className="btn secondary" onClick={()=>sessionAction(active.status==='running'?'pause':'resume')} disabled={busy}>{active.status==='running'?<Pause size={17}/>:<Play size={17}/>} {active.status==='running'?'Pause':'Resume'}</button><button className="btn primary" onClick={reviewFinish}><Square size={15}/> Finish & review</button></div>:<button className="btn primary focus-start" disabled={busy} onClick={beginFocus}><Play size={18}/> Start focusing</button>}
-              <p className="focus-tip">The session persists on the backend. If you close this tab, return here to review, resume or correct the elapsed time.</p>
-            </Card><div className="stack"><Card><SectionTitle title="Your focus statistics"/><div className="focus-stat"><span>This week</span><strong>{(weekSeconds/3600).toFixed(1)} hours</strong></div><div className="focus-stat"><span>All time</span><strong>{(totalSeconds/3600).toFixed(1)} hours</strong></div><div className="focus-stat"><span>Completed sessions</span><strong>{data.sessions.filter(s=>s.status==='finished').length}</strong></div></Card><Card><SectionTitle title="Recent sessions"/>{data.sessions.filter(s=>s.status==='finished').sort((a,b)=>(b.ended_at||0)-(a.ended_at||0)).slice(0,5).map(s=><div className="session-row" key={s.id}><span><Check size={15}/></span><div><strong>{data.items.find(i=>i.id===s.item_id)?.title||'Focus session'}</strong><small>{new Date(s.started_at*1000).toLocaleDateString()} · {Math.round((s.focus_seconds||0)/60)} min</small></div></div>)}{!data.sessions.some(s=>s.status==='finished')&&<p className="muted">Your finished sessions will appear here.</p>}</Card></div></div>
-            {finishReview&&active&&<div className="dialog-backdrop" role="presentation"><div className="dialog" role="dialog" aria-modal="true" aria-label="Review focus session"><button className="dialog-close" onClick={()=>setFinishReview(false)} aria-label="Cancel"><X size={18}/></button><h2>Review session</h2><p>Confirm your actual focus time. If you left the browser open, reduce the time to exclude inactivity.</p><FormRow label={`Actual focus seconds (maximum ${elapsedFocus(active,now)})`}><input type="number" min={0} max={elapsedFocus(active,now)} value={finishSeconds} onChange={e=>setFinishSeconds(e.target.value)}/></FormRow><div className="dialog-actions"><button className="btn secondary" onClick={()=>setFinishReview(false)}>Keep running</button><button className="btn primary" disabled={busy||!Number.isFinite(Number(finishSeconds))||Number(finishSeconds)<0||Number(finishSeconds)>elapsedFocus(active,now)} onClick={finish}>Save session</button></div></div></div>}
+              {active?<FocusDial session={active} anchor={focusClock}/>:<div className="timer-dial"><span className="dial-label">{focusMode==='free'?'STOPWATCH':'FOCUS TARGET'}</span><strong>{focusMode==='free'?'00:00:00':duration(Number(focusMode)*60)}</strong><span className="dial-sub">Ready when you are</span></div>}
+              {active? <div className="focus-buttons"><button className="btn secondary" onClick={()=>sessionAction(active.status==='running'?'pause':'resume')} disabled={focusBusy}>{active.status==='running'?<Pause size={17}/>:<Play size={17}/>} {active.status==='running'?'Pause':'Resume'}</button><button className="btn primary" disabled={focusBusy} onClick={reviewFinish}><Square size={15}/> Finish & review</button></div>:<button className="btn primary focus-start" disabled={busy||focusBusy} onClick={beginFocus}><Play size={18}/> Start focusing</button>}
+              <p className="focus-tip">Timed sessions end manually. Your timer continues if you close this tab.</p>
+            </Card><div className="stack"><Card><SectionTitle title="Your focus statistics"/><div className="focus-stat"><span>This week</span><strong><ProgressValue value={weekSeconds/3600} decimals={1} suffix=" hours"/></strong></div><div className="focus-stat"><span>All time</span><strong><ProgressValue value={totalSeconds/3600} decimals={1} suffix=" hours"/></strong></div><div className="focus-stat"><span>Completed sessions</span><strong>{data.focus_stats?.completed_sessions ?? data.sessions.filter(s=>s.status==='finished'&&(s.focus_seconds||0)>0).length}</strong></div></Card>
+              <Card className="focus-week-goal"><SectionTitle title="Weekly focus goal" aside={<Badge>{(weekSeconds/3600).toFixed(1)} / {weeklyGoal} h</Badge>}/>
+                <ProgressTrack className="home-progress-track" label="Weekly focus goal progress" value={weekPct} identity="focus-weekly-goal"/>
+                <div className="focus-week-goal-footer"><span><ProgressValue value={weekPct}/> of your weekly goal</span><label>Target <input type="number" min={1} max={80} aria-label="Weekly focus target in hours" value={weeklyGoal} onChange={e=>{const n=Math.max(1,Math.min(80,Number(e.target.value)||1));setWeeklyGoal(n);localStorage.setItem('studyhub-focus-goal',String(n));}}/> h/week</label></div>
+                <small>Target preference is stored on this device.</small>
+              </Card><Card><SectionTitle title="Recent sessions"/>{data.sessions.filter(s=>s.status==='finished'&&(s.focus_seconds||0)>0).sort((a,b)=>(b.ended_at||0)-(a.ended_at||0)).slice(0,5).map(s=><div className="session-row" key={s.id}><span><Check size={15}/></span><div><strong>{data.items.find(i=>i.id===s.item_id)?.title||'Focus session'}</strong><small>{new Date(s.started_at*1000).toLocaleDateString()} · {(s.focus_seconds||0)<60?`${s.focus_seconds} sec`:`${Math.round((s.focus_seconds||0)/60)} min`}</small></div></div>)}{!data.sessions.some(s=>s.status==='finished'&&(s.focus_seconds||0)>0)&&<p className="muted">Your finished sessions will appear here.</p>}</Card></div></div>
+
           </>}
 
           {tab==='library'&&<>
-            <div className="page-heading"><div><span className="eyebrow"><Folder size={13}/> CONNECTED MATERIALS</span><h1>Your knowledge library.</h1><p>Find your Goodnotes PDFs, review suggested matches, and read everything here.</p></div><Badge tone={drive.connected?'good':'muted'}>{drive.connected?'Drive connected':'Drive not connected'}</Badge></div>
+            <div className="page-heading"><div><span className="eyebrow"><Folder size={13}/> CONNECTED MATERIALS</span><h1>Resources</h1><p>Browse and link Goodnotes PDFs.</p></div><Badge tone={drive.connected?'good':'muted'}>{drive.connected?'Drive connected':'Drive not connected'}</Badge></div>
             <div className="two-col-layout course-layout"><div className="stack">
+              {!drive.connected&&data.resources.length===0&&<PhotoEmptyState compact scene="resources" title="No resources yet" detail="Link slides, books, and notes from your courses." actionLabel="Open Study" onAction={()=>navigate('courses')}/>}
               <Card><SectionTitle title="Google Drive connection"/>
                 <p className="muted">Use the PDF backup you already have in Goodnotes. Study Hub indexes file names and folder paths without copying the notes.</p>
-                {drive.connected?<div className="connection-status"><span className="live-dot"/> Connected privately <button className="text-button" onClick={()=>{if(confirm('Disconnect Google Drive and erase the local folder index? Existing linked resources will remain.'))void act(async()=>{await api('/api/drive/disconnect',user,{method:'DELETE'});setDrive({connected:false,configured:drive.configured});setDriveFiles([]);setSourceFolder(null);setDriveIndex([]);});}}>Disconnect</button></div>:<button className="btn primary" disabled={!drive.configured||busy} onClick={connectDrive}><Cloud size={16}/> Connect my Drive</button>}
+                {drive.connected?<div className="connection-status"><span className="live-dot"/> Connected privately <button className="text-button" onClick={()=>{if(confirm('Disconnect Google Drive and erase the local folder index? Existing linked resources will remain.'))void act(async()=>{await api('/api/drive/disconnect',user,{method:'DELETE'});setDrive({connected:false,configured:drive.configured});setDriveFiles([]);setSourceFolder(null);setDriveIndex([]);},{collection:'none'},{title:'Google Drive disconnected',detail:'Existing linked resources are kept.'});}}>Disconnect</button></div>:<button className="btn primary" disabled={!drive.configured||busy} onClick={connectDrive}><Cloud size={16}/> Connect my Drive</button>}
                 {!drive.configured&&<div className="subtle-notice">First add your own Google OAuth credentials to <code>backend/.env</code>. The rest of Study Hub works offline.</div>}
               </Card>
               {drive.connected&&<Card><SectionTitle title="Your Goodnotes backup folder" aside={sourceFolder?<Badge tone="good"><FolderCheck size={13}/> Selected</Badge>:<Badge>Not selected</Badge>}/>
@@ -297,29 +916,29 @@ export default function Page() {
                 <div className="folder-path"><button onClick={()=>{setFolderPath([{id:'root',name:'My Drive'}]);void browseDrive('root');}}>My Drive</button>{folderPath.slice(1).map(f=><span key={f.id}> / {f.name}</span>)}</div>
                 <div className="folder-picker-actions">{folderPath.length>1&&<button className="btn secondary small" onClick={backFolder}><ArrowLeft size={14}/> Back</button>}{currentFolder.id!=='root'&&<button className="btn secondary small" disabled={busy} onClick={selectBackupFolder}><FolderCheck size={14}/> Use this folder</button>}</div>
                 {driveBusy&&<p className="muted"><LoaderCircle size={15} className="spin"/> Loading Drive folders…</p>}
-                {driveFiles.map(f=><div className="drive-row" key={f.id}><span className="resource-icon">{f.mimeType==='application/pdf'?<FileText size={18}/>:<Folder size={18}/>}</span><div className="task-content"><strong>{f.name}</strong><small>{f.mimeType==='application/pdf'?'PDF document':'Folder'}{f.modifiedTime?' · '+new Date(f.modifiedTime).toLocaleDateString():''}</small></div>{f.mimeType==='application/pdf'?<><button className="icon-btn" title="Read PDF" onClick={()=>previewPdf(f.id,f.name)}><BookOpen size={16}/></button><button className="btn secondary small" disabled={!linkCourse||busy} onClick={()=>linkDriveFile(f)}>Link</button></>:<button className="icon-btn" title="Open folder" onClick={()=>openFolder(f)}><ArrowRight size={17}/></button>}</div>)}
+                {driveFiles.map(f=><div className="drive-row" key={f.id}><span className="resource-icon">{f.mimeType==='application/pdf'?<FileText size={18}/>:<Folder size={18}/>}</span><div className="task-content"><strong>{f.name}</strong><small>{f.mimeType==='application/pdf'?'PDF document':'Folder'}{f.modifiedTime?' · '+new Date(f.modifiedTime).toLocaleDateString():''}</small></div>{f.mimeType==='application/pdf'?<><button className="icon-btn" title="Read PDF" onClick={()=>previewPdf(f.id,f.name)}><BookOpen size={16}/></button><button className="btn secondary small" disabled={!linkCourse||busy} aria-busy={linkingFileId===f.id} onClick={()=>linkDriveFile(f)}>{linkingFileId===f.id?<><LoaderCircle size={14} className="spin"/> Linking…</>:'Link'}</button></>:<button className="icon-btn" title="Open folder" onClick={()=>openFolder(f)}><ArrowRight size={17}/></button>}</div>)}
                 {!driveBusy&&driveFiles.length===0&&<p className="muted">No PDFs or subfolders here.</p>}
                 {driveNext&&<button className="btn secondary full" onClick={()=>void browseDrive(currentFolder.id,true,driveNext)}>Load more</button>}
               </Card>}
               {drive.connected&&sourceFolder&&<Card><SectionTitle title="Discovered backup PDFs" aside={<Badge tone="good">{driveIndex.length} indexed</Badge>}/>
-                <p className="muted compact">Suggestions come from course codes and week labels in filenames/folders. <strong>Nothing is linked automatically.</strong> Confirm a suggestion or use manual controls on the right.</p>
+                <p className="muted compact">Matches are suggestions only. Confirm them before linking.</p>
                 <div className="index-controls"><label>Show <select value={indexFilter} onChange={e=>{setIndexFilter(e.target.value as typeof indexFilter);setVisibleCount(30);}}><option value="unlinked">Unlinked files</option><option value="needs-review">Need manual matching</option><option value="all">All files</option></select></label><button className="btn secondary small" onClick={()=>void loadIndex()}><RotateCcw size={14}/> Refresh</button></div>
                 {indexedVisible.slice(0,visibleCount).map(f=><div className="indexed-pdf" key={f.id}><div className="indexed-pdf-head"><span className="resource-icon"><FileText size={18}/></span><div className="task-content"><strong>{f.name}</strong><small title={f.path}>{f.path}{f.modifiedTime?` · Updated ${new Date(f.modifiedTime).toLocaleDateString()}`:''}</small></div>{f.links.length>0?<Badge tone="good">Linked</Badge>:null}</div>
                   {f.suggestion?<div className="match-recommendation"><span><Sparkles size={14}/> Suggested: {f.suggestion.course_code} · Week {f.suggestion.week_number} · {f.suggestion.kind}</span><Badge tone={f.suggestion.confidence==='high'?'good':'warning'}>{f.suggestion.confidence} confidence</Badge></div>:<p className="match-missing">No clear course/week match — select the fields on the right to link manually.</p>}
-                  <div className="indexed-actions"><button className="btn secondary small" onClick={()=>previewPdf(f.id,f.name)}><BookOpen size={14}/> Preview</button>{f.links.length===0&&f.suggestion&&<button className="btn primary small" disabled={busy} onClick={()=>confirmSuggestion(f)}><Check size={14}/> Confirm match</button>}{f.links.length===0&&<button className="btn secondary small" disabled={!linkCourse||busy} onClick={()=>linkDriveFile(f)}><Link2 size={14}/> Link manually</button>}</div>
+                  <div className="indexed-actions"><button className="btn secondary small" onClick={()=>previewPdf(f.id,f.name)}><BookOpen size={14}/> Preview</button>{f.links.length===0&&f.suggestion&&<button className="btn primary small" disabled={busy} aria-busy={linkingFileId===f.id} onClick={()=>confirmSuggestion(f)}>{linkingFileId===f.id?<LoaderCircle size={14} className="spin"/>:<Check size={14}/>} {linkingFileId===f.id?'Linking…':'Confirm match'}</button>}{f.links.length===0&&<button className="btn secondary small" disabled={!linkCourse||busy} aria-busy={linkingFileId===f.id} onClick={()=>linkDriveFile(f)}>{linkingFileId===f.id?<LoaderCircle size={14} className="spin"/>:<Link2 size={14}/>} {linkingFileId===f.id?'Linking…':'Link manually'}</button>}</div>
                 </div>)}
-                {indexedVisible.length===0&&<EmptyState icon={<FileText size={23}/>} title="Nothing here yet" detail="Scan your selected backup folder, or switch the list filter."/>}
+                {indexedVisible.length===0&&(driveIndex.length===0?<PhotoEmptyState compact scene="resources" title="No backup PDFs yet" detail="Scan your Goodnotes folder to discover PDF files." actionLabel="Scan folder" onAction={()=>void scanBackup()}/>:<EmptyState icon={<FileText size={23}/>} title="No files in this filter" detail="Try All files to view your indexed PDFs."/>)}
                 {indexedVisible.length>visibleCount&&<button className="btn secondary full" onClick={()=>setVisibleCount(n=>n+30)}>Show more ({indexedVisible.length-visibleCount} remaining)</button>}
               </Card>}
-            </div><div className="stack"><Card><SectionTitle title="Link to a course or teaching week"/><p className="muted compact">Choose Course Library for whole-course books and notebooks, or a specific week for lecture materials, before clicking <strong>Link manually</strong>. You stay in control.</p><FormRow label="Course"><select value={linkCourse} onChange={e=>{setLinkCourse(e.target.value);setLinkWeek(1);setLinkItem('');}}><option value="">Select course</option>{data.courses.filter(c=>!c.archived).map(c=><option key={c.id} value={c.id}>{c.code} · {c.title}</option>)}</select></FormRow><FormRow label="Resource belongs to"><select value={linkScope} onChange={e=>setLinkScope(e.target.value as 'course'|'week')}><option value="course">Course Library (all weeks)</option><option value="week">One teaching week</option></select></FormRow>{linkScope==='week'&&<FormRow label="Week"><select value={linkWeek} onChange={e=>{setLinkWeek(Number(e.target.value));setLinkItem('');}}>{Array.from({length:data.courses.find(c=>c.id===linkCourse)?.week_count||13},(_,n)=><option key={n+1} value={n+1}>Week {n+1}</option>)}</select></FormRow>}<FormRow label="Material type"><select value={linkKind} onChange={e=>setLinkKind(e.target.value as Resource['kind'])}>{(['handwritten','annotated','slides','textbook','other'] as const).map(k=><option key={k} value={k}>{k==='handwritten'?'Handwritten notes':k==='annotated'?'Annotated slides':k==='slides'?'Original slides':k==='textbook'?'Textbook':'Other'}</option>)}</select></FormRow>{linkScope==='week'&&<FormRow label="Attach to study item (optional)"><select value={linkItem} onChange={e=>setLinkItem(e.target.value)}><option value="">Entire week</option>{data.items.filter(i=>i.course_id===linkCourse&&i.week_number===linkWeek).map(i=><option key={i.id} value={i.id}>{i.title}</option>)}</select></FormRow>}</Card>
-              <Card className="hint-card"><h3>Keep using Goodnotes</h3><p>Continue handwriting there. After Goodnotes finishes backing up, press <strong>Scan for PDFs</strong> to update this library. Read linked PDF copies inside Study Hub. The original notes remain editable in Goodnotes.</p></Card>
+            </div><div className="stack"><Card><SectionTitle title="Link to a course or teaching week"/><FormRow label="Course"><select value={linkCourse} onChange={e=>{setLinkCourse(e.target.value);setLinkWeek(1);setLinkItem('');}}><option value="">Select course</option>{data.courses.filter(c=>!c.archived).map(c=><option key={c.id} value={c.id}>{c.code} · {c.title}</option>)}</select></FormRow><FormRow label="Resource belongs to"><select value={linkScope} onChange={e=>setLinkScope(e.target.value as 'course'|'week')}><option value="course">Course Library (all weeks)</option><option value="week">One teaching week</option></select></FormRow>{linkScope==='week'&&<FormRow label="Week"><select value={linkWeek} onChange={e=>{setLinkWeek(Number(e.target.value));setLinkItem('');}}>{Array.from({length:data.courses.find(c=>c.id===linkCourse)?.week_count||13},(_,n)=><option key={n+1} value={n+1}>Week {n+1}</option>)}</select></FormRow>}<FormRow label="Material type"><select value={linkKind} onChange={e=>setLinkKind(e.target.value as Resource['kind'])}>{(['handwritten','annotated','slides','textbook','other'] as const).map(k=><option key={k} value={k}>{k==='handwritten'?'Handwritten notes':k==='annotated'?'Annotated slides':k==='slides'?'Original slides':k==='textbook'?'Textbook':'Other'}</option>)}</select></FormRow>{linkScope==='week'&&<FormRow label="Attach to study item (optional)"><select value={linkItem} onChange={e=>setLinkItem(e.target.value)}><option value="">Entire week</option>{data.items.filter(i=>i.course_id===linkCourse&&i.week_number===linkWeek).map(i=><option key={i.id} value={i.id}>{i.title}</option>)}</select></FormRow>}</Card>
             </div></div>
           </>}
         </>}
       </main>
+      {finishReview&&active&&<div className="dialog-backdrop" role="presentation"><div className="dialog" role="dialog" aria-modal="true" aria-label="Review focus session"><button className="dialog-close" onClick={()=>setFinishReview(false)} aria-label="Cancel"><X size={18}/></button><h2>Review session</h2><p>Paused at {duration(reviewLimit)}. Adjust for idle time if needed.</p><FormRow label={`Actual focus seconds (maximum ${reviewLimit})`}><input type="number" min={0} max={reviewLimit} value={finishSeconds} onChange={e=>setFinishSeconds(e.target.value)}/></FormRow><div className="dialog-actions"><button className="btn secondary" onClick={()=>setFinishReview(false)}>Keep paused</button><button className="btn primary" disabled={focusBusy||active.status!=='paused'||!Number.isInteger(Number(finishSeconds))||Number(finishSeconds)<0||Number(finishSeconds)>reviewLimit} onClick={finish}>{focusBusy?(Number(finishSeconds)===0?'Discarding…':'Saving timer…'):(Number(finishSeconds)===0?'Discard empty session':'Save session')}</button></div></div></div>}
     </div>
-    <nav className="mobile-nav" aria-label="Mobile navigation">{tabs.map(t=><button key={t.id} className={tab===t.id?'current':''} onClick={()=>setTab(t.id)}><t.icon size={19}/><span>{t.label}</span></button>)}</nav>
-    {pdf&&<PdfWorkspace pdf={pdf} items={data.items}
+    <nav className="mobile-nav" aria-label="Mobile navigation">{tabs.map(t=><button key={t.id} className={tab===t.id?'current':''} onClick={()=>navigate(t.id)}><t.icon size={19}/><span>{t.label}</span></button>)}</nav>
+    {pdf&&<PdfWorkspace pdf={pdf} items={presentedItems} pendingItems={pendingItems} completingIds={completingIds}
       related={data.resources.filter(r=>r.course_id===pdf.courseId&&(r.week_number===pdf.weekNumber||r.week_number===null))}
       onClose={closePdf} onPage={changePdfPage} onToggleItem={toggle}
       onFocus={item=>{closePdf();startFrom(item);}}

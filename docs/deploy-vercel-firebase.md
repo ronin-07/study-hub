@@ -1,3 +1,5 @@
+> **v0.5 Phase A update (22 Nov 2026):** Follow [phase-a-release-security.md](phase-a-release-security.md) before deploying. The older deployment steps below predate mandatory explicit Preview/Production project IDs and registered semester requirements; do not use them without the Phase A checks.
+
 # Study Hub — deploy with Vercel Services and Firebase (v0.3.1)
 
 This setup keeps **RepLap untouched**. You can deploy and use Study Hub without running npm or Python locally. The repository contains two services: `web/` (Next.js) and `backend/` (FastAPI). The root `vercel.json` routes `/api/*` to FastAPI and everything else to Next.js using one HTTPS domain.

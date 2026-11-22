@@ -1,7 +1,10 @@
 # Credentials, local state, and build outputs
 **/.env
+**/.env.example
+**/.env.preview.example
 **/.env.local
-**/.env.*.local
+**/.env.local.example
+**/.env.*.local.*
 **/node_modules/
 **/.next/
 **/__pycache__/

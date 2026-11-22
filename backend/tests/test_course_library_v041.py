@@ -1,4 +1,5 @@
 """v0.4.1: archive/restore and shared Course Library (SQLite only)."""
+from tests.helpers import create_course
 import importlib
 import pytest
 from fastapi.testclient import TestClient
@@ -19,7 +20,7 @@ def client(tmp_path, monkeypatch):
 def course(client, semester=None):
     payload = {'code': '02516', 'title': 'Image analysis', 'semester': 'Autumn 2026'}
     if semester: payload['semester_id'] = semester
-    resp = client.post('/api/courses', json=payload)
+    resp = create_course(client, payload)
     assert resp.status_code == 201, resp.text
     return resp.json()
 
@@ -44,10 +45,14 @@ def test_archive_preserves_history_and_restore(client):
     assert client.patch(f"/api/items/{i['id']}",json={'done':True}).status_code == 200
 
 
-def test_archive_active_session_requires_finishing_first(client):
+def test_archive_active_session_requires_finishing_first(client, monkeypatch):
+    import app.main as main
+    clock = [1000]
+    monkeypatch.setattr(main, 'now_s', lambda: clock[0])
     c=course(client)
     session=client.post('/api/sessions/start',json={'course_id':c['id']}).json()
     assert client.post(f"/api/courses/{c['id']}/archive").status_code==409
+    clock[0] += 5  # Completed Focus sessions require positive study time.
     assert client.post(f"/api/sessions/{session['id']}/finish",json={}).status_code==200
     assert client.post(f"/api/courses/{c['id']}/archive").status_code==200
     snap=client.get('/api/snapshot').json()
@@ -112,9 +117,10 @@ def test_semester_names_and_archive_course_are_user_scoped(client):
         client.app.dependency_overrides.clear()
 
 
-def test_creating_semester_adopts_legacy_courses_and_renaming_keeps_them_together(client):
+def test_registered_semester_rename_keeps_course_label_in_sync(client):
     c=course(client)
-    sem=client.post('/api/semesters', json={'name':'Autumn 2026'}).json()
+    sem=client.get('/api/snapshot').json()['semesters'][0]
+    assert client.post('/api/semesters', json={'name':'Autumn 2026'}).status_code == 409
     linked=next(x for x in client.get('/api/snapshot').json()['courses'] if x['id']==c['id'])
     assert linked['semester_id']==sem['id']
     assert client.patch('/api/semesters/'+sem['id'],json={'name':'Fall 2026'}).status_code==200
@@ -123,9 +129,13 @@ def test_creating_semester_adopts_legacy_courses_and_renaming_keeps_them_togethe
     assert after['semester_id']==sem['id']
 
 
-def test_archived_focus_history_cannot_be_deleted_until_restored(client):
+def test_archived_focus_history_cannot_be_deleted_until_restored(client, monkeypatch):
+    import app.main as main
+    clock = [1000]
+    monkeypatch.setattr(main, 'now_s', lambda: clock[0])
     c=course(client)
     session=client.post('/api/sessions/start',json={'course_id':c['id']}).json()
+    clock[0] += 5  # Test real completed history, not an empty session.
     assert client.post('/api/sessions/'+session['id']+'/finish',json={}).status_code==200
     assert client.post('/api/courses/'+c['id']+'/archive').status_code==200
     assert client.delete('/api/sessions/'+session['id']).status_code==409

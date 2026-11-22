@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1350 290" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0.4" y2="1"><stop stop-color="#111429"/><stop offset=".39" stop-color="#312754"/><stop offset=".68" stop-color="#5b3965"/><stop offset="1" stop-color="#141727"/></linearGradient>
+    <radialGradient id="sun"><stop stop-color="#ee9fa5" stop-opacity=".82"/><stop offset=".48" stop-color="#d7739a" stop-opacity=".28"/><stop offset="1" stop-color="#ac75b8" stop-opacity="0"/></radialGradient>
+    <linearGradient id="ridge" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#3d315f"/><stop offset="1" stop-color="#15182e"/></linearGradient>
+    <linearGradient id="snow" x1="0" y1="0" x2=".5" y2="1"><stop stop-color="#b3a1e0"/><stop offset="1" stop-color="#4d3e70"/></linearGradient>
+  </defs>
+  <path fill="url(#sky)" d="M0 0h1350v290H0z"/>
+  <ellipse cx="840" cy="136" rx="420" ry="200" fill="url(#sun)"/>
+  <g fill="#ddd0fa" opacity=".48"><circle cx="494" cy="25" r="1"/><circle cx="577" cy="57" r=".9"/><circle cx="620" cy="15" r="1.2"/><circle cx="737" cy="43" r=".8"/><circle cx="935" cy="31" r="1"/><circle cx="1005" cy="60" r=".7"/><circle cx="1140" cy="14" r="1"/><circle cx="1220" cy="76" r="1"/><circle cx="1300" cy="45" r=".8"/></g>
+  <path fill="#33294f" d="M0 227 150 201 215 215 335 178 415 205 508 191 608 225 750 183 835 218 930 158 1040 221 1110 185 1230 216 1350 184V290H0z"/>
+  <path fill="url(#ridge)" d="M355 255 560 188 660 225 801 137 859 155 955 65 1040 153 1120 120 1208 172 1300 143 1350 176V290H355z"/>
+  <path fill="url(#snow)" opacity=".92" d="m900 118 55-53 51 65-33-23-8 17-14-28-11 23-9-7-17 23z"/>
+  <path fill="#9f8fc4" opacity=".58" d="m1100 144 20-24 36 38-27-14-7 15-10-22z"/>
+  <path fill="#16182c" d="M0 268 105 246 180 266 321 229 405 268 550 250 670 278 805 242 925 263 1075 234 1202 266 1320 233 1350 241V290H0z"/>
+  <path fill="#101426" opacity=".88" d="M0 279 189 273 307 282 460 271 604 279 782 265 966 278 1125 269 1350 276V290H0z"/>
+</svg>

@@ -1,4 +1,5 @@
 """v0.3 Goodnotes folder indexing and review-first matching tests (no live Google calls)."""
+from tests.helpers import create_course
 import importlib
 import pytest
 from fastapi.testclient import TestClient
@@ -35,7 +36,7 @@ def test_matching_requires_unambiguous_week_and_course():
 
 
 def test_reading_position_and_duplicate_links(client):
-    c = client.post('/api/courses', json={'code': '02516', 'title': 'Image Analysis'}).json()
+    c = create_course(client, {'code': '02516', 'title': 'Image Analysis'}).json()
     body = {'course_id': c['id'], 'week_number': 10, 'title': 'Notes',
             'source': 'drive', 'drive_file_id': 'goodnotesABC123', 'kind': 'handwritten'}
     created = client.post('/api/resources', json=body)
@@ -50,7 +51,7 @@ def test_reading_position_and_duplicate_links(client):
 
 def test_selected_folder_scan_only_metadata_and_requires_user_confirmation(client, monkeypatch):
     import app.drive as drive
-    c = client.post('/api/courses', json={'code': '02516', 'title': 'CV'}).json()
+    c = create_course(client, {'code': '02516', 'title': 'CV'}).json()
     client.post('/api/weeks', json={'course_id': c['id'], 'number': 10, 'title': 'Multiclass'})
 
     async def auth(*_args):

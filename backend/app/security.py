@@ -1,6 +1,7 @@
 """Firebase token verification, localhost-only private development mode."""
 import json
 import os
+import asyncio
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -49,7 +50,8 @@ async def current_user(request: Request, authorization: str | None = Header(defa
     try:
         from firebase_admin import auth
         firebase_app()
-        claims = auth.verify_id_token(authorization[7:], check_revoked=True)
+        # Keep revocation checks enabled without blocking concurrent API requests.
+        claims = await asyncio.to_thread(auth.verify_id_token, authorization[7:], check_revoked=True)
     except Exception:
         raise HTTPException(401, 'Invalid Firebase token') from None
     expected_uid = os.getenv('STUDY_HUB_ALLOWED_UID')

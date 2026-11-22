@@ -1,3 +1,5 @@
+> **Historical document:** This file describes the early v0.3 architecture. For current v0.5 features, deployments and release gates, see [README](../README.md) and [Phase D checklist](phase-d-release-checklist.md).
+
 # Study Hub: architecture and design decisions
 
 ## Modules
