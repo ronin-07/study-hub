@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import type { User } from 'firebase/auth';
 import {
   Archive, ArrowLeft, ArrowRight, BookMarked, BookOpen, CalendarDays, CheckCircle2,
-  ChevronLeft, ChevronRight, Cloud, ExternalLink, FileText, FolderOpen, GraduationCap,
+  ChevronDown, ChevronLeft, ChevronRight, Cloud, ExternalLink, FileText, FolderOpen, GraduationCap,
   Library, LoaderCircle, MoreHorizontal, NotebookPen, Pencil, Plus, RotateCcw, Timer, X
 } from 'lucide-react';
 import { api } from '@/lib/api';
