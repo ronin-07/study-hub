@@ -23,7 +23,7 @@ if os.getenv('STUDY_HUB_AUTH_MODE', 'local') == 'firebase' or os.getenv('STORAGE
     firebase_app()
 
 app_store = get_store()
-app = FastAPI(title='Study Hub API', version='0.4.0')
+app = FastAPI(title='Study Hub API', version='0.4.1')
 if os.getenv('STUDY_HUB_AUTH_MODE', 'local') == 'local':
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=['127.0.0.1', 'localhost', 'testserver'])
 app.add_middleware(CORSMiddleware,
@@ -33,7 +33,7 @@ app.add_middleware(CORSMiddleware,
 
 from .drive import router as drive_router  # noqa: E402
 app.include_router(drive_router)
-from .workspace import router as workspace_router  # noqa: E402
+from .workspace import router as workspace_router, ensure_course_active, validate_item_reference  # noqa: E402
 app.include_router(workspace_router)
 
 
@@ -48,7 +48,7 @@ def exists(uid: str, kind: str, identifier: str):
 
 def validate_context(uid: str, course_id: str | None, week_number: int | None):
     if course_id:
-        exists(uid, 'courses', course_id)
+        ensure_course_active(uid, course_id)
     if week_number is not None and not course_id:
         raise HTTPException(422, 'Week requires course')
     if course_id and week_number is not None:
@@ -91,6 +91,7 @@ async def add_week(value: Week, user: User = Depends(current_user)):
 @app.post('/api/items', response_model=Item, status_code=201)
 async def add_item(value: Item, user: User = Depends(current_user)):
     validate_context(user.uid, value.course_id, value.week_number)
+    validate_item_reference(user.uid, value.course_id, value.week_number, value.resource_id)
     app_store.put(user.uid, 'items', value.model_dump(mode='json'))
     return value
 
@@ -100,7 +101,10 @@ async def patch_item(identifier: str, updates: ItemPatch, user: User = Depends(c
     original = app_store.get(user.uid, 'items', identifier)
     if not original:
         raise HTTPException(404, 'Item not found')
+    if original.get('course_id'):
+        ensure_course_active(user.uid, original['course_id'])
     merged = {**original, **updates.model_dump(exclude_unset=True, mode='json')}
+    validate_item_reference(user.uid, merged.get('course_id'), merged.get('week_number'), merged.get('resource_id'))
     try:
         value = Item.model_validate(merged)
     except ValidationError as exc:
@@ -111,7 +115,9 @@ async def patch_item(identifier: str, updates: ItemPatch, user: User = Depends(c
 
 @app.delete('/api/items/{identifier}', status_code=204)
 async def delete_item(identifier: str, user: User = Depends(current_user)):
-    exists(user.uid, 'items', identifier)
+    item = app_store.get(user.uid, 'items', identifier)
+    if not item: raise HTTPException(404, 'Item not found')
+    if item.get('course_id'): ensure_course_active(user.uid, item['course_id'])
     if any(r.get('item_id') == identifier for r in all_docs(user.uid, 'resources')):
         raise HTTPException(409, 'Detach linked PDF resources before deleting this study item')
     app_store.delete(user.uid, 'items', identifier)
@@ -131,7 +137,8 @@ async def add_resource(value: Resource, user: User = Depends(current_user)):
             if (existing.get('source') == 'drive'
                     and existing.get('drive_file_id') == value.drive_file_id
                     and existing.get('course_id') == value.course_id
-                    and existing.get('week_number') == value.week_number):
+                    and (existing.get('week_number') == value.week_number
+                         or existing.get('week_number') is None or value.week_number is None)):
                 raise HTTPException(409, 'This PDF is already linked to that course and week')
     app_store.put(user.uid, 'resources', value.model_dump(mode='json'))
     return value
@@ -142,6 +149,7 @@ async def update_reading_position(identifier: str, value: ReadingPosition, user:
     entry = app_store.get(user.uid, 'resources', identifier)
     if not entry:
         raise HTTPException(404, 'Resource not found')
+    # Saving a reading bookmark is allowed on archived, read-only courses.
     entry['last_page'] = value.page
     app_store.put(user.uid, 'resources', entry)
     return Resource.model_validate(entry)
@@ -149,7 +157,11 @@ async def update_reading_position(identifier: str, value: ReadingPosition, user:
 
 @app.delete('/api/resources/{identifier}', status_code=204)
 async def delete_resource(identifier: str, user: User = Depends(current_user)):
-    exists(user.uid, 'resources', identifier)
+    entry = app_store.get(user.uid, 'resources', identifier)
+    if not entry: raise HTTPException(404, 'Resource not found')
+    ensure_course_active(user.uid, entry['course_id'])
+    if any(i.get('resource_id') == identifier for i in all_docs(user.uid, 'items')):
+        raise HTTPException(409, 'Unlink this resource from study items before removing it')
     app_store.delete(user.uid, 'resources', identifier)
 
 
@@ -187,6 +199,7 @@ async def start_session(value: StartFocus, user: User = Depends(current_user)):
         item = app_store.get(user.uid, 'items', value.item_id)
         if not item:
             raise HTTPException(404, 'Linked task not found')
+        if item.get('course_id'): ensure_course_active(user.uid, item['course_id'])
         if value.course_id and item.get('course_id') != value.course_id:
             raise HTTPException(422, 'Task does not belong to selected course')
         if value.week_number and item.get('week_number') != value.week_number:
@@ -195,6 +208,7 @@ async def start_session(value: StartFocus, user: User = Depends(current_user)):
             value.course_id = item['course_id']
         if value.week_number is None and item.get('week_number'):
             value.week_number = item['week_number']
+    if value.course_id: ensure_course_active(user.uid, value.course_id)
     session = FocusSession(**value.model_dump(), started_at=now_s())
     app_store.put(user.uid, 'sessions', session.model_dump(mode='json'))
     return session
@@ -244,5 +258,7 @@ async def finish_session(identifier: str, value: FinishFocus, user: User = Depen
 
 @app.delete('/api/sessions/{identifier}', status_code=204)
 async def delete_session(identifier: str, user: User = Depends(current_user)):
-    exists(user.uid, 'sessions', identifier)
+    session = session_or_404(user.uid, identifier)
+    if session.get('course_id'):
+        ensure_course_active(user.uid, session['course_id'])
     app_store.delete(user.uid, 'sessions', identifier)

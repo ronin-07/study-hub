@@ -24,6 +24,7 @@ class Course(BaseDocument):
     semester_id: str | None = None
     exam_date: date | None = None
     goals: str = Field(default='', max_length=2000)
+    archived: bool = False
 
 
 class Week(BaseDocument):
@@ -51,6 +52,7 @@ class Item(BaseDocument):
     chapter: str = Field(default='', max_length=120)
     page_start: int | None = Field(default=None, ge=1, le=20000)
     page_end: int | None = Field(default=None, ge=1, le=20000)
+    resource_id: str | None = None  # Reference to a shared book/notebook or weekly PDF.
 
     @model_validator(mode='after')
     def coherent(self):
@@ -83,11 +85,12 @@ class ItemPatch(BaseModel):
     chapter: str | None = Field(default=None, max_length=120)
     page_start: int | None = Field(default=None, ge=1, le=20000)
     page_end: int | None = Field(default=None, ge=1, le=20000)
+    resource_id: str | None = None
 
 
 class Resource(BaseDocument):
     course_id: str
-    week_number: int = Field(ge=1, le=30)
+    week_number: int | None = Field(default=None, ge=1, le=30)  # None = shared Course Library.
     title: str = Field(min_length=1, max_length=240)
     kind: Literal['slides', 'annotated', 'handwritten', 'textbook', 'other'] = 'other'
     source: Literal['drive', 'dtu', 'link']
@@ -101,6 +104,8 @@ class Resource(BaseDocument):
 
     @model_validator(mode='after')
     def valid_location(self):
+        if self.week_number is None and self.item_id is not None:
+            raise ValueError('Shared course resources cannot be attached to one weekly item')
         if self.page_start is not None and self.page_end is not None and self.page_end < self.page_start:
             raise ValueError('End page cannot precede start page')
         if self.source == 'drive' and not self.drive_file_id:

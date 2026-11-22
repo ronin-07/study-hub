@@ -10,16 +10,15 @@ import {
 import { api, pdfBlob } from '@/lib/api';
 import { Badge, Card, DayStatus, EmptyState, FormRow, SectionTitle } from '@/components/common';
 import { PdfWorkspace } from '@/components/pdf-workspace';
+import { CoursePlanner } from '@/components/course-planner';
 import { firebaseAuth, onAuthStateChanged, signIn, signOutUser, useFirebase } from '@/lib/auth';
-import { type Course, type DriveEntry, type DriveList, type FocusSession, type Item,
-  type Resource, type Snapshot, type Tab, type Week, type Semester, type DriveIndexed, type DriveSource, type DriveIndexResponse, type DriveScanResponse, duration,
+import { type DriveEntry, type DriveList, type FocusSession, type Item,
+  type Resource, type Snapshot, type Tab, type DriveIndexed, type DriveSource, type DriveIndexResponse, type DriveScanResponse, duration,
   elapsedFocus, formatDate, kindLabels, localToday } from '@/lib/types';
 
-type ItemKind = import('@/lib/types').Kind;
 type DriveStatus = { connected: boolean; configured: boolean };
 const empty: Snapshot = {courses:[], weeks:[], items:[], resources:[], sessions:[], semesters:[]};
 const pageNames: Record<Tab,string> = {today:'Today', courses:'Study Planner', tasks:'Tasks', focus:'Focus', library:'Resource Library'};
-const itemsForWeek = (data: Snapshot, courseId: string, week: number) => data.items.filter(i=>i.course_id===courseId && i.week_number===week);
 const tabs: {id:Tab; label:string; icon:typeof Home}[] = [
   {id:'today',label:'Today',icon:Home},{id:'courses',label:'Study',icon:BookOpen},
   {id:'tasks',label:'Tasks',icon:ListTodo},{id:'focus',label:'Focus',icon:Timer},
@@ -41,29 +40,11 @@ export default function Page() {
   const [now,setNow] = useState(Math.floor(Date.now()/1000));
   const [pdf,setPdf] = useState<{url:string;title:string;page:number;resourceId?:string;courseId?:string;weekNumber?:number}|null>(null);
 
-  const [courseForm,setCourseForm] = useState(false);
-  const [semesterForm,setSemesterForm] = useState(false);
-  const [semesterDraft,setSemesterDraft] = useState({name:'',start_date:'',end_date:''});
-  const [semesterEditId,setSemesterEditId] = useState('');
-  const [semesterEditDraft,setSemesterEditDraft] = useState({name:'',start_date:'',end_date:''});
-  const [semesterFilter,setSemesterFilter] = useState('all');
-  const [courseEdit,setCourseEdit] = useState(false);
-  const [courseEditDraft,setCourseEditDraft] = useState({code:'',title:'',semester:'',semester_id:'',week_count:13,exam_date:'',goals:''});
-  const [resourceEditId,setResourceEditId] = useState('');
-  const [resourceEditDraft,setResourceEditDraft] = useState({title:'',kind:'slides' as Resource['kind'],item_id:'',chapter:'',page_start:'',page_end:''});
-  const [weekForm,setWeekForm] = useState(false);
-  const [itemForm,setItemForm] = useState(false);
-  const [resourceForm,setResourceForm] = useState(false);
   const [taskForm,setTaskForm] = useState(false);
   const [taskEditId,setTaskEditId] = useState('');
   const [taskEditDraft,setTaskEditDraft] = useState({title:'',planned_date:'',due_date:'',priority:'medium',notes:'',chapter:'',page_start:'',page_end:'',submitted:false});
-  const [examDraft,setExamDraft] = useState('');
   const [taskFilter,setTaskFilter] = useState<'today'|'upcoming'|'completed'>('today');
-  const [courseDraft,setCourseDraft] = useState({code:'',title:'',semester:'Autumn 2026',semester_id:'',week_count:13,exam_date:'',goals:''});
-  const [weekDraft,setWeekDraft] = useState({title:'',objectives:''});
-  const [itemDraft,setItemDraft] = useState({title:'',kind:'lecture' as ItemKind,is_task:false, planned_date:'',due_date:'',priority:'medium',notes:'',chapter:'',page_start:'',page_end:''});
   const [taskDraft,setTaskDraft] = useState({title:'', planned_date:localToday(), due_date:'',priority:'medium'});
-  const [resourceDraft,setResourceDraft] = useState({title:'',url:'',source:'dtu' as 'dtu'|'link',kind:'slides' as Resource['kind'],item_id:'',chapter:'',page_start:'',page_end:''});
 
   const [focusCourse,setFocusCourse] = useState('');
   const [focusItem,setFocusItem] = useState('');
@@ -84,6 +65,7 @@ export default function Page() {
   const [visibleCount,setVisibleCount] = useState(30);
   const [linkCourse,setLinkCourse] = useState('');
   const [linkWeek,setLinkWeek] = useState(1);
+  const [linkScope,setLinkScope] = useState<'course'|'week'>('week');
   const [linkKind,setLinkKind] = useState<Resource['kind']>('handwritten');
   const [linkItem,setLinkItem] = useState('');
 
@@ -108,25 +90,23 @@ export default function Page() {
     try {
       const snap=await api<Snapshot>('/api/snapshot',user);
       setData(snap);
-      setCourseId(previous=>previous || snap.courses[0]?.id || '');
-      setLinkCourse(previous=>previous || snap.courses[0]?.id || '');
+      setCourseId(previous=>snap.courses.some(c=>c.id===previous&&!c.archived)?previous:(snap.courses.find(c=>!c.archived)?.id||''));
+      setLinkCourse(previous=>snap.courses.some(c=>c.id===previous&&!c.archived)?previous:(snap.courses.find(c=>!c.archived)?.id||''));
       setError('');
     } catch(e) {setError(e instanceof Error ? e.message : 'Cannot connect to the API');}
     finally {setLoading(false);}
   },[authReady,user]);
   useEffect(()=>{void load();},[load]);
 
-  const act = async(fn:()=>Promise<unknown>)=>{
+  const act = async(fn:()=>Promise<unknown>):Promise<boolean>=>{
     setBusy(true);setError('');
-    try {await fn();await load();} catch(e) {setError(e instanceof Error?e.message:'Action failed');}
+    try {await fn();await load();return true;} catch(e) {setError(e instanceof Error?e.message:'Action failed');return false;}
     finally {setBusy(false);}
   };
-  const selectedCourse = data.courses.find(c=>c.id===courseId);
+  const selectedCourse = data.courses.find(c=>c.id===courseId&&!c.archived);
   const selectedWeek = data.weeks.find(w=>w.course_id===courseId && w.number===weekNumber);
-  const selectedItems = itemsForWeek(data,courseId,weekNumber);
-  const selectedResources = data.resources.filter(r=>r.course_id===courseId&&r.week_number===weekNumber);
-  const examItems = data.items.filter(i=>i.course_id===courseId&&i.week_number===null);
-  const tasks = data.items.filter(i=>i.is_task);
+  const activeCourseIds = new Set(data.courses.filter(c=>!c.archived).map(c=>c.id));
+  const tasks = data.items.filter(i=>i.is_task&&(!i.course_id||activeCourseIds.has(i.course_id)));
   const today=localToday();
   const openTasks = tasks.filter(i=>!i.done);
   const plannedToday=openTasks.filter(i=>i.planned_date===today);
@@ -137,59 +117,17 @@ export default function Page() {
   const weekSeconds=data.sessions.filter(s=>s.status==='finished'&&s.ended_at && s.ended_at>=currentWeekStart).reduce((n,s)=>n+(s.focus_seconds||0),0);
   const totalSeconds=data.sessions.filter(s=>s.status==='finished').reduce((n,s)=>n+(s.focus_seconds||0),0);
   const weekPct=Math.min(100,Math.round((weekSeconds/(weeklyGoal*3600))*100));
-  const doneCount=selectedItems.filter(i=>i.done).length;
-  const progress=selectedItems.length?Math.round(doneCount*100/selectedItems.length):0;
   const listForTasks = taskFilter==='today' ? tasks.filter(i=>i.planned_date===today || (!i.done&&!!i.due_date&&i.due_date<today)) : taskFilter==='completed' ? tasks.filter(i=>i.done) : tasks.filter(i=>!i.done);
   const sortedTasks=[...listForTasks].sort((a,b)=>(a.due_date||a.planned_date||'9999').localeCompare(b.due_date||b.planned_date||'9999'));
 
-  const newCourse=(e:FormEvent)=>{e.preventDefault();void act(async()=>{
-    const c=await api<Course>('/api/courses',user,{method:'POST',body:{...courseDraft,semester_id:courseDraft.semester_id||null,exam_date:courseDraft.exam_date||null}});
-    setCourseId(c.id);setWeekNumber(1);setCourseForm(false);setCourseDraft({code:'',title:'',semester:'Autumn 2026',semester_id:'',week_count:13,exam_date:'',goals:''});
-  });};
-  const newWeek=(e:FormEvent)=>{e.preventDefault();void act(async()=>{
-    if (selectedWeek) await api(`/api/weeks/${selectedWeek.id}`,user,{method:'PATCH',body:weekDraft});
-    else await api('/api/weeks',user,{method:'POST',body:{course_id:courseId,number:weekNumber,...weekDraft}});
-    setWeekForm(false);setWeekDraft({title:'',objectives:''});
-  });};
-  const newSemester=(e:FormEvent)=>{e.preventDefault();void act(async()=>{
-    await api('/api/semesters',user,{method:'POST',body:{name:semesterDraft.name,start_date:semesterDraft.start_date||null,end_date:semesterDraft.end_date||null}});
-    setSemesterForm(false);setSemesterDraft({name:'',start_date:'',end_date:''});
-  });};
-  const saveSemester=(e:FormEvent)=>{e.preventDefault();void act(async()=>{
-    await api(`/api/semesters/${semesterEditId}`,user,{method:'PATCH',body:{name:semesterEditDraft.name,start_date:semesterEditDraft.start_date||null,end_date:semesterEditDraft.end_date||null}});
-    setSemesterEditId('');
-  });};
-  const startSemesterEdit=(sem:Semester)=>{setSemesterEditId(sem.id);setSemesterEditDraft({name:sem.name,start_date:sem.start_date||'',end_date:sem.end_date||''});};
   const startTaskEdit=(i:Item)=>{setTaskEditId(i.id);setTaskEditDraft({title:i.title,planned_date:i.planned_date||'',due_date:i.due_date||'',priority:i.priority,notes:i.notes||'',chapter:i.chapter||'',page_start:i.page_start?String(i.page_start):'',page_end:i.page_end?String(i.page_end):'',submitted:i.submitted});};
   const saveTask=(e:FormEvent)=>{e.preventDefault();void act(async()=>{
     await api(`/api/items/${taskEditId}`,user,{method:'PATCH',body:{...taskEditDraft,planned_date:taskEditDraft.planned_date||null,due_date:taskEditDraft.due_date||null,page_start:taskEditDraft.page_start?Number(taskEditDraft.page_start):null,page_end:taskEditDraft.page_end?Number(taskEditDraft.page_end):null}});
     setTaskEditId('');
   });};
-  const newExamItem=(e:FormEvent)=>{e.preventDefault();void act(async()=>{
-    await api('/api/items',user,{method:'POST',body:{title:examDraft,course_id:courseId,week_number:null,kind:'revision',is_task:true}});
-    setExamDraft('');
-  });};
-  const saveCourse=(e:FormEvent)=>{e.preventDefault();if(!selectedCourse)return;void act(async()=>{
-    await api(`/api/courses/${selectedCourse.id}`,user,{method:'PATCH',body:{...courseEditDraft,semester_id:courseEditDraft.semester_id||null,exam_date:courseEditDraft.exam_date||null}});
-    setCourseEdit(false);
-  });};
-  const openCourseEdit=()=>{if(!selectedCourse)return;setCourseEditDraft({code:selectedCourse.code,title:selectedCourse.title,semester:selectedCourse.semester,semester_id:selectedCourse.semester_id||'',week_count:selectedCourse.week_count,exam_date:selectedCourse.exam_date||'',goals:selectedCourse.goals||''});setCourseEdit(true);};
-  const openResourceEdit=(r:Resource)=>{setResourceEditId(r.id);setResourceEditDraft({title:r.title,kind:r.kind,item_id:r.item_id||'',chapter:r.chapter||'',page_start:r.page_start?String(r.page_start):'',page_end:r.page_end?String(r.page_end):''});};
-  const saveResource=(e:FormEvent)=>{e.preventDefault();void act(async()=>{
-    await api(`/api/resources/${resourceEditId}`,user,{method:'PATCH',body:{...resourceEditDraft,item_id:resourceEditDraft.item_id||null,page_start:resourceEditDraft.page_start?Number(resourceEditDraft.page_start):null,page_end:resourceEditDraft.page_end?Number(resourceEditDraft.page_end):null}});
-    setResourceEditId('');
-  });};
-  const newItem=(e:FormEvent)=>{e.preventDefault();void act(async()=>{
-    await api('/api/items',user,{method:'POST',body:{...itemDraft,course_id:courseId,week_number:weekNumber,is_task:itemDraft.kind==='assignment'||!!itemDraft.planned_date||itemDraft.is_task,planned_date:itemDraft.planned_date||null,due_date:itemDraft.due_date||null,page_start:itemDraft.page_start?Number(itemDraft.page_start):null,page_end:itemDraft.page_end?Number(itemDraft.page_end):null}});
-    setItemForm(false);setItemDraft({title:'',kind:'lecture',is_task:false,planned_date:'',due_date:'',priority:'medium',notes:'',chapter:'',page_start:'',page_end:''});
-  });};
   const newTask=(e:FormEvent)=>{e.preventDefault();void act(async()=>{
     await api('/api/items',user,{method:'POST',body:{...taskDraft,kind:'personal',planned_date:taskDraft.planned_date||null,due_date:taskDraft.due_date||null}});
     setTaskForm(false);setTaskDraft({title:'',planned_date:today,due_date:'',priority:'medium'});
-  });};
-  const newResource=(e:FormEvent)=>{e.preventDefault();void act(async()=>{
-    await api('/api/resources',user,{method:'POST',body:{...resourceDraft,course_id:courseId,week_number:weekNumber,item_id:resourceDraft.item_id||null,page_start:resourceDraft.page_start?Number(resourceDraft.page_start):null,page_end:resourceDraft.page_end?Number(resourceDraft.page_end):null}});
-    setResourceForm(false);setResourceDraft({title:'',url:'',source:'dtu',kind:'slides',item_id:'',chapter:'',page_start:'',page_end:''});
   });};
   const toggle=(i:Item)=>void act(async()=>{await api(`/api/items/${i.id}`,user,{method:'PATCH',body:{done:!i.done}});});
   const startFrom=(i?:Item)=>{
@@ -232,7 +170,7 @@ export default function Page() {
     const url=await pdfBlob(`/api/drive/files/${fileId}/pdf`,user);
     if (pdf) URL.revokeObjectURL(pdf.url);
     const r=data.resources.find(entry=>entry.id===resourceId);
-    setPdf({url,title,resourceId,courseId:r?.course_id,weekNumber:r?.week_number,page:lastPage||1});
+    setPdf({url,title,resourceId,courseId:r?.course_id,weekNumber:r?.week_number??weekNumber,page:lastPage||1});
   });
   const closePdf=()=>{if(pdf)URL.revokeObjectURL(pdf.url);setPdf(null);};
   const changePdfPage=(next:number)=>{
@@ -245,7 +183,7 @@ export default function Page() {
   };
   const linkDriveFile=(file:DriveEntry)=>void act(async()=>{
     if(!linkCourse)throw new Error('Select a course before linking a PDF');
-    await api('/api/resources',user,{method:'POST',body:{course_id:linkCourse,week_number:linkWeek,title:file.name,kind:linkKind,source:'drive',drive_file_id:file.id,item_id:linkItem||null}});
+    await api('/api/resources',user,{method:'POST',body:{course_id:linkCourse,week_number:linkScope==='course'?null:linkWeek,title:file.name,kind:linkKind,source:'drive',drive_file_id:file.id,item_id:linkScope==='course'?null:(linkItem||null)}});
     await loadIndex();
   });
   const selectBackupFolder=()=>void act(async()=>{
@@ -267,7 +205,7 @@ export default function Page() {
     if (!entry.suggestion)throw new Error('This PDF needs manual course/week selection');
     const suggestion=entry.suggestion;
     await api('/api/resources',user,{method:'POST',body:{course_id:suggestion.course_id,
-      week_number:suggestion.week_number,title:entry.name,kind:suggestion.kind,source:'drive',drive_file_id:entry.id}});
+      week_number:['textbook','handwritten'].includes(suggestion.kind)?null:suggestion.week_number,title:entry.name,kind:suggestion.kind,source:'drive',drive_file_id:entry.id}});
     await loadIndex();
   });
   const indexedVisible=driveIndex.filter(f=>indexFilter==='all'||(indexFilter==='unlinked'?f.links.length===0:(!f.suggestion&&f.links.length===0)));
@@ -316,43 +254,12 @@ export default function Page() {
             </div>
           </>}
 
-          {tab==='courses'&&<>
-            <div className="page-heading"><div><span className="eyebrow"><Layers3 size={13}/> ACADEMIC PLANNER</span><h1>Your learning space.</h1><p>One beautiful place for every course, week and resource.</p></div><button className="btn primary" onClick={()=>setCourseForm(!courseForm)}><Plus size={17}/> Add course</button></div>
-            <Card className="semester-panel">
-              <SectionTitle title="Semesters" aside={<button className="btn secondary small" onClick={()=>setSemesterForm(!semesterForm)}><Plus size={14}/> Add semester</button>}/>
-              <div className="semester-controls"><label>Show courses <select value={semesterFilter} onChange={e=>{const filter=e.target.value;setSemesterFilter(filter);const first=data.courses.find(c=>filter==='all'||c.semester===filter);if(first){setCourseId(first.id);setWeekNumber(1);}else setCourseId('');}}><option value="all">All semesters</option>{(data.semesters||[]).map(sem=><option value={sem.name} key={sem.id}>{sem.name}</option>)}{[...new Set(data.courses.map(c=>c.semester))].filter(name=>!(data.semesters||[]).some(x=>x.name===name)).map(name=><option value={name} key={name}>{name} (existing)</option>)}</select></label></div>
-              {semesterForm&&<form className="mini-form" onSubmit={newSemester}><FormRow label="Semester name"><input required placeholder="Spring 2027" value={semesterDraft.name} onChange={e=>setSemesterDraft(p=>({...p,name:e.target.value}))}/></FormRow><div className="form-grid"><FormRow label="Starts (optional)"><input type="date" value={semesterDraft.start_date} onChange={e=>setSemesterDraft(p=>({...p,start_date:e.target.value}))}/></FormRow><FormRow label="Ends (optional)"><input type="date" value={semesterDraft.end_date} onChange={e=>setSemesterDraft(p=>({...p,end_date:e.target.value}))}/></FormRow></div><button className="btn primary" disabled={busy}>Save semester</button></form>}
-              <div className="semester-chips">{(data.semesters||[]).map(sem=><div className="semester-chip" key={sem.id}><strong>{sem.name}</strong><button className="btn secondary small" onClick={()=>startSemesterEdit(sem)}>Edit</button><button className="icon-btn danger-hover" aria-label={`Delete ${sem.name}`} onClick={()=>{if(confirm(`Delete empty semester ${sem.name}?`))void act(()=>api(`/api/semesters/${sem.id}`,user,{method:'DELETE'}));}}><Trash2 size={14}/></button></div>)}</div>
-              {semesterEditId&&<form className="mini-form" onSubmit={saveSemester}><FormRow label="Semester name"><input required value={semesterEditDraft.name} onChange={e=>setSemesterEditDraft(p=>({...p,name:e.target.value}))}/></FormRow><div className="form-grid"><FormRow label="Start date"><input type="date" value={semesterEditDraft.start_date} onChange={e=>setSemesterEditDraft(p=>({...p,start_date:e.target.value}))}/></FormRow><FormRow label="End date"><input type="date" value={semesterEditDraft.end_date} onChange={e=>setSemesterEditDraft(p=>({...p,end_date:e.target.value}))}/></FormRow></div><div className="form-actions"><button type="button" className="btn secondary" onClick={()=>setSemesterEditId('')}>Cancel</button><button disabled={busy} className="btn primary">Save semester</button></div></form>}
-              <p className="muted compact">Existing courses remain under their original semester names; no migration required.</p>
-            </Card>
-            {courseForm&&<Card className="form-card"><h3>Create a course</h3><form onSubmit={newCourse} className="form-grid"><FormRow label="Course code"><input required value={courseDraft.code} onChange={e=>setCourseDraft(p=>({...p,code:e.target.value}))} placeholder="02516"/></FormRow><FormRow label="Course title"><input required value={courseDraft.title} onChange={e=>setCourseDraft(p=>({...p,title:e.target.value}))} placeholder="Image Analysis & Computer Vision"/></FormRow><FormRow label="Semester"><input value={courseDraft.semester} onChange={e=>setCourseDraft(p=>({...p,semester:e.target.value}))}/></FormRow><FormRow label="Existing semester (optional)"><select value={courseDraft.semester_id} onChange={e=>{const sem=(data.semesters||[]).find(x=>x.id===e.target.value);setCourseDraft(p=>({...p,semester_id:e.target.value,semester:sem?.name||p.semester}));}}><option value="">Use semester name above</option>{(data.semesters||[]).map(sem=><option key={sem.id} value={sem.id}>{sem.name}</option>)}</select></FormRow><FormRow label="Exam date (optional)"><input type="date" value={courseDraft.exam_date} onChange={e=>setCourseDraft(p=>({...p,exam_date:e.target.value}))}/></FormRow><FormRow label="Study goals"><textarea rows={2} value={courseDraft.goals} onChange={e=>setCourseDraft(p=>({...p,goals:e.target.value}))}/></FormRow><FormRow label="Teaching weeks"><input type="number" min={1} max={30} value={courseDraft.week_count} onChange={e=>setCourseDraft(p=>({...p,week_count:Number(e.target.value)}))}/></FormRow><div className="form-actions"><button className="btn secondary" type="button" onClick={()=>setCourseForm(false)}>Cancel</button><button className="btn primary" disabled={busy}>Save course</button></div></form></Card>}
-            {data.courses.length===0?<Card><EmptyState icon={<GraduationCap size={32}/>} title="Create your first DTU course" detail="Add the course code, semester, and teaching-week count. You can then link Goodnotes PDFs, slides and reading assignments."/></Card>:<>
-              <div className="course-pills">{data.courses.filter(c=>semesterFilter==='all'||c.semester===semesterFilter).map(c=><button className={'course-pill '+(courseId===c.id?'active':'')} key={c.id} onClick={()=>{setCourseId(c.id);setWeekNumber(1);}}><span>{c.code}</span><small>{c.title}</small></button>)}</div>
-              {selectedCourse&&<div className="two-col-layout course-layout"><div className="stack">
-                <Card><div className="course-heading"><div><span className="eyebrow">{selectedCourse.semester}</span><h2>{selectedCourse.title}</h2><p>{selectedCourse.code} · {selectedCourse.week_count} teaching weeks {selectedCourse.exam_date?` · Exam ${formatDate(selectedCourse.exam_date)}`:''}</p>{selectedCourse.goals&&<p className="muted">{selectedCourse.goals}</p>}</div><div className="workspace-actions"><button className="btn secondary small" onClick={openCourseEdit}>Edit course</button><button className="icon-btn danger-hover" title="Delete empty course" onClick={()=>{if(confirm('Delete this course? Deletion is only allowed when it has no linked data.'))void act(async()=>{await api(`/api/courses/${selectedCourse.id}`,user,{method:'DELETE'});setCourseId('');});}}><Trash2 size={15}/></button></div></div>
-                  {courseEdit&&<form className="mini-form" onSubmit={saveCourse}><div className="form-grid"><FormRow label="Course code"><input required value={courseEditDraft.code} onChange={e=>setCourseEditDraft(p=>({...p,code:e.target.value}))}/></FormRow><FormRow label="Title"><input required value={courseEditDraft.title} onChange={e=>setCourseEditDraft(p=>({...p,title:e.target.value}))}/></FormRow><FormRow label="Semester name"><input required value={courseEditDraft.semester} onChange={e=>setCourseEditDraft(p=>({...p,semester:e.target.value,semester_id:''}))}/></FormRow><FormRow label="Registered semester"><select value={courseEditDraft.semester_id} onChange={e=>{const sem=(data.semesters||[]).find(v=>v.id===e.target.value);setCourseEditDraft(p=>({...p,semester_id:e.target.value,semester:sem?.name||p.semester}));}}><option value="">Use text name</option>{(data.semesters||[]).map(sem=><option key={sem.id} value={sem.id}>{sem.name}</option>)}</select></FormRow><FormRow label="Teaching weeks"><input type="number" min={1} max={30} value={courseEditDraft.week_count} onChange={e=>setCourseEditDraft(p=>({...p,week_count:Number(e.target.value)}))}/></FormRow><FormRow label="Exam date"><input type="date" value={courseEditDraft.exam_date} onChange={e=>setCourseEditDraft(p=>({...p,exam_date:e.target.value}))}/></FormRow></div><FormRow label="Study goals"><textarea rows={2} value={courseEditDraft.goals} onChange={e=>setCourseEditDraft(p=>({...p,goals:e.target.value}))}/></FormRow><div className="form-actions"><button type="button" className="btn secondary" onClick={()=>setCourseEdit(false)}>Cancel</button><button className="btn primary" disabled={busy}>Save changes</button></div></form>}
-                  <div className="week-tools"><FormRow label="Teaching week"><select value={weekNumber} onChange={e=>setWeekNumber(Number(e.target.value))}>{Array.from({length:selectedCourse.week_count},(_,n)=><option key={n+1} value={n+1}>Week {n+1}</option>)}</select></FormRow><button className="btn secondary" onClick={()=>{if(!weekForm)setWeekDraft({title:selectedWeek?.title||'',objectives:selectedWeek?.objectives||''});setWeekForm(!weekForm);}}><Plus size={15}/> {selectedWeek?'Edit week':'Set up week'}</button></div>
-                  {selectedWeek?<><h3 className="week-title">Week {weekNumber}: {selectedWeek.title}</h3>{selectedWeek.objectives&&<p className="muted">{selectedWeek.objectives}</p>}<div className="progress-heading"><span>Weekly completion</span><strong>{doneCount}/{selectedItems.length} items</strong></div><div className="progress-track"><div style={{width:`${progress}%`}}/></div></>:<div className="subtle-notice">No topic set for Week {weekNumber}. You can still add study items and resources.</div>}
-                  {weekForm&&<form className="mini-form" onSubmit={newWeek}><FormRow label={`Topic for Week ${weekNumber}`}><input required value={weekDraft.title} placeholder="e.g. Multiclass segmentation" onChange={e=>setWeekDraft(p=>({...p,title:e.target.value}))}/></FormRow><FormRow label="Learning objectives (optional)"><textarea rows={2} value={weekDraft.objectives} onChange={e=>setWeekDraft(p=>({...p,objectives:e.target.value}))}/></FormRow><button className="btn primary" disabled={busy}>{selectedWeek?"Save changes":"Create week"}</button></form>}
-                </Card>
-                <Card><SectionTitle title="Learning checklist" aside={<button className="btn secondary small" onClick={()=>setItemForm(!itemForm)}><Plus size={14}/> Add item</button>}/>
-                  {itemForm&&<form className="mini-form" onSubmit={newItem}><FormRow label="Title"><input required value={itemDraft.title} onChange={e=>setItemDraft(p=>({...p,title:e.target.value}))} placeholder="Read lecture 10 slides"/></FormRow><div className="form-grid"><FormRow label="Activity type"><select value={itemDraft.kind} onChange={e=>setItemDraft(p=>({...p,kind:e.target.value as ItemKind}))}>{(['lecture','notes','reading','revision','assignment'] as const).map(k=><option key={k} value={k}>{kindLabels[k]}</option>)}</select></FormRow><FormRow label="Priority"><select value={itemDraft.priority} onChange={e=>setItemDraft(p=>({...p,priority:e.target.value}))}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></FormRow><FormRow label="Planned study date"><input type="date" value={itemDraft.planned_date} onChange={e=>setItemDraft(p=>({...p,planned_date:e.target.value}))}/></FormRow><FormRow label="Due date"><input type="date" value={itemDraft.due_date} onChange={e=>setItemDraft(p=>({...p,due_date:e.target.value}))}/></FormRow></div>{itemDraft.kind==='reading'&&<div className="form-grid"><FormRow label="Chapter / reading section"><input placeholder="Chapter 7.2" value={itemDraft.chapter} onChange={e=>setItemDraft(p=>({...p,chapter:e.target.value}))}/></FormRow><FormRow label="Start page"><input type="number" min={1} value={itemDraft.page_start} onChange={e=>setItemDraft(p=>({...p,page_start:e.target.value}))}/></FormRow><FormRow label="End page"><input type="number" min={1} value={itemDraft.page_end} onChange={e=>setItemDraft(p=>({...p,page_end:e.target.value}))}/></FormRow></div>}<FormRow label="Notes or instructions"><textarea rows={2} value={itemDraft.notes} onChange={e=>setItemDraft(p=>({...p,notes:e.target.value}))}/></FormRow><label className="inline-check"><input type="checkbox" checked={itemDraft.kind==='assignment'||itemDraft.is_task} disabled={itemDraft.kind==='assignment'} onChange={e=>setItemDraft(p=>({...p,is_task:e.target.checked}))}/> Also show in Tasks</label><div className="form-actions"><button className="btn secondary" type="button" onClick={()=>setItemForm(false)}>Cancel</button><button className="btn primary" disabled={busy}>Add activity</button></div></form>}
-                  {selectedItems.length ? selectedItems.map(i=><div className="study-row" key={i.id}><input type="checkbox" aria-label={`Complete ${i.title}`} checked={i.done} onChange={()=>toggle(i)}/><div className="task-content"><strong className={i.done?'complete':''}>{i.title}</strong><div className="inline-meta"><Badge>{kindLabels[i.kind]}</Badge>{i.is_task&&<Badge tone="good">Linked task</Badge>}{i.due_date&&<small>Due {formatDate(i.due_date)}</small>}{i.chapter&&<small>{i.chapter}{i.page_start?` · pp. ${i.page_start}${i.page_end?`–${i.page_end}`:''}`:''}</small>}<small>{selectedResources.filter(r=>r.item_id===i.id).length} linked file(s)</small></div></div><button className="icon-btn" title="Start focus on this item" onClick={()=>startFrom(i)}><Timer size={17}/></button><button className="icon-btn danger-hover" title="Delete item" onClick={()=>{if(confirm(`Delete “${i.title}”?`))void act(async()=>api(`/api/items/${i.id}`,user,{method:'DELETE'}));}}><Trash2 size={15}/></button></div>):<EmptyState icon={<CheckCircle2 size={23}/>} title="No study activities yet" detail="Add lecture slides, reading, notes, revision and assignments. Assignments automatically appear in Tasks."/>}
-                </Card>
-              </div><div className="stack">
-                <Card><SectionTitle title="Week resources" aside={<button className="btn secondary small" onClick={()=>setResourceForm(!resourceForm)}><Plus size={14}/> Add link</button>}/><p className="muted compact">Original slides, annotated copies, handwritten notes and textbook PDFs belong together here.</p>
-                  {resourceForm&&<form className="mini-form" onSubmit={newResource}><FormRow label="Resource title"><input required value={resourceDraft.title} onChange={e=>setResourceDraft(p=>({...p,title:e.target.value}))}/></FormRow><FormRow label="URL (DTU Learn or other HTTPS link)"><input type="url" required placeholder="https://..." value={resourceDraft.url} onChange={e=>setResourceDraft(p=>({...p,url:e.target.value}))}/></FormRow><div className="form-grid"><FormRow label="Source"><select value={resourceDraft.source} onChange={e=>setResourceDraft(p=>({...p,source:e.target.value as 'dtu'|'link'}))}><option value="dtu">DTU Learn</option><option value="link">External link</option></select></FormRow><FormRow label="Type"><select value={resourceDraft.kind} onChange={e=>setResourceDraft(p=>({...p,kind:e.target.value as Resource['kind']}))}>{(['slides','annotated','handwritten','textbook','other'] as const).map(k=><option key={k}>{k}</option>)}</select></FormRow></div><FormRow label="Attach to study item (optional)"><select value={resourceDraft.item_id} onChange={e=>setResourceDraft(p=>({...p,item_id:e.target.value}))}><option value="">Entire week</option>{selectedItems.map(i=><option key={i.id} value={i.id}>{i.title}</option>)}</select></FormRow><div className="form-grid"><FormRow label="Chapter / section"><input value={resourceDraft.chapter} onChange={e=>setResourceDraft(p=>({...p,chapter:e.target.value}))}/></FormRow><FormRow label="Page start"><input type="number" min={1} value={resourceDraft.page_start} onChange={e=>setResourceDraft(p=>({...p,page_start:e.target.value}))}/></FormRow><FormRow label="Page end"><input type="number" min={1} value={resourceDraft.page_end} onChange={e=>setResourceDraft(p=>({...p,page_end:e.target.value}))}/></FormRow></div><button className="btn primary" disabled={busy}>Link resource</button></form>}
-                  {selectedResources.map(r=><div className="resource-row" key={r.id}><div className="resource-icon"><FileText size={18}/></div><div className="task-content"><strong>{r.title}</strong><small>{r.kind} · {r.source==='drive'?'Goodnotes / Google Drive':r.source==='dtu'?'DTU Learn':'External link'}{r.item_id?` · ${selectedItems.find(i=>i.id===r.item_id)?.title||'Linked item'}`:''}{r.chapter?` · ${r.chapter}`:''}{r.page_start?` · pp. ${r.page_start}${r.page_end?`–${r.page_end}`:''}`:''}</small></div><button className="btn secondary small" onClick={()=>openResourceEdit(r)}>Edit</button><button className="icon-btn" title="Open resource" onClick={()=>{if(r.source==='drive'&&r.drive_file_id)previewPdf(r.drive_file_id,r.title,r.id,r.last_page);else if(r.url)window.open(r.url,'_blank','noopener,noreferrer');}}>{r.source==='drive'?<BookOpen size={17}/>:<ExternalLink size={17}/>}</button><button className="icon-btn danger-hover" title="Remove resource" onClick={()=>{if(confirm('Remove this resource link?'))void act(async()=>api(`/api/resources/${r.id}`,user,{method:'DELETE'}));}}><X size={15}/></button></div>)}
-                  {resourceEditId&&<form className="mini-form resource-editor" onSubmit={saveResource}><h4>Edit resource</h4><FormRow label="Title"><input required value={resourceEditDraft.title} onChange={e=>setResourceEditDraft(p=>({...p,title:e.target.value}))}/></FormRow><FormRow label="Type"><select value={resourceEditDraft.kind} onChange={e=>setResourceEditDraft(p=>({...p,kind:e.target.value as Resource['kind']}))}>{(['slides','annotated','handwritten','textbook','other'] as const).map(k=><option value={k} key={k}>{k}</option>)}</select></FormRow><FormRow label="Attach to activity"><select value={resourceEditDraft.item_id} onChange={e=>setResourceEditDraft(p=>({...p,item_id:e.target.value}))}><option value="">Whole week</option>{selectedItems.map(i=><option key={i.id} value={i.id}>{i.title}</option>)}</select></FormRow><div className="form-grid"><FormRow label="Chapter"><input value={resourceEditDraft.chapter} onChange={e=>setResourceEditDraft(p=>({...p,chapter:e.target.value}))}/></FormRow><FormRow label="Page start"><input type="number" min={1} value={resourceEditDraft.page_start} onChange={e=>setResourceEditDraft(p=>({...p,page_start:e.target.value}))}/></FormRow><FormRow label="Page end"><input type="number" min={1} value={resourceEditDraft.page_end} onChange={e=>setResourceEditDraft(p=>({...p,page_end:e.target.value}))}/></FormRow></div><div className="form-actions"><button type="button" className="btn secondary" onClick={()=>setResourceEditId('')}>Cancel</button><button className="btn primary" disabled={busy}>Save resource</button></div></form>}
-                  {!selectedResources.length&&<EmptyState icon={<FileText size={23}/>} title="No linked resources" detail="Connect Goodnotes backup PDFs from Library, or add DTU Learn links."/>}
-                  <button className="btn secondary full" onClick={()=>{setLinkCourse(courseId);setLinkWeek(weekNumber);setTab('library');}}><Cloud size={16}/> Browse Google Drive backups</button>
-                </Card>
-                <Card><SectionTitle title="Exam preparation" aside={<Badge>{examItems.filter(i=>i.done).length}/{examItems.length} complete</Badge>}/><p className="muted compact">Course-wide revision independent of teaching weeks.</p><form className="exam-task-form" onSubmit={newExamItem}><input aria-label="Exam revision task" required placeholder="e.g. Practise old exam papers" value={examDraft} onChange={e=>setExamDraft(e.target.value)}/><button className="btn secondary small" disabled={busy||!examDraft.trim()}>Add</button></form>{examItems.map(i=><div className="task-row" key={i.id}><input type="checkbox" aria-label={`Complete ${i.title}`} checked={i.done} onChange={()=>toggle(i)}/><div className="task-content"><strong>{i.title}</strong><small>Also appears in Tasks</small></div><button className="icon-btn" aria-label={`Focus on ${i.title}`} onClick={()=>startFrom(i)}><Timer size={15}/></button></div>)}</Card>
-                <Card className="hint-card"><SectionTitle title="Stay in your existing workflow"/><p>Keep handwriting in Goodnotes. This library links to the backed-up PDF, which opens in Study Hub without copying the original into Firebase.</p></Card>
-              </div></div>}
-            </>}
-          </>}
+          {tab==='courses'&&<CoursePlanner data={data} user={user} busy={busy}
+            courseId={courseId} weekNumber={weekNumber} selectCourse={setCourseId} selectWeek={setWeekNumber}
+            run={act} toggleItem={toggle} focusOn={startFrom}
+            openResource={r=>{if(r.source==='drive'&&r.drive_file_id)previewPdf(r.drive_file_id,r.title,r.id,r.last_page);else if(r.url)window.open(r.url,'_blank','noopener,noreferrer');}}
+            openDrive={(id,week,kind,scope)=>{setLinkCourse(id);setLinkWeek(week);setLinkScope(scope);setLinkKind(kind);setLinkItem('');setTab('library');}}
+          />}
 
           {tab==='tasks'&&<>
             <div className="page-heading"><div><span className="eyebrow"><CheckCircle2 size={13}/> YOUR ACTION LIST</span><h1>Clear mind. Clear tasks.</h1><p>Everything on your plate, without the overwhelm.</p></div><button className="btn primary" onClick={()=>setTaskForm(!taskForm)}><Plus size={17}/> New task</button></div>
@@ -367,7 +274,7 @@ export default function Page() {
           {tab==='focus'&&<>
             <div className="page-heading"><div><span className="eyebrow"><Target size={13}/> DEEP WORK</span><h1>Find your flow.</h1><p>Settle into a distraction-free session. Every minute counts.</p></div><Badge tone={active?active.status==='running'?'good':'warning':'muted'}>{active?active.status:'Ready'}</Badge></div>
             <div className="focus-layout"><Card className="focus-card">
-              {!active&&<div className="focus-settings"><FormRow label="Course (optional)"><select value={focusCourse} onChange={e=>{setFocusCourse(e.target.value);setFocusItem('');}}><option value="">General study</option>{data.courses.map(c=><option key={c.id} value={c.id}>{c.code} · {c.title}</option>)}</select></FormRow><FormRow label="Study task (optional)"><select value={focusItem} onChange={e=>setFocusItem(e.target.value)}><option value="">No linked task</option>{data.items.filter(i=>i.course_id===focusCourse).map(i=><option key={i.id} value={i.id}>{i.title}</option>)}</select></FormRow></div>}
+              {!active&&<div className="focus-settings"><FormRow label="Course (optional)"><select value={focusCourse} onChange={e=>{setFocusCourse(e.target.value);setFocusItem('');}}><option value="">General study</option>{data.courses.filter(c=>!c.archived).map(c=><option key={c.id} value={c.id}>{c.code} · {c.title}</option>)}</select></FormRow><FormRow label="Study task (optional)"><select value={focusItem} onChange={e=>setFocusItem(e.target.value)}><option value="">No linked task</option>{data.items.filter(i=>i.course_id===focusCourse).map(i=><option key={i.id} value={i.id}>{i.title}</option>)}</select></FormRow></div>}
               {active&&<div className="focus-context"><Badge tone="good">Active session</Badge><strong>{data.items.find(i=>i.id===active.item_id)?.title||data.courses.find(c=>c.id===active.course_id)?.title||'General focus'}</strong></div>}
               <div className="focus-modes">{(['25','50','90','free'] as const).map(m=><button key={m} disabled={!!active} className={focusMode===m?'current':''} onClick={()=>setFocusMode(m)}>{m==='free'?'Stopwatch':`${m} min`}</button>)}</div>
               <div className="timer-dial"><span className="dial-label">{active?active.status==='paused'?'PAUSED':'FOCUSING':focusMode==='free'?'STOPWATCH':'FOCUS TARGET'}</span><strong>{active?duration(elapsedFocus(active,now)):focusMode==='free'?'00:00:00':duration(Number(focusMode)*60)}</strong><span className="dial-sub">{active?.mode!=='free'&&active?`Target: ${active.mode} minutes`:active?'Count-up session':'Ready when you are'}</span></div>
@@ -405,7 +312,7 @@ export default function Page() {
                 {indexedVisible.length===0&&<EmptyState icon={<FileText size={23}/>} title="Nothing here yet" detail="Scan your selected backup folder, or switch the list filter."/>}
                 {indexedVisible.length>visibleCount&&<button className="btn secondary full" onClick={()=>setVisibleCount(n=>n+30)}>Show more ({indexedVisible.length-visibleCount} remaining)</button>}
               </Card>}
-            </div><div className="stack"><Card><SectionTitle title="Manual course & week linking"/><p className="muted compact">If Goodnotes filenames don't identify a week, choose the correct destination before clicking <strong>Link manually</strong>. You stay in control.</p><FormRow label="Course"><select value={linkCourse} onChange={e=>{setLinkCourse(e.target.value);setLinkWeek(1);setLinkItem('');}}><option value="">Select course</option>{data.courses.map(c=><option key={c.id} value={c.id}>{c.code} · {c.title}</option>)}</select></FormRow><FormRow label="Week"><select value={linkWeek} onChange={e=>{setLinkWeek(Number(e.target.value));setLinkItem('');}}>{Array.from({length:data.courses.find(c=>c.id===linkCourse)?.week_count||13},(_,n)=><option key={n+1} value={n+1}>Week {n+1}</option>)}</select></FormRow><FormRow label="Material type"><select value={linkKind} onChange={e=>setLinkKind(e.target.value as Resource['kind'])}>{(['handwritten','annotated','slides','textbook','other'] as const).map(k=><option key={k} value={k}>{k==='handwritten'?'Handwritten notes':k==='annotated'?'Annotated slides':k==='slides'?'Original slides':k==='textbook'?'Textbook':'Other'}</option>)}</select></FormRow><FormRow label="Attach to study item (optional)"><select value={linkItem} onChange={e=>setLinkItem(e.target.value)}><option value="">Entire week</option>{data.items.filter(i=>i.course_id===linkCourse&&i.week_number===linkWeek).map(i=><option key={i.id} value={i.id}>{i.title}</option>)}</select></FormRow></Card>
+            </div><div className="stack"><Card><SectionTitle title="Link to a course or teaching week"/><p className="muted compact">Choose Course Library for whole-course books and notebooks, or a specific week for lecture materials, before clicking <strong>Link manually</strong>. You stay in control.</p><FormRow label="Course"><select value={linkCourse} onChange={e=>{setLinkCourse(e.target.value);setLinkWeek(1);setLinkItem('');}}><option value="">Select course</option>{data.courses.filter(c=>!c.archived).map(c=><option key={c.id} value={c.id}>{c.code} · {c.title}</option>)}</select></FormRow><FormRow label="Resource belongs to"><select value={linkScope} onChange={e=>setLinkScope(e.target.value as 'course'|'week')}><option value="course">Course Library (all weeks)</option><option value="week">One teaching week</option></select></FormRow>{linkScope==='week'&&<FormRow label="Week"><select value={linkWeek} onChange={e=>{setLinkWeek(Number(e.target.value));setLinkItem('');}}>{Array.from({length:data.courses.find(c=>c.id===linkCourse)?.week_count||13},(_,n)=><option key={n+1} value={n+1}>Week {n+1}</option>)}</select></FormRow>}<FormRow label="Material type"><select value={linkKind} onChange={e=>setLinkKind(e.target.value as Resource['kind'])}>{(['handwritten','annotated','slides','textbook','other'] as const).map(k=><option key={k} value={k}>{k==='handwritten'?'Handwritten notes':k==='annotated'?'Annotated slides':k==='slides'?'Original slides':k==='textbook'?'Textbook':'Other'}</option>)}</select></FormRow>{linkScope==='week'&&<FormRow label="Attach to study item (optional)"><select value={linkItem} onChange={e=>setLinkItem(e.target.value)}><option value="">Entire week</option>{data.items.filter(i=>i.course_id===linkCourse&&i.week_number===linkWeek).map(i=><option key={i.id} value={i.id}>{i.title}</option>)}</select></FormRow>}</Card>
               <Card className="hint-card"><h3>Keep using Goodnotes</h3><p>Continue handwriting there. After Goodnotes finishes backing up, press <strong>Scan for PDFs</strong> to update this library. Read linked PDF copies inside Study Hub. The original notes remain editable in Goodnotes.</p></Card>
             </div></div>
           </>}
@@ -414,7 +321,7 @@ export default function Page() {
     </div>
     <nav className="mobile-nav" aria-label="Mobile navigation">{tabs.map(t=><button key={t.id} className={tab===t.id?'current':''} onClick={()=>setTab(t.id)}><t.icon size={19}/><span>{t.label}</span></button>)}</nav>
     {pdf&&<PdfWorkspace pdf={pdf} items={data.items}
-      related={data.resources.filter(r=>r.course_id===pdf.courseId&&r.week_number===pdf.weekNumber)}
+      related={data.resources.filter(r=>r.course_id===pdf.courseId&&(r.week_number===pdf.weekNumber||r.week_number===null))}
       onClose={closePdf} onPage={changePdfPage} onToggleItem={toggle}
       onFocus={item=>{closePdf();startFrom(item);}}
       onOpenResource={r=>{if(r.source==='drive'&&r.drive_file_id)previewPdf(r.drive_file_id,r.title,r.id,r.last_page);else if(r.url)window.open(r.url,'_blank','noopener,noreferrer');}}/>}

@@ -20,6 +20,23 @@ def require(uid, kind, identifier):
     return doc
 
 
+def ensure_course_active(uid: str, course_id: str):
+    course = require(uid, 'courses', course_id)
+    if course.get('archived', False):
+        raise HTTPException(409, 'Course is archived; restore it before making changes')
+    return course
+
+
+def validate_item_reference(uid: str, course_id: str | None, week_number: int | None, resource_id: str | None):
+    if not resource_id:
+        return
+    resource = require(uid, 'resources', resource_id)
+    if not course_id or resource['course_id'] != course_id:
+        raise HTTPException(422, 'Referenced resource belongs to another course')
+    if resource.get('week_number') is not None and resource['week_number'] != week_number:
+        raise HTTPException(422, 'Referenced weekly resource belongs to another week')
+
+
 def validate(model, values):
     try:
         return model.model_validate(values)
@@ -32,6 +49,12 @@ async def create_semester(value: Semester, user: User = Depends(current_user)):
     if any(s['name'].casefold() == value.name.casefold() for s in store().list(user.uid, 'semesters')):
         raise HTTPException(409, 'Semester already exists')
     store().put(user.uid, 'semesters', value.model_dump(mode='json'))
+    # Adopt pre-v0.4 courses that previously had only a semester name.
+    for course in store().list(user.uid, 'courses'):
+        if not course.get('semester_id') and course.get('semester', '').casefold() == value.name.casefold():
+            course['semester_id'] = value.id
+            course['semester'] = value.name
+            store().put(user.uid, 'courses', course)
     return value
 
 
@@ -45,7 +68,8 @@ async def edit_semester(identifier: str, patch: SemesterPatch, user: User = Depe
     store().put(user.uid, 'semesters', value.model_dump(mode='json'))
     # Keep legacy semester label in sync for existing linked course documents.
     for course in store().list(user.uid, 'courses'):
-        if course.get('semester_id') == identifier:
+        if course.get('semester_id') == identifier or (not course.get('semester_id') and course.get('semester', '').casefold() == old['name'].casefold()):
+            course['semester_id'] = identifier
             course['semester'] = value.name
             store().put(user.uid, 'courses', course)
     return value
@@ -55,13 +79,13 @@ async def edit_semester(identifier: str, patch: SemesterPatch, user: User = Depe
 async def remove_semester(identifier: str, user: User = Depends(current_user)):
     record = require(user.uid, 'semesters', identifier)
     if any(c.get('semester_id') == identifier or (not c.get('semester_id') and c.get('semester') == record['name']) for c in store().list(user.uid, 'courses')):
-        raise HTTPException(409, 'Move or delete courses before removing this semester')
+        raise HTTPException(409, 'Move or archive courses elsewhere before removing this semester')
     store().delete(user.uid, 'semesters', identifier)
 
 
 @router.patch('/courses/{identifier}', response_model=Course)
 async def edit_course(identifier: str, patch: CoursePatch, user: User = Depends(current_user)):
-    original = require(user.uid, 'courses', identifier)
+    original = ensure_course_active(user.uid, identifier)
     fields = patch.model_dump(mode='json', exclude_unset=True)
     if fields.get('semester_id'):
         semester = require(user.uid, 'semesters', fields['semester_id'])
@@ -79,18 +103,35 @@ async def edit_course(identifier: str, patch: CoursePatch, user: User = Depends(
     return value
 
 
-@router.delete('/courses/{identifier}', status_code=204)
+@router.post('/courses/{identifier}/archive', response_model=Course)
+async def archive_course(identifier: str, user: User = Depends(current_user)):
+    doc = require(user.uid, 'courses', identifier)
+    if any(s.get('course_id') == identifier and s.get('status') in ('running', 'paused')
+           for s in store().list(user.uid, 'sessions')):
+        raise HTTPException(409, 'Finish or pause and finish the active focus session before archiving')
+    doc['archived'] = True
+    store().put(user.uid, 'courses', doc)
+    return Course.model_validate(doc)
+
+
+@router.post('/courses/{identifier}/restore', response_model=Course)
+async def restore_course(identifier: str, user: User = Depends(current_user)):
+    doc = require(user.uid, 'courses', identifier)
+    doc['archived'] = False
+    store().put(user.uid, 'courses', doc)
+    return Course.model_validate(doc)
+
+
+@router.delete('/courses/{identifier}')
 async def remove_course(identifier: str, user: User = Depends(current_user)):
     require(user.uid, 'courses', identifier)
-    for kind in ('weeks', 'items', 'resources', 'sessions'):
-        if any(row.get('course_id') == identifier for row in store().list(user.uid, kind)):
-            raise HTTPException(409, f'Course has linked {kind}; delete or move them first')
-    store().delete(user.uid, 'courses', identifier)
+    raise HTTPException(405, 'Permanent deletion is disabled; archive the course instead')
 
 
 @router.patch('/weeks/{identifier}', response_model=Week)
 async def edit_week(identifier: str, patch: WeekPatch, user: User = Depends(current_user)):
     old = require(user.uid, 'weeks', identifier)
+    ensure_course_active(user.uid, old['course_id'])
     value = validate(Week, {**old, **patch.model_dump(mode='json', exclude_unset=True)})
     store().put(user.uid, 'weeks', value.model_dump(mode='json'))
     return value
@@ -99,11 +140,27 @@ async def edit_week(identifier: str, patch: WeekPatch, user: User = Depends(curr
 @router.patch('/resources/{identifier}', response_model=Resource)
 async def edit_resource(identifier: str, patch: ResourcePatch, user: User = Depends(current_user)):
     old = require(user.uid, 'resources', identifier)
+    ensure_course_active(user.uid, old['course_id'])
     merged = {**old, **patch.model_dump(mode='json', exclude_unset=True)}
+    if merged.get('week_number') is not None:
+        course = require(user.uid, 'courses', old['course_id'])
+        if merged['week_number'] > course['week_count']:
+            raise HTTPException(422, 'Resource week exceeds course length')
     if merged.get('item_id'):
         item = require(user.uid, 'items', merged['item_id'])
-        if item.get('course_id') != old['course_id'] or item.get('week_number') != old['week_number']:
+        if item.get('course_id') != old['course_id'] or item.get('week_number') != merged.get('week_number'):
             raise HTTPException(422, 'Linked item is not in the same course/week')
+    if merged.get('source') == 'drive':
+        for other in store().list(user.uid, 'resources'):
+            if (other['id'] != identifier and other.get('course_id') == old['course_id']
+                    and other.get('source') == 'drive' and other.get('drive_file_id') == merged.get('drive_file_id')
+                    and (other.get('week_number') == merged.get('week_number')
+                         or other.get('week_number') is None or merged.get('week_number') is None)):
+                raise HTTPException(409, 'This Drive PDF is already linked in the course')
+    for item in store().list(user.uid, 'items'):
+        if item.get('resource_id') == identifier and merged.get('week_number') is not None:
+            if item.get('week_number') != merged['week_number']:
+                raise HTTPException(409, 'Other weeks reference this shared resource')
     value = validate(Resource, merged)
     store().put(user.uid, 'resources', value.model_dump(mode='json'))
     return value

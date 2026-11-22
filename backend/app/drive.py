@@ -269,7 +269,7 @@ def _selected_folder(store, uid):
 
 def _index_results(store, uid):
     from .main import all_docs
-    courses = all_docs(uid, 'courses')
+    courses = [c for c in all_docs(uid, 'courses') if not c.get('archived', False)]
     weeks = all_docs(uid, 'weeks')
     resources = all_docs(uid, 'resources')
     linked = {}

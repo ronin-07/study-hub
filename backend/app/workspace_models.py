@@ -42,11 +42,12 @@ class WeekPatch(BaseModel):
 
 class ResourcePatch(BaseModel):
     model_config = ConfigDict(extra='forbid')
+    week_number: int | None = Field(default=None, ge=1, le=30)
     title: str | None = Field(default=None, min_length=1, max_length=240)
     kind: str | None = Field(default=None, pattern=r'^(slides|annotated|handwritten|textbook|other)$')
     item_id: str | None = None
     chapter: str | None = Field(default=None, max_length=120)
     page_start: int | None = Field(default=None, ge=1, le=20000)
     page_end: int | None = Field(default=None, ge=1, le=20000)
-    # Location is deliberately immutable: remove and re-link to change Drive file or source.
+    # Source file/URL is immutable. Week scope can change without moving or copying the source.
 

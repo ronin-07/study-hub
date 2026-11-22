@@ -48,8 +48,9 @@ def test_semester_course_edit_and_safe_delete(client):
     assert edited['semester'] == 'Spring 2027'
     assert edited['exam_date'] == '2027-05-19'
     assert client.delete('/api/semesters/'+sem['id']).status_code == 409
-    assert client.delete('/api/courses/'+c['id']).status_code == 204
-    assert client.delete('/api/semesters/'+sem['id']).status_code == 204
+    assert client.post('/api/courses/'+c['id']+'/archive').status_code == 200
+    assert client.delete('/api/courses/'+c['id']).status_code == 405
+    assert client.delete('/api/semesters/'+sem['id']).status_code == 409
 
 
 def test_semester_validation_and_edit(client):
@@ -63,7 +64,7 @@ def test_cannot_shrink_course_or_delete_course_with_records(client):
     c = course(client)
     week = client.post('/api/weeks', json={'course_id':c['id'], 'number':11, 'title':'Review'}).json()
     assert client.patch('/api/courses/'+c['id'], json={'week_count':10}).status_code == 409
-    assert client.delete('/api/courses/'+c['id']).status_code == 409
+    assert client.delete('/api/courses/'+c['id']).status_code == 405
     edited = client.patch('/api/weeks/'+week['id'], json={'title':'Refined topic', 'objectives':'Read textbook'}).json()
     assert edited['title']=='Refined topic'
     assert edited['number']==11
@@ -85,7 +86,7 @@ def test_multiple_resources_to_same_lecture_and_reading_chapter(client):
     assert len([r for r in client.get('/api/snapshot').json()['resources'] if r['item_id']==item['id']])==3
     assert client.patch('/api/resources/'+files[0]['id'], json={'item_id':reading['id'],'chapter':'6.2','page_start':103,'page_end':125}).status_code==200
     assert client.patch('/api/resources/'+files[0]['id'], json={'page_start':125,'page_end':103}).status_code==422
-    assert client.delete('/api/courses/'+c['id']).status_code == 409
+    assert client.delete('/api/courses/'+c['id']).status_code == 405
 
 
 def test_cross_week_resource_reassignment_is_denied(client):
