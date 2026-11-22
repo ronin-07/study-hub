@@ -14,6 +14,8 @@ import { describeSnapshotFailure, fetchSnapshotWithRetry, type SnapshotLoadProbl
 import { Badge, Card, EmptyState, FormRow, SectionTitle } from '@/components/common';
 import { PdfWorkspace } from '@/components/pdf-workspace';
 import { CoursePlanner } from '@/components/course-planner';
+import { ProgressTrack, ProgressValue } from '@/components/progress-motion';
+import { visibleCourseDoneCount } from '@/lib/progress-presentation';
 import { FocusElapsed, FocusDial } from '@/components/focus-elapsed';
 import {
   previewPause, previewResume, recoverFocusClock, startFocusClock, pauseFocusClock,
@@ -327,6 +329,7 @@ export default function Page() {
   const overdue = useMemo(()=>todayWork.filter(i=>isOverdue(i,today)),[todayWork,today]);
   const upcoming = useMemo(()=>upcomingDeadlines(openTasks,today),[openTasks,today]);
   const studyGroups = useMemo(()=>todayStudyCourses(data.courses,presentedItems,today),[data.courses,presentedItems,today]);
+  const completedItemIds = useMemo(()=>new Set(data.items.filter(item=>item.done).map(item=>item.id)),[data.items]);
   useEffect(() => {
     // Keep carousel labels accurate across responsive breakpoints and data changes.
     const refresh = () => syncCourseScroll();
@@ -765,7 +768,7 @@ export default function Page() {
                   <div className="home-stat"><span className="home-stat-icon purple"><ListTodo size={23}/></span><strong>{todayWork.length}</strong><span>Tasks today</span></div>
                   <div className={'home-stat'+(overdue.length?' danger':'')}><span className="home-stat-icon red"><AlertTriangle size={23}/></span><strong>{overdue.length}</strong><span>Overdue</span></div>
                   <div className="home-stat"><span className="home-stat-icon purple"><CalendarDays size={23}/></span><strong>{upcoming.length}</strong><span>Upcoming deadlines</span></div>
-                  <div className="home-stat"><span className="home-stat-icon blue"><BarChart3 size={23}/></span><strong>{(weekSeconds/3600).toFixed(1)} h</strong><span>Focus this week</span></div>
+                  <div className="home-stat"><span className="home-stat-icon blue"><BarChart3 size={23}/></span><strong><ProgressValue value={weekSeconds/3600} decimals={1} suffix=" h"/></strong><span>Focus this week</span></div>
                 </div>
                 <section className="home-panel home-course-panel" aria-labelledby="home-courses-title">
                   <div className="home-panel-heading"><div className="home-heading-icon"><BookOpen size={21}/></div><div><h2 id="home-courses-title">Today’s study courses</h2></div><span className="home-count-pill">{studyGroups.length} {studyGroups.length===1?'course':'courses'}</span></div>
@@ -773,10 +776,11 @@ export default function Page() {
                     <div className="home-course-grid" ref={courseScrollerRef} onScroll={syncCourseScroll} role="region" aria-label="Today’s study course cards" tabIndex={0}>
                       {studyGroups.map((group,index)=>{
                         const weekLabel=group.weekNumbers.length===1?`Week ${group.weekNumbers[0]}`:group.weekNumbers.length?`Weeks ${group.weekNumbers.join(', ')}`:'Course tasks';
-                        const progress=group.activityCount?Math.round(100*group.doneCount/group.activityCount):0;
+                        const doneCount=visibleCourseDoneCount(group.doneCount,group.activityCount,group.tasks,completingIds,completedItemIds);
+                        const progress=group.activityCount?Math.round(100*doneCount/group.activityCount):0;
                         return <div key={group.course.id} className={'home-course-tile tile-'+(index%4)}>
                           <div className="home-course-heading"><div className="home-course-icon"><BookOpen size={24}/></div><div className="home-course-title"><h3>{group.course.code} · {group.course.title}</h3><span>{weekLabel}</span></div>{group.overdueCount?<span className="home-overdue-pill">{group.overdueCount} overdue</span>:<span className="home-today-pill">Today</span>}</div>
-                          <div className="home-course-progress"><span>{group.doneCount} / {group.activityCount} activities</span><div className="home-progress-track" role="progressbar" aria-label={`${group.course.title} selected week activity progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><div style={{width:`${progress}%`}}/></div></div>
+                          <div className="home-course-progress"><span>{doneCount} / {group.activityCount} activities · <ProgressValue value={progress}/></span><ProgressTrack className="home-progress-track" identity={group.course.id} label={`${group.course.title} selected week activity progress`} value={progress}/></div>
                           <div className="home-course-activities">
                             {group.tasks.slice(0,2).map(i=><div className={'home-course-task task-completion-row'+(isOverdue(i,today)?' late':'')+(completingIds.has(i.id)?' is-completing':'')+(exitingIds.has(i.id)?' is-exiting':'')} key={i.id}><input type="checkbox" aria-label={`Complete ${i.title}`} disabled={busy||pendingItems.has(i.id)||completingIds.has(i.id)} className="task-completion-check" checked={i.done||completingIds.has(i.id)} onChange={()=>toggle(i)}/><button className="home-course-task-title" title={`Open ${i.title} in course`} onClick={()=>openCourse(group.course.id,i.week_number||undefined)}>{i.title}{group.weekNumbers.length>1&&i.week_number&&<small>W{i.week_number}</small>}</button>{isOverdue(i,today)&&<span className="home-overdue-pill compact">Overdue</span>}{i.resource_id&&<button className="home-task-resource" disabled={busy} onClick={()=>openTaskResource(i)} aria-label={`Open resource for ${i.title}`} title="Open linked resource"><BookOpen size={15}/></button>}</div>)}
                             {group.tasks.length>2&&<button className="home-extra-items" onClick={()=>navigate('tasks')}>+ {group.tasks.length-2} more tasks <ArrowRight size={13}/></button>}
@@ -801,7 +805,7 @@ export default function Page() {
             </div>
           </div>}
 
-          {tab==='courses'&&<CoursePlanner data={data.items===presentedItems?data:{...data,items:presentedItems}} user={user} busy={busy} pendingItems={pendingItems} completingIds={completingIds} exitingIds={exitingIds}
+          {tab==='courses'&&<CoursePlanner data={data.items===presentedItems?data:{...data,items:presentedItems}} progressItems={data.items} user={user} busy={busy} pendingItems={pendingItems} completingIds={completingIds} exitingIds={exitingIds}
             courseId={courseId} weekNumber={weekNumber} landingItem={courseLandingItem} selectCourse={rememberCourse} selectWeek={rememberWeek}
             run={act} toggleItem={toggle} focusOn={startFrom}
             openResource={r=>{if(r.source==='drive'&&r.drive_file_id)previewPdf(r.drive_file_id,r.title,r.id,r.last_page);else if(r.url)window.open(r.url,'_blank','noopener,noreferrer');}}
@@ -825,10 +829,10 @@ export default function Page() {
               {active?<FocusDial session={active} anchor={focusClock}/>:<div className="timer-dial"><span className="dial-label">{focusMode==='free'?'STOPWATCH':'FOCUS TARGET'}</span><strong>{focusMode==='free'?'00:00:00':duration(Number(focusMode)*60)}</strong><span className="dial-sub">Ready when you are</span></div>}
               {active? <div className="focus-buttons"><button className="btn secondary" onClick={()=>sessionAction(active.status==='running'?'pause':'resume')} disabled={focusBusy}>{active.status==='running'?<Pause size={17}/>:<Play size={17}/>} {active.status==='running'?'Pause':'Resume'}</button><button className="btn primary" disabled={focusBusy} onClick={reviewFinish}><Square size={15}/> Finish & review</button></div>:<button className="btn primary focus-start" disabled={busy||focusBusy} onClick={beginFocus}><Play size={18}/> Start focusing</button>}
               <p className="focus-tip">Timed sessions end manually. Your timer continues if you close this tab.</p>
-            </Card><div className="stack"><Card><SectionTitle title="Your focus statistics"/><div className="focus-stat"><span>This week</span><strong>{(weekSeconds/3600).toFixed(1)} hours</strong></div><div className="focus-stat"><span>All time</span><strong>{(totalSeconds/3600).toFixed(1)} hours</strong></div><div className="focus-stat"><span>Completed sessions</span><strong>{data.focus_stats?.completed_sessions ?? data.sessions.filter(s=>s.status==='finished').length}</strong></div></Card>
+            </Card><div className="stack"><Card><SectionTitle title="Your focus statistics"/><div className="focus-stat"><span>This week</span><strong><ProgressValue value={weekSeconds/3600} decimals={1} suffix=" hours"/></strong></div><div className="focus-stat"><span>All time</span><strong><ProgressValue value={totalSeconds/3600} decimals={1} suffix=" hours"/></strong></div><div className="focus-stat"><span>Completed sessions</span><strong>{data.focus_stats?.completed_sessions ?? data.sessions.filter(s=>s.status==='finished').length}</strong></div></Card>
               <Card className="focus-week-goal"><SectionTitle title="Weekly focus goal" aside={<Badge>{(weekSeconds/3600).toFixed(1)} / {weeklyGoal} h</Badge>}/>
-                <div className="home-progress-track" role="progressbar" aria-label="Weekly focus goal progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={weekPct}><div style={{width:`${weekPct}%`}}/></div>
-                <div className="focus-week-goal-footer"><span>{weekPct}% of your weekly goal</span><label>Target <input type="number" min={1} max={80} aria-label="Weekly focus target in hours" value={weeklyGoal} onChange={e=>{const n=Math.max(1,Math.min(80,Number(e.target.value)||1));setWeeklyGoal(n);localStorage.setItem('studyhub-focus-goal',String(n));}}/> h/week</label></div>
+                <ProgressTrack className="home-progress-track" label="Weekly focus goal progress" value={weekPct} identity="focus-weekly-goal"/>
+                <div className="focus-week-goal-footer"><span><ProgressValue value={weekPct}/> of your weekly goal</span><label>Target <input type="number" min={1} max={80} aria-label="Weekly focus target in hours" value={weeklyGoal} onChange={e=>{const n=Math.max(1,Math.min(80,Number(e.target.value)||1));setWeeklyGoal(n);localStorage.setItem('studyhub-focus-goal',String(n));}}/> h/week</label></div>
                 <small>Target preference is stored on this device.</small>
               </Card><Card><SectionTitle title="Recent sessions"/>{data.sessions.filter(s=>s.status==='finished').sort((a,b)=>(b.ended_at||0)-(a.ended_at||0)).slice(0,5).map(s=><div className="session-row" key={s.id}><span><Check size={15}/></span><div><strong>{data.items.find(i=>i.id===s.item_id)?.title||'Focus session'}</strong><small>{new Date(s.started_at*1000).toLocaleDateString()} · {Math.round((s.focus_seconds||0)/60)} min</small></div></div>)}{!data.sessions.some(s=>s.status==='finished')&&<p className="muted">Your finished sessions will appear here.</p>}</Card></div></div>
 

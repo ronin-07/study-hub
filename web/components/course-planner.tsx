@@ -10,6 +10,7 @@ import {
 import { api } from '@/lib/api';
 import type { MutationHint } from '@/lib/snapshot-cache';
 import { Badge, Card, EmptyState, FormRow, SectionTitle } from '@/components/common';
+import { ProgressTrack, ProgressValue } from '@/components/progress-motion';
 import { isActionable, isOverdue } from '@/lib/task-view';
 import { resolveWorkspaceSemester } from '@/lib/course-navigation';
 import { type Course, type Item, type Resource, type Semester, type Snapshot, formatDate, kindLabels, localToday } from '@/lib/types';
@@ -37,6 +38,7 @@ function numberOrNull(value: string) { return value.trim() ? Number(value) : nul
 
 interface Props {
   data: Snapshot;
+  progressItems: Item[];
   user: User | null;
   busy: boolean;
   pendingItems: ReadonlySet<string>;
@@ -55,7 +57,7 @@ interface Props {
 }
 
 /** Single registered semester -> course -> week navigation source of truth. */
-export function CoursePlanner({ data, user, busy, pendingItems, completingIds, exitingIds, courseId, weekNumber, selectCourse, selectWeek, run, toggleItem, focusOn, openResource, openDrive, landingItem }: Props) {
+export function CoursePlanner({ data, progressItems, user, busy, pendingItems, completingIds, exitingIds, courseId, weekNumber, selectCourse, selectWeek, run, toggleItem, focusOn, openResource, openDrive, landingItem }: Props) {
   const semesterOptions = useMemo(() => makeSemesters(data), [data]);
   const [semesterKey, setSemesterKey] = useState('');
   const [showArchived, setShowArchived] = useState(false);
@@ -123,8 +125,14 @@ export function CoursePlanner({ data, user, busy, pendingItems, completingIds, e
   const weekResources = data.resources.filter(r => r.course_id === selectedId && r.week_number === weekNumber);
   const courseItems = data.items.filter(i => i.course_id === selectedId);
   const examItems = courseItems.filter(i => i.week_number === null && i.kind === 'revision');
-  const courseDoneCount=courseItems.filter(i=>i.done).length;
-  const courseCompletion=courseItems.length?Math.round(100*courseDoneCount/courseItems.length):0;
+  // UI1 holds a completed row visibly for 900ms; progress must use the canonical
+  // optimistic state rather than that presentation-only checklist projection.
+  const progressCourseItems=progressItems.filter(i=>i.course_id===selectedId);
+  const courseDoneCount=progressCourseItems.filter(i=>i.done).length;
+  const courseCompletion=progressCourseItems.length?Math.round(100*courseDoneCount/progressCourseItems.length):0;
+  const progressWeekItems=progressCourseItems.filter(i=>i.week_number===weekNumber);
+  const weekDoneCount=progressWeekItems.filter(i=>i.done).length;
+  const weekCompletion=progressWeekItems.length?Math.round(100*weekDoneCount/progressWeekItems.length):0;
   const weekNotes=items.filter(i=>i.kind==='notes');
   const today=localToday();
   const filteredItems=items.filter(i=>activityFilter==='all'||(activityFilter==='completed'?i.done:!i.done&&(activityFilter==='planned'?Boolean(i.planned_date):Boolean(i.due_date))));
@@ -359,7 +367,7 @@ export function CoursePlanner({ data, user, busy, pendingItems, completingIds, e
           </div>
           <div className="planner-hero planner-study-hero">
             <div><span>WEEK {weekNumber} · CONTINUE LEARNING</span><h3>{week?.title||`Continue with Week ${weekNumber}`}</h3>{week?.objectives&&<p>{week.objectives}</p>}</div>
-            <div className="planner-hero-progress"><strong>{courseCompletion}%</strong><small>{courseDoneCount}/{courseItems.length} complete</small><div className="progress-track" role="progressbar" aria-valuenow={courseCompletion} aria-valuemin={0} aria-valuemax={100} aria-label="Course completion"><div style={{width:`${courseCompletion}%`}}/></div></div>
+            <div className="planner-hero-progress"><strong><ProgressValue key={selectedId} value={courseCompletion}/></strong><small>{courseDoneCount}/{progressCourseItems.length} complete</small><ProgressTrack key={selectedId} identity={selectedId} value={courseCompletion} label="Course completion"/></div>
           </div>
           <div className="planner-week-toolbar planner-study-week-toolbar">{weekPicker}{weekEditButton}</div>
           <nav className="planner-tabbar planner-study-tabs" aria-label="Course workspace sections">{([
@@ -373,6 +381,10 @@ export function CoursePlanner({ data, user, busy, pendingItems, completingIds, e
                 <button type="button" className="btn secondary small planner-filter-toggle" aria-expanded={filtersOpen} aria-controls="study-activity-filters" title="Filter weekly activities" onClick={()=>setFiltersOpen(value=>!value)}><ListFilter size={15}/>{activityFilter==='all'?'Filter':activityFilter[0].toUpperCase()+activityFilter.slice(1)}</button>
                 {!isReadOnly&&<button className="btn secondary small" onClick={()=>{setItemDraft(itemDraftDefaults);setDialog('item');}}><Plus size={15}/> Add activity</button>}
               </div></div>
+              {progressWeekItems.length>0&&<div className="planner-weekly-progress">
+                <span>Week {weekNumber}: {weekDoneCount}/{progressWeekItems.length} complete · <ProgressValue key={`${selectedId}-${weekNumber}`} value={weekCompletion}/></span>
+                <ProgressTrack key={`${selectedId}-${weekNumber}`} identity={`${selectedId}-${weekNumber}`} value={weekCompletion} label={`Week ${weekNumber} completion`}/>
+              </div>}
               {filtersOpen&&<div id="study-activity-filters" className="planner-study-filters" aria-label="Filter weekly activities">{(['all','planned','due','completed'] as const).map(filter=><button key={filter} type="button" className={activityFilter===filter?'active':''} aria-pressed={activityFilter===filter} onClick={()=>setActivityFilter(filter)}>{filter[0].toUpperCase()+filter.slice(1)}</button>)}</div>}
               {filteredItems.length?filteredItems.map(i=>{
                 const overdue=isOverdue(i,today);

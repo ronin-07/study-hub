@@ -1025,3 +1025,26 @@
 .pdf-check .task-completion-check:checked + span{text-decoration:line-through;color:var(--muted)}
 .app-shell .task-completion-row.is-completing{background:rgba(127,196,149,.09);box-shadow:inset 3px 0 0 rgba(127,196,149,.55)}
 .app-shell .home-priority-row.is-completing.overdue::before{background:#8dd0a7}
+
+/* UI polish #2: animate the fill via transform to avoid layout work. */
+.progress-motion-track>div{
+  transform-origin:left center;
+  transition:transform 450ms cubic-bezier(.22,1,.36,1);
+}
+.progress-motion-track.progress-complete>div{
+  background:linear-gradient(90deg,#83b99e,#a9dfb4)!important;
+}
+.progress-animated-number{display:inline-block;white-space:nowrap;font-variant-numeric:tabular-nums;min-width:4ch;text-align:right}
+.progress-visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+.planner-weekly-progress{display:flex;flex-direction:column;gap:7px;margin:9px 0 7px;padding-bottom:11px;border-bottom:1px solid var(--line)}
+.planner-weekly-progress>span{font-size:.69rem;color:var(--muted);font-weight:700}
+.planner-weekly-progress .progress-animated-number{min-width:auto;text-align:left;color:var(--text)}
+.planner-weekly-progress .progress-track{height:6px}
+.planner-study-hero:has(.progress-celebrating){animation:progress-course-milestone .9s ease-out 1}
+.home-course-tile:has(.progress-celebrating),.focus-week-goal:has(.progress-celebrating){animation:progress-card-milestone .9s ease-out 1}
+@keyframes progress-course-milestone{0%,100%{box-shadow:none}45%{box-shadow:0 0 0 2px rgba(141,208,167,.33),0 0 24px rgba(141,208,167,.19)}}
+@keyframes progress-card-milestone{0%,100%{box-shadow:none}45%{box-shadow:0 0 0 2px rgba(141,208,167,.36),0 0 22px rgba(141,208,167,.15)}}
+@media(prefers-reduced-motion:reduce){
+  .progress-motion-track>div{transition:none!important}
+  .planner-study-hero:has(.progress-celebrating),.home-course-tile:has(.progress-celebrating),.focus-week-goal:has(.progress-celebrating){animation:none!important}
+}
