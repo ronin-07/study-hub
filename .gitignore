@@ -3,6 +3,7 @@
 **/.env.example
 **/.env.preview.example
 **/.env.local
+**/.env.local.example
 **/.env.*.local.*
 **/node_modules/
 **/.next/

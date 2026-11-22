@@ -16,7 +16,8 @@ from .workspace_models import Semester
 from .models import Course, FocusSession, FinishFocus, Item, ItemPatch, ReadingPosition, Resource, StartFocus, Week
 from .security import User, current_user, firebase_app
 from .deployment import validate_deployment_environment
-from .storage import DocumentAlreadyExists, get_store
+from .storage import (ActiveSessionExists, DocumentAlreadyExists, DocumentMissing,
+                      SessionStateConflict, get_store)
 
 validate_deployment_environment()
 
@@ -146,31 +147,31 @@ async def add_item(value: Item, user: User = Depends(current_user)):
 
 @app.patch('/api/items/{identifier}', response_model=Item)
 async def patch_item(identifier: str, updates: ItemPatch, user: User = Depends(current_user)):
-    original = app_store.get(user.uid, 'items', identifier)
-    if not original:
-        raise HTTPException(404, 'Item not found')
-    if original.get('course_id'):
-        ensure_course_active(user.uid, original['course_id'])
     fields = updates.model_dump(exclude_unset=True, mode='json')
-    merged = {**original, **fields}
-    # Enforce on date changes but keep legacy records completable/editable.
-    if ('planned_date' in fields or 'due_date' in fields) and merged.get('planned_date') and merged.get('due_date') and merged['planned_date'] > merged['due_date']:
-        raise HTTPException(422, 'Planned work date cannot be after the deadline')
-    validate_item_reference(user.uid, merged.get('course_id'), merged.get('week_number'), merged.get('resource_id'))
-    try:
-        value = Item.model_validate(merged)
-    except ValidationError as exc:
-        raise HTTPException(422, str(exc)) from None
-    # Completing a recurring item creates exactly one next dated occurrence.
-    # The child has a deterministic ID so retries and re-completion never fork the series.
-    if not original.get('done', False) and value.done and value.repeat != 'none':
-        from .recurrence import next_occurrence
-        successor = next_occurrence(value)
-        if not app_store.get(user.uid, 'items', successor.id):
-            app_store.put(user.uid, 'items', successor.model_dump(mode='json'))
-    app_store.put(user.uid, 'items', value.model_dump(mode='json'))
-    return value
 
+    def update(original: dict) -> tuple[dict, dict | None]:
+        if original.get('course_id'):
+            ensure_course_active(user.uid, original['course_id'])
+        merged = {**original, **fields}
+        # Enforce on date changes but keep legacy records completable/editable.
+        if ('planned_date' in fields or 'due_date' in fields) and merged.get('planned_date') and merged.get('due_date') and merged['planned_date'] > merged['due_date']:
+            raise HTTPException(422, 'Planned work date cannot be after the deadline')
+        validate_item_reference(user.uid, merged.get('course_id'), merged.get('week_number'), merged.get('resource_id'))
+        try:
+            value = Item.model_validate(merged)
+        except ValidationError as exc:
+            raise HTTPException(422, str(exc)) from None
+        successor = None
+        if not original.get('done', False) and value.done and value.repeat != 'none':
+            from .recurrence import next_occurrence
+            successor = next_occurrence(value).model_dump(mode='json')
+        return value.model_dump(mode='json'), successor
+
+    try:
+        result = app_store.update_item_atomic(user.uid, identifier, update)
+    except DocumentMissing:
+        raise HTTPException(404, 'Item not found') from None
+    return Item.model_validate(result)
 
 @app.delete('/api/items/{identifier}', status_code=204)
 async def delete_item(identifier: str, user: User = Depends(current_user)):
@@ -228,20 +229,6 @@ def now_s():
     return int(time.time())
 
 
-def active_session(uid: str):
-    for entry in all_docs(uid, 'sessions'):
-        if entry['status'] in ('running', 'paused'):
-            return entry
-    return None
-
-
-def session_or_404(uid: str, identifier: str):
-    session = app_store.get(uid, 'sessions', identifier)
-    if not session:
-        raise HTTPException(404, 'Session not found')
-    return session
-
-
 def focus_seconds(session: dict, now: int):
     paused = session.get('accumulated_pause_seconds', 0)
     if session['status'] == 'paused' and session.get('pause_started_at'):
@@ -251,8 +238,6 @@ def focus_seconds(session: dict, now: int):
 
 @app.post('/api/sessions/start', response_model=FocusSession, status_code=201)
 async def start_session(value: StartFocus, user: User = Depends(current_user)):
-    if active_session(user.uid):
-        raise HTTPException(409, 'A focus session is already active; resume or finish it first')
     validate_context(user.uid, value.course_id, value.week_number)
     if value.item_id:
         item = app_store.get(user.uid, 'items', value.item_id)
@@ -269,55 +254,80 @@ async def start_session(value: StartFocus, user: User = Depends(current_user)):
             value.week_number = item['week_number']
     if value.course_id: ensure_course_active(user.uid, value.course_id)
     session = FocusSession(**value.model_dump(), started_at=now_s())
-    app_store.put(user.uid, 'sessions', session.model_dump(mode='json'))
+    try:
+        app_store.start_focus_atomic(user.uid, session.model_dump(mode='json'))
+    except ActiveSessionExists:
+        raise HTTPException(409, 'A focus session is already active; resume or finish it first') from None
     return session
+
+
+def update_focus_or_error(uid: str, identifier: str, mutate):
+    try:
+        return app_store.update_focus_atomic(uid, identifier, mutate)
+    except DocumentMissing:
+        raise HTTPException(404, 'Session not found') from None
+    except SessionStateConflict:
+        raise HTTPException(409, 'Session state is inconsistent; refresh and retry') from None
 
 
 @app.post('/api/sessions/{identifier}/pause', response_model=FocusSession)
 async def pause_session(identifier: str, user: User = Depends(current_user)):
-    entry = session_or_404(user.uid, identifier)
-    if entry['status'] != 'running':
-        raise HTTPException(409, 'Only a running session can be paused')
-    entry['status'] = 'paused'
-    entry['pause_started_at'] = now_s()
-    app_store.put(user.uid, 'sessions', entry)
-    return entry
+    timestamp = now_s()
+
+    def pause(entry: dict) -> dict:
+        if entry['status'] != 'running':
+            raise HTTPException(409, 'Only a running session can be paused')
+        entry['status'] = 'paused'
+        entry['pause_started_at'] = timestamp
+        return entry
+
+    return update_focus_or_error(user.uid, identifier, pause)
 
 
 @app.post('/api/sessions/{identifier}/resume', response_model=FocusSession)
 async def resume_session(identifier: str, user: User = Depends(current_user)):
-    entry = session_or_404(user.uid, identifier)
-    if entry['status'] != 'paused':
-        raise HTTPException(409, 'Only a paused session can be resumed')
-    entry['accumulated_pause_seconds'] += max(0, now_s() - entry['pause_started_at'])
-    entry['pause_started_at'] = None
-    entry['status'] = 'running'
-    app_store.put(user.uid, 'sessions', entry)
-    return entry
+    timestamp = now_s()
+
+    def resume(entry: dict) -> dict:
+        if entry['status'] != 'paused':
+            raise HTTPException(409, 'Only a paused session can be resumed')
+        entry['accumulated_pause_seconds'] += max(0, timestamp - entry['pause_started_at'])
+        entry['pause_started_at'] = None
+        entry['status'] = 'running'
+        return entry
+
+    return update_focus_or_error(user.uid, identifier, resume)
 
 
 @app.post('/api/sessions/{identifier}/finish', response_model=FocusSession)
 async def finish_session(identifier: str, value: FinishFocus, user: User = Depends(current_user)):
-    entry = session_or_404(user.uid, identifier)
-    if entry['status'] == 'finished':
-        raise HTTPException(409, 'Session already finished')
     timestamp = now_s()
-    calculated = focus_seconds(entry, timestamp)
-    if value.confirmed_seconds is not None:
-        # Manual correction must never exceed total elapsed wall time.
-        if value.confirmed_seconds > timestamp - entry['started_at']:
-            raise HTTPException(422, 'Confirmed focus time cannot exceed elapsed time')
-    entry['focus_seconds'] = calculated if value.confirmed_seconds is None else value.confirmed_seconds
-    entry['ended_at'] = timestamp
-    entry['status'] = 'finished'
-    entry['pause_started_at'] = None
-    app_store.put(user.uid, 'sessions', entry)
-    return entry
+
+    def finish(entry: dict) -> dict:
+        if entry['status'] == 'finished':
+            raise HTTPException(409, 'Session already finished')
+        calculated = focus_seconds(entry, timestamp)
+        if value.confirmed_seconds is not None and value.confirmed_seconds > calculated:
+            raise HTTPException(422, 'Confirmed focus time cannot exceed unpaused time')
+        entry['focus_seconds'] = calculated if value.confirmed_seconds is None else value.confirmed_seconds
+        entry['ended_at'] = timestamp
+        entry['status'] = 'finished'
+        entry['pause_started_at'] = None
+        return entry
+
+    return update_focus_or_error(user.uid, identifier, finish)
 
 
 @app.delete('/api/sessions/{identifier}', status_code=204)
 async def delete_session(identifier: str, user: User = Depends(current_user)):
-    session = session_or_404(user.uid, identifier)
+    session = app_store.get(user.uid, 'sessions', identifier)
+    if not session:
+        raise HTTPException(404, 'Session not found')
     if session.get('course_id'):
         ensure_course_active(user.uid, session['course_id'])
-    app_store.delete(user.uid, 'sessions', identifier)
+    try:
+        app_store.delete_focus_atomic(user.uid, identifier)
+    except DocumentMissing:
+        raise HTTPException(404, 'Session not found') from None
+    except SessionStateConflict:
+        raise HTTPException(409, 'Session state is inconsistent; refresh and retry') from None

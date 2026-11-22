@@ -1,6 +1,7 @@
 """Release gate A — no destructive creates, registered semesters, isolated projects."""
 import importlib
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -87,11 +88,36 @@ def test_hosted_project_selection_fails_closed(monkeypatch):
         validate_deployment_environment()
 
 
-def test_example_env_contains_no_private_key():
-    content = (Path(__file__).resolve().parents[1]/'.env.example').read_text()
-    assert 'BEGIN PRIVATE KEY' not in content
-    assert 'private_key_id' not in content
-    assert 'FIREBASE_SERVICE_ACCOUNT_JSON={' not in content
+@pytest.mark.parametrize(
+    'relative_path',
+    ('backend/.env.example', 'backend/.env.preview.example', 'web/.env.local.example'),
+)
+def test_environment_examples_are_sanitized_or_intentionally_ignored(relative_path):
+    """Untracked env examples may be absent in CI; that is not a security failure.
+
+    If an example exists, it must contain placeholders only. If the user has
+    removed it from Git, do not assume it will exist after actions/checkout.
+    """
+    root = Path(__file__).resolve().parents[2]
+    path = root / relative_path
+    if path.is_file():
+        content = path.read_text(encoding='utf-8')
+        assert 'BEGIN PRIVATE KEY' not in content, f'{relative_path} contains a private key'
+        assert 'private_key_id' not in content, f'{relative_path} contains a private key ID'
+        assert 'FIREBASE_SERVICE_ACCOUNT_JSON={' not in content, f'{relative_path} embeds service-account JSON'
+        return
+
+    # A missing example is valid when it has been deliberately removed from
+    # version control. GitHub Actions only checks out tracked files. The CI
+    # credential scanner independently checks *all* tracked source files.
+    result = subprocess.run(
+        ['git', 'ls-files', '--', relative_path],
+        cwd=root, capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, f'Unable to check Git tracking for {relative_path}'
+    assert not result.stdout.strip(), (
+        f'{relative_path} is Git-tracked but missing from the working tree.'
+    )
 
 
 def test_firestore_create_uses_non_overwriting_precondition():
