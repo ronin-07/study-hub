@@ -20,7 +20,7 @@ export type DriveIndexed = DriveEntry & {
 };
 export type DriveIndexResponse = { folder: DriveSource | null; files: DriveIndexed[] };
 export type DriveScanResponse = { count: number; scanned_at: number; files: DriveIndexed[] };
-export type Tab = 'today' | 'courses' | 'tasks' | 'focus' | 'library';
+export type Tab = 'today' | 'courses' | 'tasks' | 'calendar' | 'focus' | 'library';
 export const kindLabels: Record<Kind,string> = { lecture: 'Lecture', notes: 'Notes', reading: 'Reading', revision: 'Revision', assignment: 'Assignment', personal: 'Personal' };
 export function formatDate(value?: string | null) { if (!value) return 'Not set'; const [y,m,d] = value.split('-'); return `${d}/${m}/${y}`; }
 export function localToday() { const d = new Date(); return [d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-'); }

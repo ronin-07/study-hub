@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { User } from 'firebase/auth';
 import {
   ArrowLeft, ArrowRight, BookOpen, CalendarDays, Check, CheckCircle2, ChevronDown, Clock3,
@@ -21,10 +21,11 @@ import { type DriveEntry, type DriveList, type FocusSession, type Item,
 
 type DriveStatus = { connected: boolean; configured: boolean };
 const empty: Snapshot = {courses:[], weeks:[], items:[], resources:[], sessions:[], semesters:[]};
-const pageNames: Record<Tab,string> = {today:'Today', courses:'Study Planner', tasks:'Tasks', focus:'Focus', library:'Resource Library'};
+const pageNames: Record<Tab,string> = {today:'Today', courses:'Study Planner', tasks:'Tasks', calendar:'Calendar', focus:'Focus', library:'Resource Library'};
 const tabs: {id:Tab; label:string; icon:typeof Home}[] = [
   {id:'today',label:'Home',icon:Home},{id:'courses',label:'Study',icon:BookOpen},
-  {id:'tasks',label:'Tasks',icon:ListTodo},{id:'focus',label:'Focus',icon:Timer},
+  {id:'tasks',label:'Tasks',icon:ListTodo},{id:'calendar',label:'Calendar',icon:CalendarDays},
+  {id:'focus',label:'Focus',icon:Timer},
   {id:'library',label:'Resources',icon:Folder}
 ];
 function dateText(d: string|null|undefined) { return d ? formatDate(d) : '—'; }
@@ -47,6 +48,8 @@ export default function Page() {
   const [priorityFilter,setPriorityFilter] = useState<'all'|'course'|'personal'>('all');
   const [homeFocusMode,setHomeFocusMode] = useState<'25'|'50'|'90'|'free'>('25');
   const [calendarJump,setCalendarJump] = useState<{date:string;token:number}|null>(null);
+  const [taskJump,setTaskJump] = useState<{id:string;token:number}|null>(null);
+  const [taskLandingMode,setTaskLandingMode] = useState<'today'|'upcoming'|'completed'>('today');
   const [focusCourse,setFocusCourse] = useState('');
   const [focusItem,setFocusItem] = useState('');
   const [focusMode,setFocusMode] = useState<'25'|'50'|'90'|'free'>('50');
@@ -159,7 +162,34 @@ export default function Page() {
     window.localStorage.setItem(`studyhub-last-week-${id}`,String(selected));
     setTab('courses');
   };
-  const openCalendarDate=(date:string)=>{setCalendarJump(p=>({date,token:(p?.token||0)+1}));setTab('tasks');};
+  // Home date chips and sidebar Calendar share one destination: the selected-day agenda.
+  const openCalendarDate=(date:string)=>{
+    setTaskForm(false);
+    setTaskJump(null);
+    setCalendarJump(p=>({date,token:(p?.token||0)+1}));
+    setTab('calendar');
+  };
+  // Deadline cards open the exact task, rather than a calendar day with no task selected.
+  const openTaskDetails=(id:string)=>{
+    setTaskForm(false);
+    const target=data.items.find(i=>i.id===id);
+    // Keep the relevant task list behind the dialog when it is closed.
+    setTaskLandingMode(target&&(isOverdue(target,today)||target.planned_date===today||target.due_date===today)?'today':'upcoming');
+    setTaskJump(p=>({id,token:(p?.token||0)+1}));
+    setTab('tasks');
+  };
+  const showUpcomingTasks=()=>{
+    setTaskForm(false);
+    setTaskJump(null);
+    setTaskLandingMode('upcoming');
+    setTab('tasks');
+  };
+  const navigate=(target:Tab)=>{
+    if(target==='calendar'){openCalendarDate(today);return;}
+    if(target==='tasks'){setTaskLandingMode('today');setTaskJump(null);}
+    setTaskForm(false);
+    setTab(target);
+  };
   const launchHomeFocus=()=>{
     if(active){setTab('focus');return;}
     setFocusCourse('');setFocusItem('');setFocusMode(homeFocusMode);
@@ -262,7 +292,7 @@ export default function Page() {
     <aside className={'sidebar'+(tab==='today'?' sidebar-home':'')}>
       <div className="brand"><span className="brand-mark">{tab==='today'?<BookOpen size={21}/>:<GraduationCap size={21}/>}</span><div><strong>Study Hub</strong><small>{tab==='today'?'DTU':'Personal workspace'}</small></div></div>
       <div className="nav-label">MY WORKSPACE</div>
-      <nav className="side-nav" aria-label="Main navigation">{tabs.map(t=><Fragment key={t.id}><button onClick={()=>setTab(t.id)} className={'nav-btn '+(tab===t.id?'current':'')}><t.icon size={18}/>{t.label}{t.id==='tasks'&&openTasks.length>0&&<span className="nav-count">{openTasks.length}</span>}</button>{t.id==='tasks'&&<button className="nav-btn" onClick={()=>openCalendarDate(today)}><CalendarDays size={18}/>Calendar</button>}</Fragment>)}</nav>
+      <nav className="side-nav" aria-label="Main navigation">{tabs.map(t=><button key={t.id} type="button" onClick={()=>navigate(t.id)} className={'nav-btn '+(tab===t.id?'current':'')} aria-current={tab===t.id?"page":undefined}><t.icon size={18}/>{t.label}{t.id==='tasks'&&openTasks.length>0&&<span className="nav-count">{openTasks.length}</span>}</button>)}</nav>
       {data.courses.some(c=>!c.archived)&&<div className="sidebar-courses"><div className="sidebar-courses-heading">COURSES</div>{data.courses.filter(c=>!c.archived).slice(0,6).map((c,index)=><button className={'sidebar-course-link'+(c.id===courseId&&tab==='courses'?' active':'')} key={c.id} onClick={()=>openCourse(c.id)}><span className={'sidebar-course-dot tone-'+(index%4)}/><span>{c.code} · {c.title}</span></button>)}</div>}<div className="sidebar-spacer"/>
       <div className="sidebar-bottom">{tab==='today'?<div className="sidebar-profile"><span className="sidebar-profile-avatar">{(firstName||'S')[0].toUpperCase()}</span><div><strong>{user?.displayName||'Study Hub'}</strong><small>DTU student</small></div></div>:<><div className="privacy"><span className="live-dot"/><span>{useFirebase?'Private Firebase account':'Local private development'}</span></div><p>RepLap stays in its own project.</p></>}<button className="theme-toggle" onClick={toggleTheme}>{theme==='light'?<Moon size={15}/>:<Sun size={15}/>} {theme==='light'?'Switch to dark theme':'Switch to light theme'}</button>{useFirebase&&<button className="link-btn" onClick={()=>void signOutUser()}>Sign out</button>}</div>
     </aside>
@@ -297,19 +327,19 @@ export default function Page() {
                           <div className="home-course-progress"><span>{group.doneCount} / {group.activityCount} activities</span><div className="home-progress-track" role="progressbar" aria-label={`${group.course.title} selected week activity progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><div style={{width:`${progress}%`}}/></div></div>
                           <div className="home-course-activities">
                             {group.tasks.slice(0,2).map(i=><div className={'home-course-task'+(isOverdue(i,today)?' late':'')} key={i.id}><input type="checkbox" aria-label={`Complete ${i.title}`} disabled={busy} checked={i.done} onChange={()=>toggle(i)}/><button className="home-course-task-title" title={`Open ${i.title} in course`} onClick={()=>openCourse(group.course.id,i.week_number||undefined)}>{i.title}{group.weekNumbers.length>1&&i.week_number&&<small>W{i.week_number}</small>}</button>{isOverdue(i,today)&&<span className="home-overdue-pill compact">Overdue</span>}{i.resource_id&&<button className="home-task-resource" disabled={busy} onClick={()=>openTaskResource(i)} aria-label={`Open resource for ${i.title}`} title="Open linked resource"><BookOpen size={15}/></button>}</div>)}
-                            {group.tasks.length>2&&<button className="home-extra-items" onClick={()=>setTab('tasks')}>+ {group.tasks.length-2} more tasks <ArrowRight size={13}/></button>}
+                            {group.tasks.length>2&&<button className="home-extra-items" onClick={()=>navigate('tasks')}>+ {group.tasks.length-2} more tasks <ArrowRight size={13}/></button>}
                           </div>
-                          <div className="home-course-actions"><button className="home-open-course" onClick={()=>openCourse(group.course.id,group.tasks[0]?.week_number||undefined)}>Open course <ArrowRight size={16}/></button><button className="home-subtle-button" aria-label={`View tasks for ${group.course.title}`} title="View all tasks" onClick={()=>setTab('tasks')}><MoreHorizontal size={20}/></button></div>
+                          <div className="home-course-actions"><button className="home-open-course" onClick={()=>openCourse(group.course.id,group.tasks[0]?.week_number||undefined)}>Open course <ArrowRight size={16}/></button><button className="home-subtle-button" aria-label={`View tasks for ${group.course.title}`} title="View all tasks" onClick={()=>navigate('tasks')}><MoreHorizontal size={20}/></button></div>
                         </div>;
                       })}
                     </div>
-                    {studyGroups.length>4&&<button className="home-more-courses" onClick={()=>setTab('tasks')}>View work in {studyGroups.length-4} more {studyGroups.length===5?'course':'courses'} <ArrowRight size={14}/></button>}
+                    {studyGroups.length>4&&<button className="home-more-courses" onClick={()=>navigate('tasks')}>View work in {studyGroups.length-4} more {studyGroups.length===5?'course':'courses'} <ArrowRight size={14}/></button>}
                   </>:<div className="home-course-empty"><div className="home-heading-icon"><CheckCircle2 size={21}/></div><div><h3>No course work scheduled for today</h3><p>{selectedCourse?'You’re up to date on scheduled work. Continue your last course, or plan an activity from a weekly checklist.':'Create your first course and plan activities to see them here.'}</p></div><button className="home-mini-btn" onClick={()=>selectedCourse?openCourse(selectedCourse.id):setTab('courses')}>{selectedCourse?'Continue studying':'Open Study'} <ArrowRight size={15}/></button></div>}
                 </section>
                 <section className="home-panel home-priorities" aria-labelledby="home-priorities-title">
                   <div className="home-panel-heading"><div className="home-heading-icon"><CheckCircle2 size={21}/></div><div><h2 id="home-priorities-title">Today’s priorities</h2><p>Your planned, due, and overdue work.</p></div><div className="home-priority-filters" aria-label="Filter priorities">{(['all','course','personal'] as const).map(filter=><button key={filter} onClick={()=>setPriorityFilter(filter)} className={priorityFilter===filter?'active':''} aria-pressed={priorityFilter===filter}>{filter==='all'?'All':filter==='course'?'Course':'Personal'}</button>)}</div></div>
                   {filteredPriorities.length?<div className="home-priority-list">{filteredPriorities.slice(0,6).map(i=><div key={i.id} className={'home-priority-row'+(isOverdue(i,today)?' overdue':'')}><input type="checkbox" aria-label={`Complete ${i.title}`} disabled={busy} checked={i.done} onChange={()=>toggle(i)}/><div className="home-priority-info"><strong>{i.title}</strong><small>{i.course_id?(data.courses.find(c=>c.id===i.course_id)?.code||'Course'):'Personal'}{i.week_number?` · Week ${i.week_number}`:''}{i.due_date&&i.due_date<today?` · Due ${dateText(i.due_date)}`:i.planned_date&&i.planned_date<today?` · Planned ${dateText(i.planned_date)}`:''}</small></div><span className={'home-priority-tag'+(isOverdue(i,today)?' overdue':'')}>{isOverdue(i,today)?'Overdue':'Today'}</span>{i.resource_id&&<button className="home-row-action" aria-label={`Open resource for ${i.title}`} disabled={busy} onClick={()=>openTaskResource(i)} title="Open linked resource"><BookOpen size={16}/></button>}<button className="home-row-action" aria-label={`Focus on ${i.title}`} disabled={busy} onClick={()=>startFrom(i)} title="Focus on task"><Play size={15}/></button></div>)}</div>:<div className="home-list-empty"><CheckCircle2 size={19}/> {priorityFilter==='all'?'Nothing overdue or due today. Enjoy a clear slate!':`No ${priorityFilter} priorities for today.`}</div>}
-                  {filteredPriorities.length>6&&<button className="home-panel-link home-list-footer" onClick={()=>setTab('tasks')}>View {filteredPriorities.length-6} more tasks <ArrowRight size={14}/></button>}
+                  {filteredPriorities.length>6&&<button className="home-panel-link home-list-footer" onClick={()=>navigate('tasks')}>View {filteredPriorities.length-6} more tasks <ArrowRight size={14}/></button>}
                 </section>
               </div>
               <div className="home-side-column">
@@ -319,7 +349,7 @@ export default function Page() {
                   <p className="home-focus-note">{active?'Open Focus to pause, resume, or finish.':'Timed modes are targets; sessions are stopped manually.'}</p>
                 </section>
                 <section className="home-panel home-week-goal" aria-labelledby="home-goal-title"><div className="home-widget-heading"><span className="home-heading-icon blue"><Target size={20}/></span><h2 id="home-goal-title">Weekly focus goal</h2><span className="home-widget-stat">{(weekSeconds/3600).toFixed(1)} / {weeklyGoal} h</span></div><div className="home-progress-track" role="progressbar" aria-label="Weekly focus goal progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={weekPct}><div style={{width:`${weekPct}%`}}/></div><div className="home-goal-foot"><span>{weekPct}% of your goal</span><label>Goal <input type="number" min={1} max={80} aria-label="Weekly focus target in hours" value={weeklyGoal} onChange={e=>{const n=Math.max(1,Math.min(80,Number(e.target.value)||1));setWeeklyGoal(n);localStorage.setItem('studyhub-focus-goal',String(n));}}/> h/week</label></div><small className="home-local-note">Goal preference is stored on this device.</small></section>
-                <section className="home-panel home-deadlines" aria-labelledby="home-deadlines-title"><div className="home-widget-heading"><span className="home-heading-icon"><CalendarDays size={20}/></span><h2 id="home-deadlines-title">Upcoming deadlines</h2><button className="home-panel-link" onClick={()=>setTab('tasks')}>View all <ArrowRight size={14}/></button></div>{upcoming.slice(0,3).map(i=><button className="home-deadline" key={i.id} onClick={()=>openCalendarDate(i.due_date!)}><span className="home-deadline-date"><strong>{i.due_date!.slice(8,10)}</strong>{new Intl.DateTimeFormat('en-GB',{month:'short'}).format(new Date(i.due_date!+'T12:00:00'))}</span><span className="home-deadline-info"><strong>{i.title}</strong><small>{data.courses.find(c=>c.id===i.course_id)?.code||'Personal'}{i.week_number?` · Week ${i.week_number}`:''}</small></span><span className="home-days-away">{nextDeadlineDays(today,i.due_date!)===0?'Today':`${nextDeadlineDays(today,i.due_date!)}d`}</span></button>)}{!upcoming.length&&<p className="home-side-empty">Nothing due soon. Keep your momentum going.</p>}</section>
+                <section className="home-panel home-deadlines" aria-labelledby="home-deadlines-title"><div className="home-widget-heading"><span className="home-heading-icon"><CalendarDays size={20}/></span><h2 id="home-deadlines-title">Upcoming deadlines</h2><button className="home-panel-link" onClick={showUpcomingTasks}>View all <ArrowRight size={14}/></button></div>{upcoming.slice(0,3).map(i=><button className="home-deadline" key={i.id} onClick={()=>openTaskDetails(i.id)}><span className="home-deadline-date"><strong>{i.due_date!.slice(8,10)}</strong>{new Intl.DateTimeFormat('en-GB',{month:'short'}).format(new Date(i.due_date!+'T12:00:00'))}</span><span className="home-deadline-info"><strong>{i.title}</strong><small>{data.courses.find(c=>c.id===i.course_id)?.code||'Personal'}{i.week_number?` · Week ${i.week_number}`:''}</small></span><span className="home-days-away">{nextDeadlineDays(today,i.due_date!)===0?'Today':`${nextDeadlineDays(today,i.due_date!)}d`}</span></button>)}{!upcoming.length&&<p className="home-side-empty">Nothing due soon. Keep your momentum going.</p>}</section>
                 <section className="home-panel home-week-strip" aria-labelledby="home-calendar-title"><div className="home-widget-heading"><span className="home-heading-icon"><CalendarDays size={20}/></span><h2 id="home-calendar-title">Next 7 days</h2><button className="home-panel-link" onClick={()=>openCalendarDate(today)}>View calendar <ArrowRight size={14}/></button></div><div className="home-day-grid">{calendarDays.map((day,index)=><button key={day.date} className={'home-day'+(index===0?' current':'')} aria-label={`View ${day.weekday} ${day.day} in calendar${day.count?`, ${day.count} scheduled items`:''}`} title={`${day.count} planned/due items`} onClick={()=>openCalendarDate(day.date)}><span>{day.weekday}</span><strong>{day.day}</strong><span className={'home-day-dot'+(day.count?' has-work':'')}/></button>)}</div></section>
               </div>
             </div>
@@ -333,7 +363,12 @@ export default function Page() {
           />}
 
           {tab==='tasks'&&<TasksPlanner items={tasks} courses={data.courses} user={user} busy={busy}
-            run={act} onToggle={toggle} onFocus={startFrom} onOpenResource={openTaskResource} createOpen={taskForm} setCreateOpen={setTaskForm} calendarJump={calendarJump}/>}
+            run={act} onToggle={toggle} onFocus={startFrom} onOpenResource={openTaskResource} createOpen={taskForm} setCreateOpen={setTaskForm}
+            initialTaskMode={taskLandingMode} taskJump={taskJump} onTaskJumpHandled={()=>setTaskJump(null)}/>}
+
+          {tab==='calendar'&&<TasksPlanner items={tasks} courses={data.courses} user={user} busy={busy}
+            run={act} onToggle={toggle} onFocus={startFrom} onOpenResource={openTaskResource} createOpen={taskForm} setCreateOpen={setTaskForm}
+            calendarOnly calendarJump={calendarJump}/>}
 
           {tab==='focus'&&<>
             <div className="page-heading"><div><span className="eyebrow"><Target size={13}/> DEEP WORK</span><h1>Find your flow.</h1><p>Settle into a distraction-free session. Every minute counts.</p></div><Badge tone={active?active.status==='running'?'good':'warning':'muted'}>{active?active.status:'Ready'}</Badge></div>

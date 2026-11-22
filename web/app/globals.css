@@ -406,3 +406,31 @@
 .sidebar-profile>div{min-width:0;display:flex;flex-direction:column;gap:2px;}
 .sidebar-profile strong{font-size:.73rem;color:#f5f0ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .sidebar-profile small{font-size:.64rem;color:#aaa1c7;}
+
+/* v0.5 calendar routing: deadlines are clickable tasks, calendar has its own sidebar page. */
+.planner-v05-due{width:100%;border-left:0;border-right:0;border-top:0;background:transparent;text-align:left;color:var(--text);cursor:pointer;transition:background .16s ease,padding .16s ease;}
+.planner-v05-due:hover,.planner-v05-due:focus-visible{background:#9982ef1a;padding-left:7px;outline-offset:2px;}
+.planner-v05-due>span{min-width:0;overflow-wrap:anywhere;}
+/* Cinematic mountain photography replaces the flat vector while preserving readable text. */
+.main-area:has(.dashboard-home)::before,
+.theme-dark .main-area:has(.dashboard-home)::before{
+  height:clamp(330px,32vw,460px);
+  background:
+    linear-gradient(90deg,#101220ed 0%,#101220d2 28%,#1314277a 59%,#1012204b 100%),
+    linear-gradient(180deg,#1012201a 0%,#10122000 29%,#10122073 67%,#101220 100%),
+    url('/studyhub-twilight.webp') right 48% / cover no-repeat;
+}
+.dashboard-intro{min-height:170px;padding-top:15px;margin-bottom:13px;max-width:860px;}
+.dashboard-intro h1{max-width:800px;text-shadow:0 2px 22px #0b0d2390;}
+.dashboard-intro p{line-height:1.65;}
+.home-layout{gap:25px;}
+.home-stats-grid{gap:13px;}
+.app-shell:not(.theme-dark) .main-area:has(.dashboard-home)::before{
+  background:linear-gradient(90deg,#f8f7ffdf 0%,#f8f7ffcb 35%,#f8f7ff4b 80%),
+    linear-gradient(180deg,#f8f7ff45 0%,#f8f7ff77 52%,#f8f7ff 100%),
+    url('/studyhub-twilight.webp') right center / cover no-repeat;
+}
+.app-shell:not(.theme-dark) .dashboard-intro h1{color:#2a2346;text-shadow:none;}
+.app-shell:not(.theme-dark) .dashboard-intro p{color:#53496b;}
+@media(max-width:780px){.dashboard-intro{min-height:132px;padding-top:8px;margin-bottom:8px;}.main-area:has(.dashboard-home)::before,.theme-dark .main-area:has(.dashboard-home)::before{height:350px;background-position:center,center,68% center;}}
+@media(max-width:650px){.dashboard-intro{min-height:133px;margin-bottom:5px;}.home-layout{gap:16px;}.home-stats-grid{gap:9px;}.main-area:has(.dashboard-home)::before,.theme-dark .main-area:has(.dashboard-home)::before{height:340px;background-position:center,center,70% center;}}

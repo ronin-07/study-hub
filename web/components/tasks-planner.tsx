@@ -24,15 +24,19 @@ function monthDays(year:number,month:number){
   return Array.from({length:42},(_,i)=>{const d=new Date(first);d.setDate(first.getDate()+i);return {key:dateKey(d),outside:d.getMonth()!==month,day:d.getDate()};});
 }
 
-export function TasksPlanner({items,courses,user,busy,run,onToggle,onFocus,onOpenResource,createOpen,setCreateOpen,calendarJump}:{
+export function TasksPlanner({items,courses,user,busy,run,onToggle,onFocus,onOpenResource,createOpen,setCreateOpen,calendarJump,calendarOnly=false,initialTaskMode='today',taskJump,onTaskJumpHandled}:{
   items:Item[];courses:Course[];user:User|null;busy:boolean;
   run:(fn:()=>Promise<unknown>)=>Promise<boolean>;
   onToggle:(item:Item)=>void;onFocus:(item:Item)=>void;onOpenResource:(item:Item)=>void;
   createOpen:boolean;setCreateOpen:(value:boolean)=>void;
   calendarJump?:{date:string;token:number}|null;
+  calendarOnly?:boolean;
+  initialTaskMode?:'today'|'upcoming'|'completed';
+  taskJump?:{id:string;token:number}|null;
+  onTaskJumpHandled?:()=>void;
 }){
   const today=localToday();
-  const [mode,setMode]=useState<Mode>('today');
+  const [mode,setMode]=useState<Mode>(calendarOnly?'calendar':initialTaskMode);
   const [selectedDay,setSelectedDay]=useState(today);
   const [month,setMonth]=useState(()=>{const d=asDate(today);return {year:d.getFullYear(),index:d.getMonth()};});
   const [selectedCourse,setSelectedCourse]=useState('all');
@@ -50,7 +54,8 @@ export function TasksPlanner({items,courses,user,busy,run,onToggle,onFocus,onOpe
     mode==='today'?todayPriorities(filtered,today):upcomingWork(filtered,today).sort(sortByDate);
   const monthCells=useMemo(()=>monthDays(month.year,month.index),[month.year,month.index]);
   const scheduled=filtered.filter(i=>i.planned_date===selectedDay);
-  const due=filtered.filter(i=>i.due_date===selectedDay);
+  // Work planned and due on the same date is shown once in the agenda.
+  const due=filtered.filter(i=>i.due_date===selectedDay&&i.planned_date!==selectedDay);
   const inbox=open.filter(i=>!i.planned_date);
   const calendarBuckets=useMemo(()=>{
     const map=new Map<string,{planned:number;due:number}>();
@@ -73,6 +78,17 @@ export function TasksPlanner({items,courses,user,busy,run,onToggle,onFocus,onOpe
   };
   const gotoToday=()=>{setSelectedDay(today);const d=asDate(today);setMonth({year:d.getFullYear(),index:d.getMonth()});};
   const openEdit=(item:Item)=>{setCreateOpen(false);setEditing(item);setDraft({title:item.title,course_id:item.course_id||'',kind:item.kind,week_number:item.week_number?String(item.week_number):'',planned_date:item.planned_date||'',due_date:item.due_date||'',priority:item.priority,repeat:item.repeat||'none',notes:item.notes||'',submitted:item.submitted});};
+  // Deep links from Home continue working when this component mounts after a tab change.
+  useEffect(()=>{
+    if(!calendarOnly||!calendarJump?.date)return;
+    selectCalendarDay(calendarJump.date);
+  },[calendarOnly,calendarJump?.token]);
+  useEffect(()=>{
+    if(!taskJump)return;
+    const target=items.find(i=>i.id===taskJump.id);
+    if(target)openEdit(target);
+    onTaskJumpHandled?.();
+  },[taskJump?.token]);
   const startCreate=(date?:string)=>{setEditing(null);setDraft(blank(date||today));setCreateOpen(true);};
   const closeForm=()=>{setEditing(null);setCreateOpen(false);};
   const save=async(e:FormEvent)=>{
@@ -125,7 +141,7 @@ export function TasksPlanner({items,courses,user,busy,run,onToggle,onFocus,onOpe
     </div>;
   };
   return <>
-    <div className="page-heading"><div><span className="eyebrow"><CalendarDays size={13}/> YOUR TASKS & PLANS</span><h1>Make room for what matters.</h1><p>Plan your workdays, see deadlines, and keep course assignments in sync.</p></div>
+    <div className="page-heading"><div><span className="eyebrow"><CalendarDays size={13}/> {calendarOnly?'YOUR STUDY CALENDAR':'YOUR TASKS & PLANS'}</span><h1>{calendarOnly?'Your time, mapped out.':'Make room for what matters.'}</h1><p>{calendarOnly?'Explore planned work and deadlines by day. Select a date to see and edit its tasks.':'Plan your workdays, see deadlines, and keep course assignments in sync.'}</p></div>
       <button className="btn primary" onClick={()=>startCreate(mode==='calendar'?selectedDay:today)}><Plus size={16}/> New task</button></div>
     <div className="planner-v05-summary">
       <div><span>Planned today</span><strong>{plannedToday.length}</strong></div>
@@ -134,7 +150,7 @@ export function TasksPlanner({items,courses,user,busy,run,onToggle,onFocus,onOpe
     </div>
     <Card className="planner-v05-shell">
       <div className="planner-v05-toolbar">
-        <div className="segmented">{(['today','upcoming','calendar','completed'] as const).map(m=><button key={m} className={mode===m?'selected':''} onClick={()=>setMode(m)}>{m==='today'?'Today':m==='upcoming'?'Upcoming':m==='calendar'?'Calendar':'Completed'}</button>)}</div>
+        {!calendarOnly&&<div className="segmented">{(['today','upcoming','completed'] as const).map(m=><button key={m} className={mode===m?'selected':''} onClick={()=>setMode(m)}>{m==='today'?'Today':m==='upcoming'?'Upcoming':'Completed'}</button>)}</div>}
         <label className="planner-v05-filter"><span>Show</span><select value={selectedCourse} onChange={e=>setSelectedCourse(e.target.value)}><option value="all">All tasks</option><option value="personal">Personal only</option>{availableCourses.map(c=><option key={c.id} value={c.id}>{c.code} · {c.title}</option>)}</select></label>
       </div>
       {mode==='calendar'?<div className="planner-v05-calendar-layout"><div>
@@ -153,7 +169,7 @@ export function TasksPlanner({items,courses,user,busy,run,onToggle,onFocus,onOpe
         <p className="planner-v05-hint">Drag an open task onto a date to plan it. Deadlines stay unchanged. On mobile, choose Edit to change its planned date.</p>
       </div><div className="planner-v05-agenda"><div className="planner-v05-agenda-title"><div><span>SELECTED DAY</span><h3>{fullLabel(selectedDay)}</h3></div><button className="icon-btn" onClick={()=>startCreate(selectedDay)} aria-label="Add task for this day"><Plus size={18}/></button></div>
         <h4>Planned work <span>{scheduled.length}</span></h4>{scheduled.length?scheduled.map(i=>showRow(i,true)):<p className="planner-v05-hint">Nothing planned. Drop a task here or add a new one.</p>}
-        <h4>Due on this day <span>{due.length}</span></h4>{due.length?due.map(i=><div key={i.id} className="planner-v05-due"><Clock3 size={15}/><span>{i.title}</span>{i.done&&<CheckCircle2 size={14}/>}</div>):<p className="planner-v05-hint">No deadlines on this date.</p>}
+        <h4>Due on this day <span>{due.length}</span></h4>{due.length?due.map(i=><button type="button" key={i.id} className="planner-v05-due" onClick={()=>openEdit(i)} title={`Open ${i.title}`} aria-label={`Open task ${i.title}`}><Clock3 size={15}/><span>{i.title}</span>{i.done&&<CheckCircle2 size={14}/>}<ArrowRight size={14}/></button>):<p className="planner-v05-hint">No additional deadlines on this date.</p>}
         <button className="planner-v05-inbox-toggle" onClick={()=>setShowInbox(!showInbox)}>{showInbox?'Hide':'Show'} unscheduled tasks ({inbox.length})</button>
         {showInbox&&<div className="planner-v05-inbox">{inbox.length?inbox.map(i=>showRow(i,true)):<p className="planner-v05-hint">Your inbox is clear.</p>}</div>}
       </div></div>:<div className="planner-v05-list"><div className="planner-v05-list-heading"><h3>{mode==='today'?"Today's priorities":mode==='upcoming'?'Upcoming & unscheduled':'Completed tasks'}</h3><span>{listed.length} tasks</span></div>
