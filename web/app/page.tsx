@@ -64,7 +64,11 @@ export default function Page() {
   const [courseScrollIndex, setCourseScrollIndex] = useState(0);
   const [visibleCourseCards, setVisibleCourseCards] = useState(3);
   const [canScrollNextCourse, setCanScrollNextCourse] = useState(true);
-  const [homeFocusMode,setHomeFocusMode] = useState<'25'|'50'|'90'|'free'>('25');
+  const [quickFocusOpen,setQuickFocusOpen] = useState(false);
+  const [quickFocusMode,setQuickFocusMode] = useState<'25'|'50'|'90'|'free'>('25');
+  const [quickFocusCourse,setQuickFocusCourse] = useState('');
+  const [quickFocusItem,setQuickFocusItem] = useState('');
+  const quickFocusRef = useRef<HTMLDivElement|null>(null);
   const [calendarJump,setCalendarJump] = useState<{date:string;token:number}|null>(null);
   const [homeSelectedDate,setHomeSelectedDate] = useState<string|null>(null);
   const [courseLandingItem,setCourseLandingItem] = useState<{id:string;weekNumber:number|null}|null>(null);
@@ -76,6 +80,16 @@ export default function Page() {
   const [finishReview,setFinishReview] = useState(false);
   const [finishSeconds,setFinishSeconds] = useState('0');
   const [weeklyGoal,setWeeklyGoal] = useState(20);
+  useEffect(()=>{
+    if(!quickFocusOpen)return;
+    const onKey=(event:KeyboardEvent)=>{if(event.key==='Escape')setQuickFocusOpen(false);};
+    const onOutside=(event:PointerEvent)=>{
+      if(quickFocusRef.current&&!quickFocusRef.current.contains(event.target as Node))setQuickFocusOpen(false);
+    };
+    document.addEventListener('keydown',onKey);
+    document.addEventListener('pointerdown',onOutside);
+    return ()=>{document.removeEventListener('keydown',onKey);document.removeEventListener('pointerdown',onOutside);};
+  },[quickFocusOpen]);
 
   const [drive,setDrive] = useState<DriveStatus>({connected:false,configured:false});
   const [driveFiles,setDriveFiles] = useState<DriveEntry[]>([]);
@@ -331,16 +345,24 @@ export default function Page() {
     setTab('tasks');
   };
   const navigate=(target:Tab)=>{
+    setQuickFocusOpen(false);
     if(target==='calendar'){openCalendarDate(today);return;}
     if(target==='tasks'){setTaskLandingMode('today');setTaskJump(null);}
     if(target==='courses')setCourseLandingItem(null);
     setTaskForm(false);
     setTab(target);
   };
-  const launchHomeFocus=()=>{
-    if(active){setTab('focus');return;}
-    setFocusCourse('');setFocusItem('');setFocusMode(homeFocusMode);
-    void act(()=>api<FocusSession>('/api/sessions/start',user,{method:'POST',body:{item_id:null,course_id:null,week_number:null,mode:homeFocusMode}}),{collection:'sessions'});
+  const startQuickFocus=async()=>{
+    if(active){setQuickFocusOpen(false);setTab('focus');return;}
+    const item=data.items.find(i=>i.id===quickFocusItem);
+    const ok=await act(()=>api<FocusSession>('/api/sessions/start',user,{method:'POST',body:{
+      item_id:quickFocusItem||null,course_id:quickFocusCourse||null,
+      week_number:item?.week_number||null,mode:quickFocusMode
+    }}),{collection:'sessions'});
+    if(ok){
+      setFocusCourse(quickFocusCourse);setFocusItem(quickFocusItem);setFocusMode(quickFocusMode);
+      setQuickFocusOpen(false);
+    }
   };
   const startFrom=(i?:Item)=>{
     // Personal tasks have no course; the selector still needs to retain their item ID.
@@ -481,6 +503,43 @@ export default function Page() {
       <header className={'topbar'+(tab==='today'?' dashboard-topbar':'')}><div className="breadcrumb"><Sparkles size={16}/> PERSONAL HUB <span>/</span> <strong>{pageNames[tab]}</strong></div><div className="topbar-right">
           <span className="topbar-date">{dateLabel}</span>
           <span className="topbar-clock" title="Your local time (24-hour clock)" aria-label={`Local time ${timeLabel}`}><Clock3 size={14} aria-hidden="true"/><time dateTime={clockReady?new Date(now*1000).toISOString():undefined}>{timeLabel}</time></span>
+          <div className="topbar-focus-wrap" ref={quickFocusRef}>
+            {active?<div className="topbar-focus-active">
+              <button type="button" className="topbar-focus-session" onClick={()=>navigate('focus')} title="Open your focus session" aria-label={`${active.status==='paused'?'Paused':'Focus'} session, ${duration(elapsedFocus(active,now))}; open Focus`}>
+                <span className={'topbar-focus-dot'+(active.status==='paused'?' paused':'')}/>
+                <span>{active.status==='paused'?'Paused':'Focus'} · {duration(elapsedFocus(active,now))}</span>
+              </button>
+              <button type="button" className="topbar-focus-control" onClick={()=>sessionAction(active.status==='running'?'pause':'resume')} disabled={busy} aria-label={active.status==='running'?'Pause focus':'Resume focus'} title={active.status==='running'?'Pause focus':'Resume focus'}>
+                {active.status==='running'?<Pause size={15}/>:<Play size={15}/>}
+              </button>
+            </div>:<>
+              <button type="button" className="topbar-quick-focus" aria-expanded={quickFocusOpen} aria-controls="quick-focus-menu" onClick={()=>setQuickFocusOpen(value=>!value)} disabled={busy||!snapshotReady}>
+                <Timer size={16}/> Quick focus <ChevronDown size={14}/>
+              </button>
+              {quickFocusOpen&&<div className="quick-focus-menu" id="quick-focus-menu" role="group" aria-label="Quick focus setup">
+                <div className="quick-focus-menu-heading"><Timer size={17}/><strong>Start a focus session</strong></div>
+                <label>Focus duration
+                  <select value={quickFocusMode} onChange={e=>setQuickFocusMode(e.target.value as typeof quickFocusMode)}>
+                    <option value="25">Pomodoro · 25 min</option><option value="50">Focus · 50 min</option><option value="90">Deep work · 90 min</option><option value="free">Stopwatch</option>
+                  </select>
+                </label>
+                <label>Course (optional)
+                  <select value={quickFocusCourse} onChange={e=>{setQuickFocusCourse(e.target.value);setQuickFocusItem('');}}>
+                    <option value="">Personal / general</option>
+                    {data.courses.filter(c=>!c.archived).map(c=><option key={c.id} value={c.id}>{c.code} · {c.title}</option>)}
+                  </select>
+                </label>
+                <label>Task (optional)
+                  <select value={quickFocusItem} onChange={e=>setQuickFocusItem(e.target.value)}>
+                    <option value="">No linked task</option>
+                    {focusTasksForContext(data.items,quickFocusCourse).map(item=><option key={item.id} value={item.id}>{item.title}</option>)}
+                  </select>
+                </label>
+                <button type="button" className="btn primary quick-focus-start" disabled={busy} onClick={()=>void startQuickFocus()}><Play size={15}/> Start focus</button>
+                <p>Timed modes are targets; finish sessions manually in Focus.</p>
+              </div>}
+            </>}
+          </div>
           <button className="topbar-theme" disabled={loading||refreshing||busy} aria-label="Refresh study data" title="Refresh study data" onClick={()=>void load()}>{loading||refreshing?<LoaderCircle size={17} className="spin"/>:<RotateCcw size={17}/>}</button>
           <button className="topbar-theme" aria-label={theme==='light'?'Switch to dark theme':'Switch to light theme'} title={theme==='light'?'Dark theme':'Light theme'} onClick={toggleTheme}>{theme==='light'?<Moon size={17}/>:<Sun size={17}/>}</button>
         </div></header>
@@ -536,12 +595,6 @@ export default function Page() {
                 </section>
               </div>
               <div className="home-side-column">
-                <section className="home-panel home-focus-widget" aria-labelledby="home-focus-title">
-                  <div className="home-widget-heading"><span className="home-heading-icon"><Timer size={20}/></span><h2 id="home-focus-title">Focus session</h2></div>
-                  <div className="home-focus-content"><div><strong>{active?duration(elapsedFocus(active,now)):homeFocusMode==='free'?'00:00':`${homeFocusMode}:00`}</strong><div className="home-focus-select-wrap">{active?<span className="home-focus-status">{active.status==='paused'?'Paused session':'Session in progress'}</span>:<select aria-label="Focus duration" value={homeFocusMode} onChange={e=>setHomeFocusMode(e.target.value as typeof homeFocusMode)}><option value="25">Pomodoro (25 / 5)</option><option value="50">Focus (50 min)</option><option value="90">Deep work (90 min)</option><option value="free">Stopwatch</option></select>}</div></div><button className="home-focus-play" disabled={busy} aria-label={active?'Open active focus session':'Start focus session'} onClick={launchHomeFocus}>{active?<ArrowRight size={28}/>:<Play size={28} fill="currentColor"/>}</button></div>
-                  <p className="home-focus-note">{active?'Open Focus to pause, resume, or finish.':'Timed modes are targets; sessions are stopped manually.'}</p>
-                </section>
-                <section className="home-panel home-week-goal" aria-labelledby="home-goal-title"><div className="home-widget-heading"><span className="home-heading-icon blue"><Target size={20}/></span><h2 id="home-goal-title">Weekly focus goal</h2><span className="home-widget-stat">{(weekSeconds/3600).toFixed(1)} / {weeklyGoal} h</span></div><div className="home-progress-track" role="progressbar" aria-label="Weekly focus goal progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={weekPct}><div style={{width:`${weekPct}%`}}/></div><div className="home-goal-foot"><span>{weekPct}% of your goal</span><label>Goal <input type="number" min={1} max={80} aria-label="Weekly focus target in hours" value={weeklyGoal} onChange={e=>{const n=Math.max(1,Math.min(80,Number(e.target.value)||1));setWeeklyGoal(n);localStorage.setItem('studyhub-focus-goal',String(n));}}/> h/week</label></div><small className="home-local-note">Goal preference is stored on this device.</small></section>
                 <section className="home-panel home-deadlines" aria-labelledby="home-deadlines-title"><div className="home-widget-heading"><span className="home-heading-icon"><CalendarDays size={20}/></span><h2 id="home-deadlines-title">Upcoming deadlines</h2><button className="home-panel-link" onClick={showUpcomingTasks}>View all <ArrowRight size={14}/></button></div>{upcoming.slice(0,3).map(i=><button className="home-deadline" key={i.id} onClick={()=>openDeadlineDestination(i)}><span className="home-deadline-date"><strong>{i.due_date!.slice(8,10)}</strong>{new Intl.DateTimeFormat('en-GB',{month:'short'}).format(new Date(i.due_date!+'T12:00:00'))}</span><span className="home-deadline-info"><strong>{i.title}</strong><small>{data.courses.find(c=>c.id===i.course_id)?.code||'Personal'}{i.week_number?` · Week ${i.week_number}`:''}</small></span><span className="home-days-away">{nextDeadlineDays(today,i.due_date!)===0?'Today':`${nextDeadlineDays(today,i.due_date!)}d`}</span></button>)}{!upcoming.length&&<p className="home-side-empty">Nothing due soon. Keep your momentum going.</p>}</section>
                 <section className="home-panel home-week-strip" aria-labelledby="home-calendar-title"><div className="home-widget-heading"><span className="home-heading-icon"><CalendarDays size={20}/></span><h2 id="home-calendar-title">Next 7 days</h2><button className="home-panel-link" onClick={()=>openCalendarDate(homeSelectedDate||today)}>Full calendar <ArrowRight size={14}/></button></div><div className="home-day-grid">{calendarDays.map((day,index)=><button key={day.date} className={'home-day'+(index===0?' current':'')+(homeSelectedDate===day.date?' selected':'')} aria-label={`Show ${day.weekday} ${day.day} tasks inline${day.count?`, ${day.count} scheduled items`:''}`} aria-pressed={homeSelectedDate===day.date} aria-controls={homeSelectedDate?'home-day-agenda':undefined} title={`${day.count} planned/due items`} onClick={()=>toggleHomeAgenda(day.date)}><span>{day.weekday}</span><strong>{day.day}</strong><span className={'home-day-dot'+(day.count?' has-work':'')}/></button>)}</div>{homeSelectedDate&&<div id="home-day-agenda" className="home-inline-agenda"><div className="home-inline-agenda-header"><div><strong>{new Intl.DateTimeFormat('en-GB',{weekday:'long',day:'numeric',month:'short'}).format(new Date(homeSelectedDate+'T12:00:00'))}</strong><span>{homeAgenda.length} {homeAgenda.length===1?'item':'items'}</span></div><button type="button" aria-label="Close day details" className="home-agenda-close" onClick={()=>setHomeSelectedDate(null)}><X size={16}/></button></div>{homeAgenda.length?<div className="home-inline-agenda-list">{homeAgenda.slice(0,5).map(({item,reason})=><div className="home-inline-agenda-item" key={item.id}><input type="checkbox" checked={item.done} disabled={busy} aria-label={`Complete ${item.title}`} onChange={()=>toggle(item)}/><button type="button" className="home-agenda-item-main" onClick={()=>openDeadlineDestination(item)}><strong>{item.title}</strong><small>{data.courses.find(c=>c.id===item.course_id)?.code||'Personal'}{item.week_number?` · Week ${item.week_number}`:''} · {reason==='planned-and-due'?'Planned & due':reason==='planned'?'Planned':'Due'}</small></button><ArrowRight size={15} aria-hidden="true"/></div>)}{homeAgenda.length>5&&<p className="home-agenda-more">+{homeAgenda.length-5} additional items</p>}</div>:<p className="home-side-empty">No tasks planned or due on this day.</p>}<button type="button" className="home-panel-link home-agenda-full" onClick={()=>openCalendarDate(homeSelectedDate)}>Open full day <ArrowRight size={14}/></button></div>}</section>
               </div>
@@ -572,7 +625,12 @@ export default function Page() {
               <div className="timer-dial"><span className="dial-label">{active?active.status==='paused'?'PAUSED':'FOCUSING':focusMode==='free'?'STOPWATCH':'FOCUS TARGET'}</span><strong>{active?duration(elapsedFocus(active,now)):focusMode==='free'?'00:00:00':duration(Number(focusMode)*60)}</strong><span className="dial-sub">{active?.mode!=='free'&&active?`Target: ${active.mode} minutes`:active?'Count-up session':'Ready when you are'}</span></div>
               {active? <div className="focus-buttons"><button className="btn secondary" onClick={()=>sessionAction(active.status==='running'?'pause':'resume')} disabled={busy}>{active.status==='running'?<Pause size={17}/>:<Play size={17}/>} {active.status==='running'?'Pause':'Resume'}</button><button className="btn primary" onClick={reviewFinish}><Square size={15}/> Finish & review</button></div>:<button className="btn primary focus-start" disabled={busy} onClick={beginFocus}><Play size={18}/> Start focusing</button>}
               <p className="focus-tip">Sessions persist after closing the tab. Timed modes are targets, not automatic stop timers yet. Finish manually and correct any idle time in the review.</p>
-            </Card><div className="stack"><Card><SectionTitle title="Your focus statistics"/><div className="focus-stat"><span>This week</span><strong>{(weekSeconds/3600).toFixed(1)} hours</strong></div><div className="focus-stat"><span>All time</span><strong>{(totalSeconds/3600).toFixed(1)} hours</strong></div><div className="focus-stat"><span>Completed sessions</span><strong>{data.sessions.filter(s=>s.status==='finished').length}</strong></div></Card><Card><SectionTitle title="Recent sessions"/>{data.sessions.filter(s=>s.status==='finished').sort((a,b)=>(b.ended_at||0)-(a.ended_at||0)).slice(0,5).map(s=><div className="session-row" key={s.id}><span><Check size={15}/></span><div><strong>{data.items.find(i=>i.id===s.item_id)?.title||'Focus session'}</strong><small>{new Date(s.started_at*1000).toLocaleDateString()} · {Math.round((s.focus_seconds||0)/60)} min</small></div></div>)}{!data.sessions.some(s=>s.status==='finished')&&<p className="muted">Your finished sessions will appear here.</p>}</Card></div></div>
+            </Card><div className="stack"><Card><SectionTitle title="Your focus statistics"/><div className="focus-stat"><span>This week</span><strong>{(weekSeconds/3600).toFixed(1)} hours</strong></div><div className="focus-stat"><span>All time</span><strong>{(totalSeconds/3600).toFixed(1)} hours</strong></div><div className="focus-stat"><span>Completed sessions</span><strong>{data.sessions.filter(s=>s.status==='finished').length}</strong></div></Card>
+              <Card className="focus-week-goal"><SectionTitle title="Weekly focus goal" aside={<Badge>{(weekSeconds/3600).toFixed(1)} / {weeklyGoal} h</Badge>}/>
+                <div className="home-progress-track" role="progressbar" aria-label="Weekly focus goal progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={weekPct}><div style={{width:`${weekPct}%`}}/></div>
+                <div className="focus-week-goal-footer"><span>{weekPct}% of your weekly goal</span><label>Target <input type="number" min={1} max={80} aria-label="Weekly focus target in hours" value={weeklyGoal} onChange={e=>{const n=Math.max(1,Math.min(80,Number(e.target.value)||1));setWeeklyGoal(n);localStorage.setItem('studyhub-focus-goal',String(n));}}/> h/week</label></div>
+                <small>Target preference is stored on this device.</small>
+              </Card><Card><SectionTitle title="Recent sessions"/>{data.sessions.filter(s=>s.status==='finished').sort((a,b)=>(b.ended_at||0)-(a.ended_at||0)).slice(0,5).map(s=><div className="session-row" key={s.id}><span><Check size={15}/></span><div><strong>{data.items.find(i=>i.id===s.item_id)?.title||'Focus session'}</strong><small>{new Date(s.started_at*1000).toLocaleDateString()} · {Math.round((s.focus_seconds||0)/60)} min</small></div></div>)}{!data.sessions.some(s=>s.status==='finished')&&<p className="muted">Your finished sessions will appear here.</p>}</Card></div></div>
             {finishReview&&active&&<div className="dialog-backdrop" role="presentation"><div className="dialog" role="dialog" aria-modal="true" aria-label="Review focus session"><button className="dialog-close" onClick={()=>setFinishReview(false)} aria-label="Cancel"><X size={18}/></button><h2>Review session</h2><p>Confirm your actual focus time. If you left the browser open, reduce the time to exclude inactivity.</p><FormRow label={`Actual focus seconds (maximum ${Math.min(86400,elapsedFocus(active,now))})`}><input type="number" min={0} max={Math.min(86400,elapsedFocus(active,now))} value={finishSeconds} onChange={e=>setFinishSeconds(e.target.value)}/></FormRow><div className="dialog-actions"><button className="btn secondary" onClick={()=>setFinishReview(false)}>Keep running</button><button className="btn primary" disabled={busy||!Number.isInteger(Number(finishSeconds))||Number(finishSeconds)<0||Number(finishSeconds)>Math.min(86400,elapsedFocus(active,now))} onClick={finish}>Save session</button></div></div></div>}
           </>}
 

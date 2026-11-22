@@ -69,6 +69,9 @@ export function CoursePlanner({ data, user, busy, pendingItems, courseId, weekNu
   const [showArchived, setShowArchived] = useState(false);
   const [semestersExpanded, setSemestersExpanded] = useState(true);
   const [coursesExpanded, setCoursesExpanded] = useState(true);
+  const [openSemesterKeys, setOpenSemesterKeys] = useState<string[]>([]);
+  const [semesterTreeReady, setSemesterTreeReady] = useState(false);
+  const lastCourseNavigationRef = useRef(courseId);
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>(()=>landingItem && landingItem.weekNumber===null?'tasks':'overview');
   const landingRef=useRef<HTMLDivElement|null>(null);
   useEffect(()=>{landingRef.current?.scrollIntoView({behavior:'smooth',block:'center'});},[landingItem?.id,workspaceTab]);
@@ -89,6 +92,29 @@ export function CoursePlanner({ data, user, busy, pendingItems, courseId, weekNu
   // Keep local semester selection when there is no selected course, such as an empty semester.
   const requestedCourse = data.courses.find(c => c.id === courseId);
   const requestedSemesterKey = requestedCourse ? courseSemester(requestedCourse, semesterOptions) : '';
+  useEffect(()=>{
+    // Only the selected semester is expanded initially. Persist explicit disclosures
+    // when switching between Study and the rest of the app.
+    try {
+      const stored=window.localStorage.getItem('studyhub-expanded-semesters');
+      const parsed=stored?JSON.parse(stored):null;
+      if(Array.isArray(parsed))setOpenSemesterKeys(parsed.filter((key):key is string=>typeof key==='string'));
+      else setOpenSemesterKeys((requestedSemesterKey||semesterOptions[0]?.key)?[requestedSemesterKey||semesterOptions[0].key]:[]);
+    }catch{setOpenSemesterKeys((requestedSemesterKey||semesterOptions[0]?.key)?[requestedSemesterKey||semesterOptions[0].key]:[]);}
+    setSemesterTreeReady(true);
+  // Initialize only on mount; explicit user collapse choices should not be reset.
+  },[]);
+  useEffect(()=>{
+    if(!semesterTreeReady)return;
+    if(lastCourseNavigationRef.current!==courseId){
+      lastCourseNavigationRef.current=courseId;
+      if(requestedSemesterKey)setOpenSemesterKeys(keys=>keys.includes(requestedSemesterKey)?keys:[...keys,requestedSemesterKey]);
+    }
+  },[courseId,requestedSemesterKey,semesterTreeReady]);
+  useEffect(()=>{
+    if(semesterTreeReady)window.localStorage.setItem('studyhub-expanded-semesters',JSON.stringify(openSemesterKeys));
+  },[openSemesterKeys,semesterTreeReady]);
+  const toggleSemester=(key:string)=>setOpenSemesterKeys(keys=>keys.includes(key)?keys.filter(existing=>existing!==key):[...keys,key]);
   const currentSemesterKey = resolveWorkspaceSemester(semesterOptions.map(s => s.key), semesterKey, requestedSemesterKey);
   const semester = semesterOptions.find(s => s.key === currentSemesterKey);
   const matching = data.courses.filter(c => courseSemester(c, semesterOptions) === currentSemesterKey);
@@ -113,10 +139,15 @@ export function CoursePlanner({ data, user, busy, pendingItems, courseId, weekNu
 
   const chooseSemester = (key: string) => {
     setSemesterKey(key); setShowArchived(false); setWorkspaceTab('overview'); selectWeek(1);
+    setOpenSemesterKeys(keys=>keys.includes(key)?keys:[...keys,key]);
     const next = data.courses.find(c => courseSemester(c, semesterOptions) === key && !c.archived);
     selectCourse(next?.id || '');
   };
   const chooseCourse = (course: Course) => {
+    const key=courseSemester(course,semesterOptions);
+    setSemesterKey(key);
+    setShowArchived(Boolean(course.archived));
+    setOpenSemesterKeys(keys=>keys.includes(key)?keys:[...keys,key]);
     selectCourse(course.id); selectWeek(1); setWorkspaceTab('overview');
   };
   const openCourseForm = (course?: Course) => {
@@ -255,20 +286,39 @@ export function CoursePlanner({ data, user, busy, pendingItems, courseId, weekNu
     <div className="planner-shell">
       <aside className="planner-rail">
         <button type="button" className="planner-rail-title planner-rail-toggle" aria-expanded={semestersExpanded} aria-controls="planner-semester-section" onClick={()=>setSemestersExpanded(value=>!value)}><span>SEMESTERS</span><ChevronDown size={16} className={semestersExpanded?'':'collapsed'} aria-hidden="true"/></button>
-        {semestersExpanded&&<div id="planner-semester-section" className="planner-rail-section"><div className="planner-semester-list">{semesterOptions.map(s=><button key={s.key} className={'planner-semester-btn '+(s.key===currentSemesterKey?'selected':'')} onClick={()=>chooseSemester(s.key)}>{s.name}</button>)}</div>
-        {activeSemester&&<button className="planner-semester-edit" onClick={()=>editSemester(activeSemester)}><Pencil size={13}/> Edit semester</button>}</div>}
+        {semestersExpanded&&<div id="planner-semester-section" className="planner-rail-section">
+          <div className="planner-semester-tree">{semesterOptions.map((s,index)=>{
+            const expanded=openSemesterKeys.includes(s.key);
+            const isCurrent=s.key===currentSemesterKey;
+            const inSemester=data.courses.filter(c=>courseSemester(c,semesterOptions)===s.key);
+            const activeCourses=inSemester.filter(c=>!c.archived);
+            const listedCourses=isCurrent&&showArchived?inSemester.filter(c=>c.archived):activeCourses;
+            return <div key={s.key} className={'planner-semester-group'+(isCurrent?' current':'')}>
+              <div className={'planner-semester-row'+(isCurrent?' selected':'')}>
+                <button type="button" className="planner-semester-chevron" aria-label={`${expanded?'Collapse':'Expand'} ${s.name} courses`} aria-expanded={expanded} aria-controls={`planner-semester-children-${index}`} onClick={()=>toggleSemester(s.key)}><ChevronRight size={15} className={expanded?'expanded':''}/></button>
+                <button type="button" className="planner-semester-select" aria-current={isCurrent?'true':undefined} onClick={()=>chooseSemester(s.key)}>{s.name}</button>
+                <span className="planner-semester-count" aria-label={`${activeCourses.length} active courses`}>{activeCourses.length}</span>
+              </div>
+              {expanded&&<div id={`planner-semester-children-${index}`} className="planner-semester-children">
+                {listedCourses.map((c,courseIndex)=><button type="button" className={'planner-semester-course'+(selectedId===c.id&&isCurrent?' selected':'')} key={c.id} onClick={()=>chooseCourse(c)}>
+                  <span className={`planner-semester-dot tone-${courseIndex%4}`} aria-hidden="true"/><span>{c.code} · {c.title}</span>
+                </button>)}
+                {!listedCourses.length&&<p className="planner-semester-no-courses">{isCurrent&&showArchived?'No archived courses.':'No active courses.'}</p>}
+              </div>}
+            </div>;
+          })}</div>
+          {activeSemester&&<button type="button" className="planner-semester-edit" onClick={()=>editSemester(activeSemester)}><Pencil size={13}/> Edit semester</button>}
+          <button type="button" className="planner-rail-add" disabled={busy} onClick={()=>editSemester()}><Plus size={15}/> Add semester</button>
+        </div>}
         <button type="button" className="planner-rail-title planner-course-title planner-rail-toggle" aria-expanded={coursesExpanded} aria-controls="planner-course-section" onClick={()=>setCoursesExpanded(value=>!value)}><span>COURSES <small>({activeCount})</small></span><ChevronDown size={16} className={coursesExpanded?'':'collapsed'} aria-hidden="true"/></button>
-        {coursesExpanded&&<div id="planner-course-section" className="planner-rail-section"><div className="planner-course-list">{visible.map(c=>
-          <button key={c.id} className={'planner-course-btn '+(selectedId===c.id?'selected':'')} onClick={()=>chooseCourse(c)}>
-            <span className="planner-course-icon">{c.code.slice(0,2)}</span><span className="planner-course-meta"><strong>{c.title}</strong><small>{c.code} · {c.week_count} weeks</small></span><ChevronRight size={15}/>
-          </button>)}
-          {!visible.length&&<div className="planner-empty-rail">{showArchived?'No archived courses.':'No courses this semester.'}{!showArchived&&semester&&<button onClick={()=>openCourseForm()}>Add a course</button>}</div>}
-        </div>
-        <button className={'planner-archive-toggle '+(showArchived?'selected':'')} onClick={()=>{
-          const next=!showArchived; setShowArchived(next);
-          const replacement=matching.find(c=>Boolean(c.archived)===next);
-          selectCourse(replacement?.id||''); selectWeek(1);setWorkspaceTab('overview');
-        }}><Archive size={16}/>{showArchived?'Back to active courses':`Archived courses (${archivedCount})`}</button></div>}
+        {coursesExpanded&&<div id="planner-course-section" className="planner-rail-section planner-course-actions-section">
+          <button type="button" className="planner-rail-add" disabled={busy||!semesterOptions.length} onClick={()=>openCourseForm()}><Plus size={15}/> Add course</button>
+          <button type="button" className={'planner-archive-toggle '+(showArchived?'selected':'')} onClick={()=>{
+            const next=!showArchived;setShowArchived(next);
+            const replacement=matching.find(c=>Boolean(c.archived)===next);
+            selectCourse(replacement?.id||'');selectWeek(1);setWorkspaceTab('overview');
+          }}><Archive size={16}/>{showArchived?'Back to active courses':`Archived courses (${archivedCount})`}</button>
+        </div>}
         <div className="planner-rail-foot"><BookMarked size={17}/><strong>Everything in its place.</strong><p>Books and Goodnotes notebooks live in the Course Library; lecture slides stay with their week.</p></div>
       </aside>
       <div className="planner-workspace">

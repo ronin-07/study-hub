@@ -24,8 +24,13 @@ test('date and clock are beside each other and share all tabs',()=>{
   assert.match(css,/\.topbar-clock\{/);
 });
 
-test('no redundant header Quick focus button on secondary tabs',()=>{
-  assert.doesNotMatch(page,/Quick focus/);
-  assert.doesNotMatch(css,/\.topbar-focus/);
+test('Quick Focus is in the shared top bar and never duplicated as a Home widget',()=>{
+  assert.match(page,/className="topbar-focus-wrap"/);
+  assert.match(page,/className="topbar-quick-focus"/);
+  assert.match(page,/className="topbar-focus-session"/);
+  assert.match(page,/Start a focus session/);
+  assert.match(page,/onClick=\{\(\)=>void startQuickFocus\(\)\}/);
+  assert.match(page,/onClick=\{\(\)=>sessionAction\(active\.status==='running'\?'pause':'resume'\)\}/);
+  assert.doesNotMatch(page,/home-focus-widget|home-week-goal/);
   assert.match(page,/<\/div><\/header>/);
 });
