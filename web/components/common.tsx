@@ -5,8 +5,11 @@ import { formatDate, type Item } from '@/lib/types';
 export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
   return <section className={'card ' + className}>{children}</section>;
 }
-export function EmptyState({ icon, title, detail }: { icon: ReactNode; title: string; detail: string }) {
-  return <div className="empty-state">{icon}<strong>{title}</strong><p>{detail}</p></div>;
+export function EmptyState({ icon, title, detail, photo }: { icon: ReactNode; title: string; detail: string; photo?: 'desk' | 'library' }) {
+  return <div className={'empty-state'+(photo?` empty-state--photo empty-state--${photo}`:'')}>
+    {photo&&<div className="empty-state-photo" aria-hidden="true"/>}
+    <div className="empty-state-content">{icon}<strong>{title}</strong><p>{detail}</p></div>
+  </div>;
 }
 export function SectionTitle({ title, aside }: { title: string; aside?: ReactNode }) {
   return <div className="section-title"><h3>{title}</h3>{aside}</div>;

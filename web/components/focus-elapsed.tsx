@@ -71,7 +71,7 @@ export const FocusDial = memo(function FocusDial({session, anchor}: {
   const targetReached = session.mode !== 'free' && elapsedSeconds >= Number(session.mode) * 60;
   const progress = focusClockProgress(clock, session.mode, wallMs, monoMs);
   const style = {'--focus-progress': `${(progress * 100).toFixed(2)}%`} as CSSProperties;
-  return <div className="timer-dial focus-dial-progress" style={style}
+  return <div className={"timer-dial focus-dial-progress"+(targetReached ? " focus-target-reached" : "")} style={style}
     role="timer" aria-label={`Focus timer ${clock.status}, ${duration(displaySeconds)} ${session.mode === 'free' ? 'elapsed' : 'remaining'}`} >
     <span className="dial-label">{clock.status==='paused'?'PAUSED':targetReached?'TARGET REACHED':'FOCUSING'}</span>
     <strong>{duration(displaySeconds)}</strong>

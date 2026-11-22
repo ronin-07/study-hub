@@ -960,3 +960,93 @@
   background:conic-gradient(from -90deg, var(--focus-ring-fill, #b780b3) 0 var(--focus-progress,0%), var(--focus-ring-track, #49374c) var(--focus-progress,0%) 100%);
 }
 .theme-light .timer-dial.focus-dial-progress::before { --focus-ring-track:#e5d9e6; }
+
+/* Final v0.5 polish: visual-only, lightweight and accessible. */
+/* Photos appear only when a card is actually empty: never behind active work. */
+.empty-state--photo { padding:0; margin:8px 0 0; border:1px solid var(--line); border-radius:13px; overflow:hidden; }
+.empty-state--photo .empty-state-photo { height:98px; background:linear-gradient(0deg,rgba(42,27,45,.63),rgba(42,27,45,.08)),url('/study-desk-dusk.webp') center 54%/cover; }
+.empty-state--library .empty-state-photo { background-image:linear-gradient(0deg,rgba(42,27,45,.63),rgba(42,27,45,.08)),url('/study-library-dusk.webp'); }
+.empty-state--photo .empty-state-content { padding:15px 14px 20px; }
+.empty-state--photo .empty-state-content > svg { display:block; box-sizing:content-box; margin:0 auto 9px; }
+.home-course-empty--photo { position:relative; isolation:isolate; overflow:hidden; background:linear-gradient(90deg,rgba(37,25,42,.93) 0%,rgba(37,25,42,.9) 55%,rgba(37,25,42,.53) 100%),url('/study-desk-dusk.webp') center 52%/cover; }
+.home-course-empty--photo > * { position:relative; z-index:1; }
+.app-shell:not(.theme-dark) .home-course-empty--photo { background:linear-gradient(90deg,rgba(249,240,247,.96),rgba(249,240,247,.9) 65%,rgba(249,240,247,.6)),url('/study-desk-dusk.webp') center 52%/cover; }
+
+.app-shell .progress-track>div,.app-shell .home-progress-track>div {
+  transition:width 520ms cubic-bezier(.21,.8,.24,1);
+}
+.home-course-progress { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:6px; }
+.home-course-progress .home-progress-track { flex:0 0 100%; }
+.home-progress-percent { color:var(--text); font-weight:800; font-variant-numeric:tabular-nums; font-size:.72rem; }
+.app-shell .planner-hero-progress strong { font-variant-numeric:tabular-nums; }
+
+/* Completion is acknowledged with a restrained sage tint, not a looping effect. */
+.app-shell .planner-study-hero.is-complete .planner-hero-progress strong {color:#b5f3c6;transition:color 400ms ease;text-shadow:0 0 10px #8be6a035;}
+.app-shell .planner-study-hero.is-complete .planner-hero-progress .progress-track>div,
+.app-shell .home-course-tile.is-complete .home-progress-track>div {background:linear-gradient(90deg,#93c7a7,#c5e6bb);}
+.app-shell .home-course-tile.is-complete .home-progress-percent {color:#b5e2c5;}
+
+@keyframes study-task-check-pop {
+  0% {transform:scale(.84)}
+  52% {transform:scale(1.22)}
+  100% {transform:scale(1)}
+}
+.app-shell .home-course-task input[type=checkbox],
+.app-shell .home-priority-row input[type=checkbox],
+.app-shell .planner-v05-task input[type=checkbox],
+.app-shell .planner-study-task input[type=checkbox],
+.app-shell .home-inline-agenda-item input[type=checkbox] {
+  accent-color:#90c7a7;
+  transition:filter 210ms ease, transform 210ms ease;
+}
+.app-shell .home-course-task input[type=checkbox]:checked,
+.app-shell .home-priority-row input[type=checkbox]:checked,
+.app-shell .planner-v05-task input[type=checkbox]:checked,
+.app-shell .planner-study-task input[type=checkbox]:checked,
+.app-shell .home-inline-agenda-item input[type=checkbox]:checked {
+  animation:study-task-check-pop 250ms cubic-bezier(.21,.8,.24,1);
+  filter:drop-shadow(0 0 5px #89caa17e);
+}
+.app-shell .planner-study-task strong,.app-shell .planner-v05-taskbody strong,
+.app-shell .home-course-task-title,.app-shell .home-priority-info strong {
+  transition:color 240ms ease,opacity 240ms ease;
+}
+
+@keyframes focus-target-halo {
+  0% {filter:drop-shadow(0 0 0 transparent)}
+  40% {filter:drop-shadow(0 0 16px #eeb4b77c)}
+  100% {filter:drop-shadow(0 0 3px #eeb4b72a)}
+}
+.timer-dial.focus-target-reached { animation:focus-target-halo 1250ms ease-out both; }
+.timer-dial.focus-target-reached .dial-label {color:#ffc7a7;letter-spacing:.12em;}
+
+.study-inline-empty { display:flex; align-items:center; gap:9px; color:var(--muted); }
+.study-inline-empty svg { flex:0 0 auto; color:#cc98af; opacity:.8; }
+.empty-state .empty-state-content > svg { background:rgba(191,133,166,.11); border-radius:14px; box-sizing:content-box; padding:12px; color:#d9a2bf; }
+
+.study-save-feedback {
+  position:fixed; right:24px; bottom:22px; z-index:200;
+  display:flex; align-items:center; gap:11px; max-width:min(340px,calc(100vw - 32px));
+  padding:11px 12px; border-radius:13px; border:1px solid #b47f9b77;
+  background:#2e2230f5; color:#fff3f3; font-size:.77rem; font-weight:650;
+  box-shadow:0 14px 32px #170e1a65; backdrop-filter:blur(12px);
+}
+.study-save-feedback.success { border-color:#86baa093; }
+.study-save-feedback.success > svg { color:#a0ddb6; }
+.study-save-feedback.error { border-color:#e49b9b9c; }
+.study-save-feedback.error > svg { color:#ffb5a5; }
+.study-save-feedback > span { flex:1; }
+.study-save-feedback button { border:0; background:transparent; color:inherit; display:grid; place-items:center; cursor:pointer; padding:3px; border-radius:7px; }
+.study-save-feedback button:hover {background:#ffffff20;}
+@media (max-width:750px) { .study-save-feedback {right:12px; bottom:90px;} }
+@media (prefers-reduced-motion:reduce) {
+  .app-shell .progress-track>div,.app-shell .home-progress-track>div,
+  .app-shell .home-course-task input[type=checkbox],
+  .app-shell .home-priority-row input[type=checkbox],
+  .app-shell .planner-v05-task input[type=checkbox],
+  .app-shell .planner-study-task input[type=checkbox],
+  .app-shell .home-inline-agenda-item input[type=checkbox],
+  .timer-dial.focus-target-reached { animation:none!important; transition:none!important; }
+}
+
+@media (prefers-reduced-motion: reduce) { .study-save-feedback .spin { animation:none; } }
