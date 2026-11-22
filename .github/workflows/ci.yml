@@ -39,11 +39,13 @@ jobs:
           node-version: '22'
       - name: Install frontend dependencies
         working-directory: web
-        # Until the lockfile is generated, install rather than npm ci.
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
       - name: TypeScript check
         working-directory: web
         run: npm run lint
+      - name: Frontend unit tests
+        working-directory: web
+        run: npm test
       - name: Production build without account credentials
         working-directory: web
         env:

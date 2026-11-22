@@ -2,10 +2,11 @@
 
 import { useMemo, useState, type DragEvent, type FormEvent } from 'react';
 import type { User } from 'firebase/auth';
-import { ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, Clock3, GripVertical, ListTodo, LoaderCircle, Plus, Repeat2, Timer, Trash2, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, BookOpen, CalendarDays, CheckCircle2, Clock3, GripVertical, ListTodo, LoaderCircle, Plus, Repeat2, Timer, Trash2, X } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Badge, Card, DayStatus, EmptyState, FormRow } from '@/components/common';
 import { formatDate, kindLabels, localToday, type Course, type Item, type Priority } from '@/lib/types';
+import { isOverdue, todayPriorities, upcomingWork, shiftCalendarMonth } from '@/lib/task-view';
 
 type Repeat = 'none'|'daily'|'weekly'|'monthly';
 type Mode = 'today'|'upcoming'|'calendar'|'completed';
@@ -23,10 +24,10 @@ function monthDays(year:number,month:number){
   return Array.from({length:42},(_,i)=>{const d=new Date(first);d.setDate(first.getDate()+i);return {key:dateKey(d),outside:d.getMonth()!==month,day:d.getDate()};});
 }
 
-export function TasksPlanner({items,courses,user,busy,run,onToggle,onFocus,createOpen,setCreateOpen}:{
+export function TasksPlanner({items,courses,user,busy,run,onToggle,onFocus,onOpenResource,createOpen,setCreateOpen}:{
   items:Item[];courses:Course[];user:User|null;busy:boolean;
   run:(fn:()=>Promise<unknown>)=>Promise<boolean>;
-  onToggle:(item:Item)=>void;onFocus:(item:Item)=>void;
+  onToggle:(item:Item)=>void;onFocus:(item:Item)=>void;onOpenResource:(item:Item)=>void;
   createOpen:boolean;setCreateOpen:(value:boolean)=>void;
 }){
   const today=localToday();
@@ -41,13 +42,11 @@ export function TasksPlanner({items,courses,user,busy,run,onToggle,onFocus,creat
   const availableCourses=courses.filter(c=>!c.archived);
   const filtered=items.filter(i=>selectedCourse==='all'||(selectedCourse==='personal'?!i.course_id:i.course_id===selectedCourse));
   const open=filtered.filter(i=>!i.done);
-  const overdue=open.filter(i=>i.due_date&&i.due_date<today);
-  const dueToday=open.filter(i=>i.due_date===today);
+  const overdue=open.filter(i=>isOverdue(i,today));
   const plannedToday=open.filter(i=>i.planned_date===today);
-  const upcoming=open.filter(i=>i.planned_date!==today && !(i.due_date&&i.due_date<=today));
-  const sortByDate=(a:Item,b:Item)=>(a.planned_date||a.due_date||'9999').localeCompare(b.planned_date||b.due_date||'9999') || (a.priority==='high'?-1:1);
+  const sortByDate=(a:Item,b:Item)=>(a.planned_date||a.due_date||'9999').localeCompare(b.planned_date||b.due_date||'9999') || a.title.localeCompare(b.title);
   const listed=mode==='completed'?filtered.filter(i=>i.done).sort((a,b)=>(b.planned_date||'').localeCompare(a.planned_date||'')):
-    mode==='today'?[...new Map([...overdue,...dueToday,...plannedToday].map(i=>[i.id,i])).values()].sort(sortByDate):upcoming.sort(sortByDate);
+    mode==='today'?todayPriorities(filtered,today):upcomingWork(filtered,today).sort(sortByDate);
   const monthCells=useMemo(()=>monthDays(month.year,month.index),[month.year,month.index]);
   const scheduled=filtered.filter(i=>i.planned_date===selectedDay);
   const due=filtered.filter(i=>i.due_date===selectedDay);
@@ -60,7 +59,17 @@ export function TasksPlanner({items,courses,user,busy,run,onToggle,onFocus,creat
     }
     return map;
   },[filtered]);
-  const changeMonth=(offset:number)=>setMonth(m=>{const d=new Date(m.year,m.index+offset,1);return {year:d.getFullYear(),index:d.getMonth()};});
+  const changeMonth=(offset:number)=>{
+    const nextDay=shiftCalendarMonth(selectedDay,offset);
+    const d=asDate(nextDay);
+    setSelectedDay(nextDay);
+    setMonth({year:d.getFullYear(),index:d.getMonth()});
+  };
+  const selectCalendarDay=(key:string)=>{
+    setSelectedDay(key);
+    const d=asDate(key);
+    setMonth({year:d.getFullYear(),index:d.getMonth()});
+  };
   const gotoToday=()=>{setSelectedDay(today);const d=asDate(today);setMonth({year:d.getFullYear(),index:d.getMonth()});};
   const openEdit=(item:Item)=>{setCreateOpen(false);setEditing(item);setDraft({title:item.title,course_id:item.course_id||'',kind:item.kind,week_number:item.week_number?String(item.week_number):'',planned_date:item.planned_date||'',due_date:item.due_date||'',priority:item.priority,repeat:item.repeat||'none',notes:item.notes||'',submitted:item.submitted});};
   const startCreate=(date?:string)=>{setEditing(null);setDraft(blank(date||today));setCreateOpen(true);};
@@ -109,6 +118,7 @@ export function TasksPlanner({items,courses,user,busy,run,onToggle,onFocus,creat
       </div>
       <div className="planner-v05-row-actions">
         <button className="btn secondary small" disabled={busy} onClick={()=>openEdit(i)}>Edit</button>
+        {i.resource_id&&<button className="icon-btn" disabled={busy} title="Open linked notes or textbook" aria-label={`Open resource for ${i.title}`} onClick={()=>onOpenResource(i)}><BookOpen size={16}/></button>}
         {i.course_id&&<button className="icon-btn" title="Focus on this task" aria-label={`Focus on ${i.title}`} onClick={()=>onFocus(i)}><Timer size={16}/></button>}
       </div>
     </div>;
@@ -134,7 +144,7 @@ export function TasksPlanner({items,courses,user,busy,run,onToggle,onFocus,creat
           const counts=calendarBuckets.get(day.key);
           return <button key={day.key} className={`planner-v05-day ${day.outside?'outside':''} ${day.key===today?'today':''} ${day.key===selectedDay?'selected':''} ${hoverDay===day.key?'drop-target':''}`}
             title={`Select ${fullLabel(day.key)}; drop tasks here to plan them`} aria-label={`${fullLabel(day.key)} — ${counts?.planned||0} planned, ${counts?.due||0} due`}
-            onClick={()=>setSelectedDay(day.key)} onDragOver={e=>e.preventDefault()} onDragEnter={()=>setHoverDay(day.key)} onDragLeave={()=>setHoverDay('')} onDrop={e=>drop(e,day.key)}>
+            onClick={()=>selectCalendarDay(day.key)} onDragOver={e=>e.preventDefault()} onDragEnter={()=>setHoverDay(day.key)} onDragLeave={()=>setHoverDay('')} onDrop={e=>drop(e,day.key)}>
             <span className="planner-v05-day-number">{day.day}</span>
             <div className="planner-v05-day-markers">{!!counts?.planned&&<span className="planned">{counts.planned} plan</span>}{!!counts?.due&&<span className="due">{counts.due} due</span>}</div>
           </button>;

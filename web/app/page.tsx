@@ -12,6 +12,7 @@ import { Badge, Card, EmptyState, FormRow, SectionTitle } from '@/components/com
 import { PdfWorkspace } from '@/components/pdf-workspace';
 import { CoursePlanner } from '@/components/course-planner';
 import { TasksPlanner } from '@/components/tasks-planner';
+import { isActionable, isOverdue, todayPriorities, upcomingDeadlines } from '@/lib/task-view';
 import { firebaseAuth, onAuthStateChanged, signIn, signOutUser, useFirebase } from '@/lib/auth';
 import { type DriveEntry, type DriveList, type FocusSession, type Item,
   type Resource, type Snapshot, type Tab, type DriveIndexed, type DriveSource, type DriveIndexResponse, type DriveScanResponse, duration,
@@ -31,9 +32,9 @@ export default function Page() {
   const [authReady,setAuthReady] = useState(!useFirebase);
   const [tab,setTab] = useState<Tab>('today');
   const [theme,setTheme] = useState<'light'|'dark'>('light');
-  const [dateLabel,setDateLabel] = useState('Today');
   const [data,setData] = useState<Snapshot>(empty);
   const [loading,setLoading] = useState(true);
+  const [snapshotReady,setSnapshotReady] = useState(false);
   const [busy,setBusy] = useState(false);
   const [error,setError] = useState('');
   const [courseId,setCourseId] = useState('');
@@ -71,7 +72,6 @@ export default function Page() {
   },[]);
   useEffect(()=>{ const id=window.setInterval(()=>setNow(Math.floor(Date.now()/1000)),1000);return ()=>clearInterval(id);},[]);
   useEffect(()=>{
-    setDateLabel(new Intl.DateTimeFormat('en-DK',{month:'short',day:'numeric',year:'numeric'}).format(new Date()));
     const preference=window.localStorage.getItem('studyhub-theme');
     if(preference==='dark')setTheme('dark');
   },[]);
@@ -81,33 +81,48 @@ export default function Page() {
     if (stored && Number(stored)>=1 && Number(stored)<=80) setWeeklyGoal(Number(stored));
   },[]);
 
-  const load = useCallback(async()=>{
-    if (!authReady || (useFirebase && !user)) {setLoading(false);return;}
+  const load = useCallback(async():Promise<boolean>=>{
+    if (!authReady || (useFirebase && !user)) {setLoading(false);return false;}
     try {
       const snap=await api<Snapshot>('/api/snapshot',user);
       setData(snap);
+      setSnapshotReady(true);
       setCourseId(previous=>snap.courses.some(c=>c.id===previous&&!c.archived)?previous:(snap.courses.find(c=>!c.archived)?.id||''));
       setLinkCourse(previous=>snap.courses.some(c=>c.id===previous&&!c.archived)?previous:(snap.courses.find(c=>!c.archived)?.id||''));
       setError('');
-    } catch(e) {setError(e instanceof Error ? e.message : 'Cannot connect to the API');}
+      return true;
+    } catch(e) {setError(e instanceof Error ? e.message : 'Cannot connect to the API');return false;}
     finally {setLoading(false);}
   },[authReady,user]);
   useEffect(()=>{void load();},[load]);
+  // Refresh after returning to the tab so changes from another device become visible.
+  useEffect(()=>{
+    const refreshOnReturn=()=>{if(document.visibilityState==='visible'&&!busy)void load();};
+    document.addEventListener('visibilitychange',refreshOnReturn);
+    return ()=>document.removeEventListener('visibilitychange',refreshOnReturn);
+  },[load,busy]);
 
   const act = async(fn:()=>Promise<unknown>):Promise<boolean>=>{
     setBusy(true);setError('');
-    try {await fn();await load();return true;} catch(e) {setError(e instanceof Error?e.message:'Action failed');return false;}
+    try {
+      await fn();
+      const refreshed=await load();
+      if(!refreshed)setError('Changes were saved, but the dashboard could not refresh. Use the refresh button to reload your data.');
+      return true;
+    } catch(e) {setError(e instanceof Error?e.message:'Action failed');return false;}
     finally {setBusy(false);}
   };
   const selectedCourse = data.courses.find(c=>c.id===courseId&&!c.archived);
   const selectedWeek = data.weeks.find(w=>w.course_id===courseId && w.number===weekNumber);
   const activeCourseIds = new Set(data.courses.filter(c=>!c.archived).map(c=>c.id));
-  const tasks = data.items.filter(i=>i.is_task&&(!i.course_id||activeCourseIds.has(i.course_id)));
+  const tasks = data.items.filter(i=>isActionable(i)&&(!i.course_id||activeCourseIds.has(i.course_id)));
   const today=localToday();
   const openTasks = tasks.filter(i=>!i.done);
   const plannedToday=openTasks.filter(i=>i.planned_date===today);
-  const overdue=openTasks.filter(i=>i.due_date && i.due_date < today);
-  const upcoming=openTasks.filter(i=>i.due_date).sort((a,b)=>(a.due_date||'').localeCompare(b.due_date||''));
+  const todayWork=todayPriorities(openTasks,today);
+  const overdue=todayWork.filter(i=>isOverdue(i,today));
+  const upcoming=upcomingDeadlines(openTasks,today);
+  const dateLabel=new Intl.DateTimeFormat('en-DK',{month:'short',day:'numeric',year:'numeric'}).format(new Date(now*1000));
   const active=data.sessions.find(s=>s.status==='running'||s.status==='paused');
   const currentWeekStart=useMemo(()=>{const d=new Date();d.setHours(0,0,0,0);const weekday=(d.getDay()+6)%7;d.setDate(d.getDate()-weekday);return Math.floor(d.getTime()/1000);},[today]);
   const weekSeconds=data.sessions.filter(s=>s.status==='finished'&&s.ended_at && s.ended_at>=currentWeekStart).reduce((n,s)=>n+(s.focus_seconds||0),0);
@@ -123,7 +138,7 @@ export default function Page() {
     await api('/api/sessions/start',user,{method:'POST',body:{item_id:focusItem||null,course_id:focusCourse||null,week_number:item?.week_number||null,mode:focusMode}});
   });
   const sessionAction=(verb:'pause'|'resume')=>{if(!active)return;void act(async()=>{await api(`/api/sessions/${active.id}/${verb}`,user,{method:'POST'});});};
-  const reviewFinish=()=>{if(!active)return;setFinishSeconds(String(elapsedFocus(active,now)));setFinishReview(true);};
+  const reviewFinish=()=>{if(!active)return;setFinishSeconds(String(Math.min(86400,elapsedFocus(active,now))));setFinishReview(true);};
   const finish=()=>{if(!active)return;void act(async()=>{
     await api(`/api/sessions/${active.id}/finish`,user,{method:'POST',body:{confirmed_seconds:Math.round(Number(finishSeconds))}});
     setFinishReview(false);
@@ -157,6 +172,13 @@ export default function Page() {
     setPdf({url,title,resourceId,courseId:r?.course_id,weekNumber:r?.week_number??weekNumber,page:lastPage||1});
   });
   const closePdf=()=>{if(pdf)URL.revokeObjectURL(pdf.url);setPdf(null);};
+  const openTaskResource=(item:Item)=>{
+    const r=data.resources.find(entry=>entry.id===item.resource_id);
+    if(!r){setError('The linked document is no longer available. Check the Course Library.');return;}
+    if(r.source==='drive'&&r.drive_file_id)previewPdf(r.drive_file_id,r.title,r.id,r.last_page);
+    else if(r.url)window.open(r.url,'_blank','noopener,noreferrer');
+  };
+
   const changePdfPage=(next:number)=>{
     if (!pdf) return;
     const page=Math.max(1,Math.min(20000,Math.floor(next)||1));
@@ -208,30 +230,31 @@ export default function Page() {
       <div className="sidebar-bottom"><div className="privacy"><span className="live-dot"/><span>{useFirebase?'Private Firebase account':'Local private development'}</span></div><p>RepLap stays in its own project.</p><button className="theme-toggle" onClick={toggleTheme}>{theme==='light'?<Moon size={15}/>:<Sun size={15}/>} {theme==='light'?'Switch to dark theme':'Switch to light theme'}</button>{useFirebase&&<button className="link-btn" onClick={()=>void signOutUser()}>Sign out</button>}</div>
     </aside>
     <div className="main-area">
-      <header className="topbar"><div className="breadcrumb"><Sparkles size={16}/> PERSONAL HUB <span>/</span> <strong>{pageNames[tab]}</strong></div><div className="topbar-right"><span className="topbar-date">{dateLabel}</span><button className="topbar-theme" aria-label={theme==='light'?'Switch to dark theme':'Switch to light theme'} title={theme==='light'?'Dark theme':'Light theme'} onClick={toggleTheme}>{theme==='light'?<Moon size={17}/>:<Sun size={17}/>}</button><button className="topbar-focus" onClick={()=>setTab('focus')}><Zap size={15}/> Quick focus</button><span className="avatar">SH</span></div></header>
+      <header className="topbar"><div className="breadcrumb"><Sparkles size={16}/> PERSONAL HUB <span>/</span> <strong>{pageNames[tab]}</strong></div><div className="topbar-right"><span className="topbar-date">{dateLabel}</span><button className="topbar-theme" disabled={loading||busy} aria-label="Refresh study data" title="Refresh study data" onClick={()=>{setLoading(true);void load();}}>{loading?<LoaderCircle size={17} className="spin"/>:<RotateCcw size={17}/>}</button><button className="topbar-theme" aria-label={theme==='light'?'Switch to dark theme':'Switch to light theme'} title={theme==='light'?'Dark theme':'Light theme'} onClick={toggleTheme}>{theme==='light'?<Moon size={17}/>:<Sun size={17}/>}</button><button className="topbar-focus" onClick={()=>setTab('focus')}><Zap size={15}/> Quick focus</button><span className="avatar">SH</span></div></header>
       <main className="page-content">
         {error&&<div className="alert" role="alert"><span>{error}</span><button onClick={()=>setError('')} aria-label="Dismiss error"><X size={17}/></button></div>}
-        {loading?<div className="loading-state"><LoaderCircle className="spin"/> Loading your workspace…</div>:<>
+        {loading?<div className="loading-state"><LoaderCircle className="spin"/> Loading your workspace…</div>:!snapshotReady?<Card className="load-error"><SectionTitle title="Could not load your Study Hub"/><p className="muted">Your data has not been loaded. Check your connection and retry; an empty dashboard here would be misleading.</p><button className="btn primary" onClick={()=>{setLoading(true);void load();}}><RotateCcw size={16}/> Retry loading</button></Card>:<>
           {tab==='today'&&<>
             <div className="page-heading"><div><span className="eyebrow"><Sparkles size={13}/> YOUR DAILY WORKSPACE</span><h1>Make today count.</h1><p>Everything you need to move forward, in one calm space.</p></div><button className="btn secondary" onClick={()=>{setTab('tasks');setTaskForm(true);}}><Plus size={16}/> Quick task</button></div>
             <div className="welcome-hero"><div className="hero-copy"><span className="hero-label"><Sparkles size={15}/> A FRESH PAGE, EVERY DAY</span><h2>Small steps. Big progress.</h2><p>Pick a priority, settle in, and find your flow. You've got this.</p><div className="hero-actions"><button className="btn hero-primary" onClick={()=>setTab('courses')}><BookOpen size={15}/> Continue studying</button><button className="btn hero-secondary" onClick={()=>setTab('tasks')}><ListTodo size={15}/> My tasks</button></div></div><div className="hero-decoration" aria-hidden="true"><span className="hero-orb"><BookOpen size={57}/></span><span className="hero-float"><Sparkles size={27}/></span></div></div>
             <div className="stats-grid">
-              <Card className="stat"><span className="stat-icon"><ListTodo/></span><span>Open tasks</span><strong>{openTasks.length}</strong><small>{plannedToday.length} planned today</small></Card>
-              <Card className="stat"><span className="stat-icon"><Clock3/></span><span>Focus this week</span><strong>{(weekSeconds/3600).toFixed(1)}<em>h</em></strong><small>Target: {weeklyGoal} hours</small></Card>
-              <Card className="stat"><span className="stat-icon"><CalendarDays/></span><span>Upcoming deadlines</span><strong>{upcoming.length}</strong><small>{overdue.length?`${overdue.length} overdue`:'All deadlines on track'}</small></Card>
+              <Card className="stat"><span className="stat-icon"><ListTodo/></span><span>Open tasks</span><strong>{openTasks.length}</strong><small>{todayWork.length} to handle today · {plannedToday.length} planned today</small></Card>
+              <Card className="stat"><span className="stat-icon"><Clock3/></span><span>Focus this week</span><strong>{(weekSeconds/3600).toFixed(1)}<em>h</em></strong><small>Target: {weeklyGoal} hours · saved on this device</small></Card>
+              <Card className="stat"><span className="stat-icon"><CalendarDays/></span><span>Upcoming deadlines</span><strong>{upcoming.length}</strong><small>{overdue.length?`${overdue.length} overdue tasks need attention`:'No overdue tasks'}</small></Card>
             </div>
             <div className="two-col-layout">
               <div className="stack">
                 <Card><SectionTitle title="Today's priorities" aside={<button className="text-button" onClick={()=>setTab('tasks')}>All tasks <ArrowRight size={14}/></button>}/>
-                  {plannedToday.length||overdue.length? [...new Map([...overdue,...plannedToday].map(i=>[i.id,i])).values()].map(i=><div className="task-row" key={i.id}><input aria-label={`Complete ${i.title}`} type="checkbox" checked={i.done} onChange={()=>toggle(i)}/><div className="task-content"><strong>{i.title}</strong><small>{i.course_id?(data.courses.find(c=>c.id===i.course_id)?.code||'Study'):'Personal'} · {kindLabels[i.kind]}</small></div>{i.course_id&&<button className="icon-btn" title="Start focus" onClick={()=>startFrom(i)}><Timer size={16}/></button>}</div>):<EmptyState icon={<CheckCircle2 size={24}/>} title="A clear day" detail="Plan a task or start a free focus session."/>}
+                  {todayWork.length?todayWork.slice(0,6).map(i=><div className="task-row" key={i.id}><input aria-label={`Complete ${i.title}`} type="checkbox" checked={i.done} disabled={busy} onChange={()=>toggle(i)}/><div className="task-content"><strong>{i.title}</strong><small>{i.course_id?(data.courses.find(c=>c.id===i.course_id)?.code||'Study'):'Personal'} · {kindLabels[i.kind]}{i.due_date&&i.due_date<=today?` · Due ${dateText(i.due_date)}`:''}</small></div>{isOverdue(i,today)&&<Badge tone="danger">Overdue</Badge>}{i.resource_id&&<button className="icon-btn" disabled={busy} aria-label={`Open resource for ${i.title}`} title="Open linked notes or textbook" onClick={()=>openTaskResource(i)}><BookOpen size={16}/></button>}{i.course_id&&<button className="icon-btn" title="Start focus" onClick={()=>startFrom(i)}><Timer size={16}/></button>}</div>):<EmptyState icon={<CheckCircle2 size={24}/>} title="A clear day" detail="No work due or planned for today. Plan a task or start a focus session."/>}
+                  {todayWork.length>6&&<button className="text-button" onClick={()=>setTab('tasks')}>View {todayWork.length-6} more in Tasks <ArrowRight size={14}/></button>}
                 </Card>
                 <Card><SectionTitle title="Upcoming deadlines" aside={<Badge>{upcoming.length} open</Badge>}/>
-                  {upcoming.slice(0,4).map(i=><div className="deadline-row" key={i.id}><span className="date-tile">{i.due_date?.slice(8)}</span><div><strong>{i.title}</strong><small>{data.courses.find(c=>c.id===i.course_id)?.code||'Personal'} · Due {dateText(i.due_date)}</small></div>{i.due_date&&i.due_date<today&&<Badge tone="danger">Overdue</Badge>}</div>)}
+                  {upcoming.slice(0,4).map(i=><div className="deadline-row" key={i.id}><span className="date-tile">{i.due_date?.slice(8)}</span><div><strong>{i.title}</strong><small>{data.courses.find(c=>c.id===i.course_id)?.code||'Personal'} · Due {dateText(i.due_date)}</small></div></div>)}
                   {!upcoming.length&&<p className="muted">No upcoming deadlines yet.</p>}
                 </Card>
               </div>
               <div className="stack">
-                <Card className="accent-card"><div className="overline">PICK UP WHERE YOU LEFT OFF</div><div className="accent-icon"><BookOpen size={25}/></div><h2>{selectedCourse?.title||'Start your first course'}</h2><p>{selectedCourse?`${selectedCourse.code} · Week ${weekNumber}${selectedWeek?` · ${selectedWeek.title}`:''}`:'Add your DTU courses and weekly topics to organize all your learning materials.'}</p><button className="btn primary" onClick={()=>setTab('courses')}>{selectedCourse?'Open week planner':'Set up a course'} <ArrowRight size={16}/></button></Card>
+                <Card className="accent-card"><div className="overline">YOUR COURSE WORKSPACE</div><div className="accent-icon"><BookOpen size={25}/></div><h2>{selectedCourse?.title||'Start your first course'}</h2><p>{selectedCourse?`${selectedCourse.code} · Week ${weekNumber}${selectedWeek?` · ${selectedWeek.title}`:''}`:'Add your DTU courses and weekly topics to organize all your learning materials.'}</p><button className="btn primary" onClick={()=>setTab('courses')}>{selectedCourse?'Open course':'Set up a course'} <ArrowRight size={16}/></button></Card>
                 <Card><SectionTitle title="Weekly focus goal" aside={<span className="quiet-number">{Math.round(weekSeconds/60)} / {weeklyGoal*60} min</span>}/><div className="progress-track"><div style={{width:`${weekPct}%`}}/></div><div className="goal-footer"><span>{weekPct}% of your goal</span><label>Goal <input type="number" min={1} max={80} value={weeklyGoal} onChange={e=>{const n=Math.max(1,Math.min(80,Number(e.target.value)||1));setWeeklyGoal(n);localStorage.setItem('studyhub-focus-goal',String(n));}}/> h / week</label></div></Card>
               </div>
             </div>
@@ -245,7 +268,7 @@ export default function Page() {
           />}
 
           {tab==='tasks'&&<TasksPlanner items={tasks} courses={data.courses} user={user} busy={busy}
-            run={act} onToggle={toggle} onFocus={startFrom} createOpen={taskForm} setCreateOpen={setTaskForm}/>}
+            run={act} onToggle={toggle} onFocus={startFrom} onOpenResource={openTaskResource} createOpen={taskForm} setCreateOpen={setTaskForm}/>}
 
           {tab==='focus'&&<>
             <div className="page-heading"><div><span className="eyebrow"><Target size={13}/> DEEP WORK</span><h1>Find your flow.</h1><p>Settle into a distraction-free session. Every minute counts.</p></div><Badge tone={active?active.status==='running'?'good':'warning':'muted'}>{active?active.status:'Ready'}</Badge></div>
@@ -255,9 +278,9 @@ export default function Page() {
               <div className="focus-modes">{(['25','50','90','free'] as const).map(m=><button key={m} disabled={!!active} className={focusMode===m?'current':''} onClick={()=>setFocusMode(m)}>{m==='free'?'Stopwatch':`${m} min`}</button>)}</div>
               <div className="timer-dial"><span className="dial-label">{active?active.status==='paused'?'PAUSED':'FOCUSING':focusMode==='free'?'STOPWATCH':'FOCUS TARGET'}</span><strong>{active?duration(elapsedFocus(active,now)):focusMode==='free'?'00:00:00':duration(Number(focusMode)*60)}</strong><span className="dial-sub">{active?.mode!=='free'&&active?`Target: ${active.mode} minutes`:active?'Count-up session':'Ready when you are'}</span></div>
               {active? <div className="focus-buttons"><button className="btn secondary" onClick={()=>sessionAction(active.status==='running'?'pause':'resume')} disabled={busy}>{active.status==='running'?<Pause size={17}/>:<Play size={17}/>} {active.status==='running'?'Pause':'Resume'}</button><button className="btn primary" onClick={reviewFinish}><Square size={15}/> Finish & review</button></div>:<button className="btn primary focus-start" disabled={busy} onClick={beginFocus}><Play size={18}/> Start focusing</button>}
-              <p className="focus-tip">The session persists on the backend. If you close this tab, return here to review, resume or correct the elapsed time.</p>
+              <p className="focus-tip">Sessions persist after closing the tab. Timed modes are targets, not automatic stop timers yet. Finish manually and correct any idle time in the review.</p>
             </Card><div className="stack"><Card><SectionTitle title="Your focus statistics"/><div className="focus-stat"><span>This week</span><strong>{(weekSeconds/3600).toFixed(1)} hours</strong></div><div className="focus-stat"><span>All time</span><strong>{(totalSeconds/3600).toFixed(1)} hours</strong></div><div className="focus-stat"><span>Completed sessions</span><strong>{data.sessions.filter(s=>s.status==='finished').length}</strong></div></Card><Card><SectionTitle title="Recent sessions"/>{data.sessions.filter(s=>s.status==='finished').sort((a,b)=>(b.ended_at||0)-(a.ended_at||0)).slice(0,5).map(s=><div className="session-row" key={s.id}><span><Check size={15}/></span><div><strong>{data.items.find(i=>i.id===s.item_id)?.title||'Focus session'}</strong><small>{new Date(s.started_at*1000).toLocaleDateString()} · {Math.round((s.focus_seconds||0)/60)} min</small></div></div>)}{!data.sessions.some(s=>s.status==='finished')&&<p className="muted">Your finished sessions will appear here.</p>}</Card></div></div>
-            {finishReview&&active&&<div className="dialog-backdrop" role="presentation"><div className="dialog" role="dialog" aria-modal="true" aria-label="Review focus session"><button className="dialog-close" onClick={()=>setFinishReview(false)} aria-label="Cancel"><X size={18}/></button><h2>Review session</h2><p>Confirm your actual focus time. If you left the browser open, reduce the time to exclude inactivity.</p><FormRow label={`Actual focus seconds (maximum ${elapsedFocus(active,now)})`}><input type="number" min={0} max={elapsedFocus(active,now)} value={finishSeconds} onChange={e=>setFinishSeconds(e.target.value)}/></FormRow><div className="dialog-actions"><button className="btn secondary" onClick={()=>setFinishReview(false)}>Keep running</button><button className="btn primary" disabled={busy||!Number.isFinite(Number(finishSeconds))||Number(finishSeconds)<0||Number(finishSeconds)>elapsedFocus(active,now)} onClick={finish}>Save session</button></div></div></div>}
+            {finishReview&&active&&<div className="dialog-backdrop" role="presentation"><div className="dialog" role="dialog" aria-modal="true" aria-label="Review focus session"><button className="dialog-close" onClick={()=>setFinishReview(false)} aria-label="Cancel"><X size={18}/></button><h2>Review session</h2><p>Confirm your actual focus time. If you left the browser open, reduce the time to exclude inactivity.</p><FormRow label={`Actual focus seconds (maximum ${Math.min(86400,elapsedFocus(active,now))})`}><input type="number" min={0} max={Math.min(86400,elapsedFocus(active,now))} value={finishSeconds} onChange={e=>setFinishSeconds(e.target.value)}/></FormRow><div className="dialog-actions"><button className="btn secondary" onClick={()=>setFinishReview(false)}>Keep running</button><button className="btn primary" disabled={busy||!Number.isInteger(Number(finishSeconds))||Number(finishSeconds)<0||Number(finishSeconds)>Math.min(86400,elapsedFocus(active,now))} onClick={finish}>Save session</button></div></div></div>}
           </>}
 
           {tab==='library'&&<>

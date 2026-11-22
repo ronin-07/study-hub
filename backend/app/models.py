@@ -60,7 +60,7 @@ class Item(BaseDocument):
     def coherent(self):
         if self.page_start is not None and self.page_end is not None and self.page_end < self.page_start:
             raise ValueError('End page cannot precede start page')
-        if self.kind == 'assignment' or self.planned_date is not None:
+        if self.kind == 'assignment' or self.planned_date is not None or self.due_date is not None:
             # Planning a study item makes it actionable in the single Tasks view.
             self.is_task = True
         if self.kind == 'personal':

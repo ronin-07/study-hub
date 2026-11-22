@@ -59,3 +59,43 @@ def test_editing_plan_preserves_due_date_and_course_context(client):
     assert result['due_date']=='2026-11-30'
     assert result['course_id']==course['id']
     assert result['week_number']==4
+
+
+def test_undated_weekly_notes_can_be_planned_and_completed_without_duplicate(client):
+    course = client.post('/api/courses', json={'code':'02516','title':'CV'}).json()
+    pdf = client.post('/api/resources', json={
+        'course_id':course['id'], 'week_number':None, 'title':'Course notebook',
+        'kind':'handwritten', 'source':'link', 'url':'https://example.com/notes.pdf',
+    }).json()
+    notes = client.post('/api/items', json={
+        'title':'Read lecture notes', 'kind':'notes', 'course_id':course['id'],
+        'week_number':1, 'is_task':False, 'resource_id':pdf['id'],
+    }).json()
+    assert notes['planned_date'] is None
+    assert notes['is_task'] is False
+    changed = client.patch('/api/items/'+notes['id'], json={'planned_date':'2026-11-22'}).json()
+    assert changed['id'] == notes['id']
+    assert changed['course_id'] == course['id']
+    assert changed['week_number'] == 1
+    assert changed['is_task'] is True
+    assert changed['due_date'] is None
+    assert changed['resource_id'] == pdf['id']
+    assert client.patch('/api/items/'+notes['id'], json={'done':True}).json()['done'] is True
+    all_items = client.get('/api/snapshot').json()['items']
+    assert len(all_items) == 1
+    assert all_items[0]['done'] is True
+    # Clearing the plan leaves it as one unscheduled task, retaining history.
+    cleared = client.patch('/api/items/'+notes['id'], json={'planned_date':None}).json()
+    assert cleared['planned_date'] is None
+    assert cleared['is_task'] is True
+
+
+def test_weekly_activity_due_date_makes_it_actionable_without_planned_date(client):
+    course = client.post('/api/courses', json={'code':'02450','title':'ML'}).json()
+    reading = client.post('/api/items', json={
+        'title':'Chapter reading', 'kind':'reading', 'course_id':course['id'],
+        'week_number':2, 'is_task':False, 'due_date':'2026-11-22'
+    }).json()
+    assert reading['is_task'] is True
+    assert reading['planned_date'] is None
+    assert reading['due_date'] == '2026-11-22'
