@@ -26,9 +26,9 @@ test('priority labels open their destination without stealing checkbox or Focus 
   assert.match(css,/\.home-priority-list\{gap:7px;\}/);
   assert.match(css,/\.home-priority-row\.overdue::before/);
 });
-test('semester and course rail panels are independently collapsible and expanded initially',()=>{
+test('semester navigation starts expanded and courses stay nested without duplicate panel',()=>{
   assert.match(course,/\[semestersExpanded, setSemestersExpanded\] = useState\(true\)/);
-  assert.match(course,/\[coursesExpanded, setCoursesExpanded\] = useState\(true\)/);
-  assert.match(course,/aria-expanded=\{semestersExpanded\} aria-controls=\"planner-semester-section\"/);
-  assert.match(course,/aria-expanded=\{coursesExpanded\} aria-controls=\"planner-course-section\"/);
+  assert.match(course,/aria-expanded=\{semestersExpanded\} aria-controls="planner-semester-section"/);
+  assert.match(course,/onSemesterRowClick\(s\.key\)/);
+  assert.doesNotMatch(course,/planner-course-section/);
 });
