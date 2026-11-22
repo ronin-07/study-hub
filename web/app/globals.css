@@ -645,3 +645,13 @@
 @media(max-width:810px){.topbar-right{gap:8px}.topbar-clock{padding:8px 10px}.topbar .breadcrumb{min-width:0;gap:6px;white-space:nowrap;overflow:hidden}.topbar .breadcrumb strong{overflow:hidden;text-overflow:ellipsis;max-width:110px}}
 @media(max-width:650px){.dashboard-topbar .topbar-right{gap:5px}.topbar-clock{gap:5px;padding:8px 9px;font-size:.69rem}.topbar-clock svg{width:13px;height:13px}}
 @media(max-width:390px){.topbar:not(.dashboard-topbar) .breadcrumb span,.topbar:not(.dashboard-topbar) .breadcrumb strong{display:none}}
+
+/* v0.5 responsiveness: account action is explicit and never an inert avatar. */
+.sidebar-footer-row{display:flex;align-items:center;gap:9px;flex-wrap:wrap;}
+.sidebar-signout{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:35px;padding:8px 12px;border:1px solid rgba(239,176,164,.33);border-radius:10px;background:rgba(238,157,156,.09);color:#f8cbc1;font:inherit;font-size:.72rem;font-weight:750;cursor:pointer;transition:background .18s,border-color .18s,transform .18s;}
+.sidebar-signout:hover{background:rgba(238,157,156,.19);border-color:rgba(248,203,193,.65);color:#fff;transform:translateY(-1px);text-decoration:none;}
+.sidebar-signout:focus-visible{outline:2px solid var(--teal);outline-offset:3px;}
+.sidebar-signout svg{flex-shrink:0;}
+@media(max-width:1200px){.sidebar-footer-row{align-items:stretch;flex-direction:column;}.sidebar-signout{width:100%;}}
+.sidebar-bottom .sidebar-footer-row{flex-direction:column;align-items:stretch;gap:11px;}
+.sidebar-bottom .sidebar-signout{width:100%;justify-content:flex-start;padding:9px 11px;}

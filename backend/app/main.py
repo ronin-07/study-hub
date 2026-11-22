@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import os
 import time
+import asyncio
 from datetime import date
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import ValidationError
@@ -24,6 +25,14 @@ if os.getenv('STUDY_HUB_AUTH_MODE', 'local') == 'firebase' or os.getenv('STORAGE
 
 app_store = get_store()
 app = FastAPI(title='Study Hub API', version='0.5.0')
+
+@app.middleware('http')
+async def api_server_timing(request: Request, call_next):
+    started = time.perf_counter()
+    response = await call_next(request)
+    if request.url.path.startswith('/api/'):
+        response.headers['Server-Timing'] = f'api;dur={(time.perf_counter()-started)*1000:.1f}'
+    return response
 if os.getenv('STUDY_HUB_AUTH_MODE', 'local') == 'local':
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=['127.0.0.1', 'localhost', 'testserver'])
 app.add_middleware(CORSMiddleware,
@@ -64,7 +73,19 @@ async def health():
 
 @app.get('/api/snapshot')
 async def snapshot(user: User = Depends(current_user)):
-    return {kind: all_docs(user.uid, kind) for kind in ('courses', 'weeks', 'items', 'resources', 'sessions', 'semesters')}
+    kinds = ('courses', 'weeks', 'items', 'resources', 'sessions', 'semesters')
+    # Firestore's blocking stream() calls would otherwise run six times in series.
+    # SQLite remains sequential to avoid unnecessary threads/local lock contention.
+    if os.getenv('STORAGE_BACKEND') == 'firestore':
+        rows = await asyncio.gather(*(asyncio.to_thread(all_docs, user.uid, kind) for kind in kinds))
+    else:
+        rows = [all_docs(user.uid, kind) for kind in kinds]
+    return dict(zip(kinds, rows))
+
+
+@app.get('/api/items', response_model=list[Item])
+async def list_items(user: User = Depends(current_user)):
+    return all_docs(user.uid, 'items')
 
 
 @app.post('/api/courses', response_model=Course, status_code=201)

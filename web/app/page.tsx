@@ -5,10 +5,11 @@ import type { User } from 'firebase/auth';
 import {
   ArrowLeft, ArrowRight, BookOpen, CalendarDays, Check, CheckCircle2, ChevronDown, Clock3,
   Cloud, ExternalLink, FileText, Folder, GraduationCap, Home, Link2, ListTodo, LoaderCircle, FolderCheck, ScanSearch,
-  Pause, Play, Plus, RotateCcw, Search, Square, Timer, Trash2, X, Sparkles, Sun, Moon, Target, Layers3, AlertTriangle, MoreHorizontal, BarChart3
+  Pause, Play, Plus, RotateCcw, Search, Square, Timer, Trash2, X, Sparkles, Sun, Moon, Target, Layers3, AlertTriangle, MoreHorizontal, BarChart3, LogOut
 } from 'lucide-react';
 import { api, pdfBlob } from '@/lib/api';
 import { formatLocalClock, formatLocalDate } from '@/lib/clock';
+import { applyMutation, type MutationHint } from '@/lib/snapshot-cache';
 import { describeSnapshotFailure, fetchSnapshotWithRetry, type SnapshotLoadProblem } from '@/lib/snapshot-loading';
 import { Badge, Card, EmptyState, FormRow, SectionTitle } from '@/components/common';
 import { PdfWorkspace } from '@/components/pdf-workspace';
@@ -44,12 +45,18 @@ export default function Page() {
   const loadedUserRef=useRef<string|null>(null);
   const loadRequestRef=useRef(0);
   const [busy,setBusy] = useState(false);
+  const [pendingItems,setPendingItems] = useState<Set<string>>(()=>new Set());
+  const pendingItemsRef=useRef<Set<string>>(new Set());
+  const lastLoadedAtRef=useRef(0);
   const [error,setError] = useState('');
   const [courseId,setCourseId] = useState('');
   const [weekNumber,setWeekNumber] = useState(1);
   const [now,setNow] = useState(Math.floor(Date.now()/1000));
   const [clockReady,setClockReady] = useState(false);
   const [pdf,setPdf] = useState<{url:string;title:string;page:number;resourceId?:string;courseId?:string;weekNumber?:number}|null>(null);
+  const pdfBookmarkTimerRef=useRef<ReturnType<typeof setTimeout>|null>(null);
+  const pdfBookmarkPendingRef=useRef<{id:string;page:number}|null>(null);
+  const pdfBookmarkWriteRef=useRef<Promise<void>>(Promise.resolve());
 
   const [taskForm,setTaskForm] = useState(false);
   const [priorityFilter,setPriorityFilter] = useState<'all'|'course'|'personal'>('all');
@@ -84,15 +91,20 @@ export default function Page() {
 
   useEffect(()=>{
     if (!firebaseAuth) return;
-    return onAuthStateChanged(firebaseAuth, u=>{setUser(u);setAuthReady(true);});
+    return onAuthStateChanged(firebaseAuth, u=>{
+      pendingItemsRef.current.clear();setPendingItems(new Set());
+      setUser(u);setAuthReady(true);
+    });
   },[]);
   useEffect(()=>{
     // Render the clock only after hydration to avoid server/client time mismatches.
     setNow(Math.floor(Date.now()/1000));
     setClockReady(true);
-    const id=window.setInterval(()=>setNow(Math.floor(Date.now()/1000)),1000);
+    // A running timer needs second-level updates; the ordinary header clock does not.
+    const running=data.sessions.some(session=>session.status==='running');
+    const id=window.setInterval(()=>setNow(Math.floor(Date.now()/1000)),running?1000:30000);
     return ()=>clearInterval(id);
-  },[]);
+  },[data.sessions]);
   useEffect(()=>{
     const preference=window.localStorage.getItem('studyhub-theme');
     if(preference==='dark'||preference==='light')setTheme(preference);
@@ -123,7 +135,12 @@ export default function Page() {
     try {
       const snap=await fetchSnapshotWithRetry(()=>api<Snapshot>('/api/snapshot',user,{timeoutMs:15000}));
       if (requestNumber!==loadRequestRef.current) return false;
-      setData(snap);
+      // Keep pending checkbox changes visible if a manual refresh finishes mid-save.
+      setData(previous=>pendingItemsRef.current.size ? { ...snap, items:snap.items.map(item=>{
+        if(!pendingItemsRef.current.has(item.id)) return item;
+        return previous.items.find(old=>old.id===item.id)||item;
+      }) } : snap);
+      lastLoadedAtRef.current=Date.now();
       loadedUserRef.current=uid;
       setSnapshotReady(true);
       setSnapshotIssue(null);
@@ -149,17 +166,32 @@ export default function Page() {
   useEffect(()=>{void load();},[load]);
   // Refresh after returning to the tab so changes from another device become visible.
   useEffect(()=>{
-    const refreshOnReturn=()=>{if(document.visibilityState==='visible'&&!busy)void load();};
+    const refreshOnReturn=()=>{
+      // Switching browser tabs repeatedly should not download six collections each time.
+      if(document.visibilityState==='visible'&&!busy&&Date.now()-lastLoadedAtRef.current>=30000)void load();
+    };
     document.addEventListener('visibilitychange',refreshOnReturn);
     return ()=>document.removeEventListener('visibilitychange',refreshOnReturn);
   },[load,busy]);
 
-  const act = async(fn:()=>Promise<unknown>):Promise<boolean>=>{
+  // Collection-scoped mutations remove an otherwise mandatory six-collection refresh.
+  // Other operations keep the existing full refresh for compatibility.
+  const act = async(fn:()=>Promise<unknown>, mutation?:MutationHint):Promise<boolean>=>{
     setBusy(true);setError('');
     try {
-      await fn();
-      const refreshed=await load();
-      if(!refreshed)setError('Changes were saved, but the dashboard could not refresh. Use the refresh button to reload your data.');
+      const result=await fn();
+      if(mutation){
+        if(mutation.collection!=='none') {
+          if(!mutation.deleteId&&(!result||typeof result!=='object'||!('id' in result))){
+            // A write may have succeeded even if the response shape changed. Reconcile once.
+            const refreshed=await load();
+            if(!refreshed)throw new Error('Saved, but could not synchronize the latest state. Refresh to verify.');
+          }else setData(previous=>applyMutation(previous,mutation,result));
+        }
+      } else {
+        const refreshed=await load();
+        if(!refreshed)setError('Changes were saved, but the dashboard could not refresh. Use the refresh button to reload your data.');
+      }
       return true;
     } catch(e) {setError(e instanceof Error?e.message:'Action failed');return false;}
     finally {setBusy(false);}
@@ -195,7 +227,42 @@ export default function Page() {
   const weekSeconds=data.sessions.filter(s=>s.status==='finished'&&s.ended_at && s.ended_at>=currentWeekStart).reduce((n,s)=>n+(s.focus_seconds||0),0);
   const totalSeconds=data.sessions.filter(s=>s.status==='finished').reduce((n,s)=>n+(s.focus_seconds||0),0);
   const weekPct=Math.min(100,Math.round((weekSeconds/(weeklyGoal*3600))*100));
-  const toggle=(i:Item)=>void act(async()=>{await api(`/api/items/${i.id}`,user,{method:'PATCH',body:{done:!i.done}});});
+  const toggle=(item:Item)=>{
+    if(pendingItemsRef.current.has(item.id))return;
+    pendingItemsRef.current.add(item.id);
+    setPendingItems(new Set(pendingItemsRef.current));
+    setError('');
+    // Instant feedback across Home, Tasks, Calendar, Course and PDF views.
+    setData(previous=>({...previous,items:previous.items.map(i=>i.id===item.id?{...i,done:!item.done}:i)}));
+    const activeUid=user?.uid||'local';
+    void (async()=>{
+      try {
+        const saved=await api<Item>(`/api/items/${item.id}`,user,{method:'PATCH',body:{done:!item.done}});
+        if(useFirebase&&firebaseAuth?.currentUser?.uid!==activeUid)return;
+        setData(previous=>applyMutation(previous,{collection:'items'},saved));
+        if(!item.done&&saved.done&&saved.repeat&&saved.repeat!=='none'){
+          // Recurring completion creates a successor on the server. Fetch items only.
+          // A failed follow-up read must not undo a successfully committed completion.
+          try {
+            const allItems=await api<Item[]>('/api/items',user);
+            if(useFirebase&&firebaseAuth?.currentUser?.uid!==activeUid)return;
+            setData(previous=>({...previous,items:allItems.map(i=>
+              pendingItemsRef.current.has(i.id)&&i.id!==item.id?previous.items.find(old=>old.id===i.id)||i:i)}));
+          }catch{
+            setError('Completion saved, but the next recurring task did not load. Refresh to sync.');
+          }
+        }
+      }catch(e){
+        if(useFirebase&&firebaseAuth?.currentUser?.uid!==activeUid)return;
+        // The user sees the authoritative old state if the write failed.
+        setData(previous=>({...previous,items:previous.items.map(i=>i.id===item.id?item:i)}));
+        setError(`Could not save “${item.title}”. ${e instanceof Error?e.message:'Please retry.'}`);
+      }finally{
+        pendingItemsRef.current.delete(item.id);
+        setPendingItems(new Set(pendingItemsRef.current));
+      }
+    })();
+  };
   const rememberCourse=(id:string)=>{setCourseId(id);if(id)window.localStorage.setItem('studyhub-last-course',id);};
   const rememberWeek=(week:number)=>{setWeekNumber(week);if(courseId)window.localStorage.setItem(`studyhub-last-week-${courseId}`,String(week));};
   const openCourse=(id:string,week?:number,landingItem?:Item)=>{
@@ -244,23 +311,24 @@ export default function Page() {
   const launchHomeFocus=()=>{
     if(active){setTab('focus');return;}
     setFocusCourse('');setFocusItem('');setFocusMode(homeFocusMode);
-    void act(()=>api('/api/sessions/start',user,{method:'POST',body:{item_id:null,course_id:null,week_number:null,mode:homeFocusMode}}));
+    void act(()=>api<FocusSession>('/api/sessions/start',user,{method:'POST',body:{item_id:null,course_id:null,week_number:null,mode:homeFocusMode}}),{collection:'sessions'});
   };
   const startFrom=(i?:Item)=>{
     // Personal tasks have no course; the selector still needs to retain their item ID.
     setFocusCourse(i?.course_id||'');setFocusItem(i?.id||'');
     setTab('focus');
   };
-  const beginFocus=()=>void act(async()=>{
+  const beginFocus=()=>void act(()=>{
     const item=data.items.find(i=>i.id===focusItem);
-    await api('/api/sessions/start',user,{method:'POST',body:{item_id:focusItem||null,course_id:focusCourse||null,week_number:item?.week_number||null,mode:focusMode}});
-  });
-  const sessionAction=(verb:'pause'|'resume')=>{if(!active)return;void act(async()=>{await api(`/api/sessions/${active.id}/${verb}`,user,{method:'POST'});});};
+    return api<FocusSession>('/api/sessions/start',user,{method:'POST',body:{item_id:focusItem||null,course_id:focusCourse||null,week_number:item?.week_number||null,mode:focusMode}});
+  },{collection:'sessions'});
+  const sessionAction=(verb:'pause'|'resume')=>{if(!active)return;void act(()=>api<FocusSession>(`/api/sessions/${active.id}/${verb}`,user,{method:'POST'}),{collection:'sessions'});};
   const reviewFinish=()=>{if(!active)return;setFinishSeconds(String(Math.min(86400,elapsedFocus(active,now))));setFinishReview(true);};
-  const finish=()=>{if(!active)return;void act(async()=>{
-    await api(`/api/sessions/${active.id}/finish`,user,{method:'POST',body:{confirmed_seconds:Math.round(Number(finishSeconds))}});
-    setFinishReview(false);
-  });};
+  const finish=()=>{if(!active)return;void (async()=>{
+    const id=active.id;
+    const ok=await act(()=>api<FocusSession>(`/api/sessions/${id}/finish`,user,{method:'POST',body:{confirmed_seconds:Math.round(Number(finishSeconds))}}),{collection:'sessions'});
+    if(ok)setFinishReview(false);
+  })();};
   const loadDriveStatus=useCallback(async()=>{
     if (useFirebase&&!user) return;
     try {setDrive(await api<DriveStatus>('/api/drive/status',user));}catch{/* noncritical */}
@@ -282,14 +350,25 @@ export default function Page() {
   },[user]);
   const openFolder=(folder:DriveEntry)=>{setFolderPath(p=>[...p,{id:folder.id,name:folder.name}]);void browseDrive(folder.id);};
   const backFolder=()=>{if(folderPath.length===1)return;const next=folderPath.slice(0,-1);setFolderPath(next);void browseDrive(next.at(-1)!.id);};
-  const connectDrive=()=>void act(async()=>{const result=await api<{authorization_url:string}>('/api/drive/connect',user);window.location.assign(result.authorization_url);});
+  const connectDrive=()=>void act(async()=>{const result=await api<{authorization_url:string}>('/api/drive/connect',user);window.location.assign(result.authorization_url);},{collection:'none'});
   const previewPdf=(fileId:string,title:string,resourceId?:string,lastPage=1)=>void act(async()=>{
     const url=await pdfBlob(`/api/drive/files/${fileId}/pdf`,user);
     if (pdf) URL.revokeObjectURL(pdf.url);
     const r=data.resources.find(entry=>entry.id===resourceId);
     setPdf({url,title,resourceId,courseId:r?.course_id,weekNumber:r?.week_number??weekNumber,page:lastPage||1});
-  });
-  const closePdf=()=>{if(pdf)URL.revokeObjectURL(pdf.url);setPdf(null);};
+  },{collection:'none'});
+  const flushPdfBookmark=useCallback(()=>{
+    if(pdfBookmarkTimerRef.current){clearTimeout(pdfBookmarkTimerRef.current);pdfBookmarkTimerRef.current=null;}
+    const latest=pdfBookmarkPendingRef.current;
+    pdfBookmarkPendingRef.current=null;
+    if(!latest)return;
+    // Serialize bookmark writes so a slow previous page cannot overwrite a newer page.
+    pdfBookmarkWriteRef.current=pdfBookmarkWriteRef.current.catch(()=>{}).then(async()=>{
+      try{await api(`/api/resources/${latest.id}/reading-position`,user,{method:'PATCH',body:{page:latest.page}});}
+      catch(e){setError(`Page bookmark could not be saved. ${e instanceof Error?e.message:''}`);}
+    });
+  },[user]);
+  const closePdf=()=>{flushPdfBookmark();if(pdf)URL.revokeObjectURL(pdf.url);setPdf(null);};
   const openTaskResource=(item:Item)=>{
     const r=data.resources.find(entry=>entry.id===item.resource_id);
     if(!r){setError('The linked document is no longer available. Check the Course Library.');return;}
@@ -297,24 +376,35 @@ export default function Page() {
     else if(r.url)window.open(r.url,'_blank','noopener,noreferrer');
   };
 
+  useEffect(()=>{
+    const saveWhenHidden=()=>{if(document.visibilityState==='hidden'&&pdfBookmarkPendingRef.current)flushPdfBookmark();};
+    document.addEventListener('visibilitychange',saveWhenHidden);
+    return ()=>document.removeEventListener('visibilitychange',saveWhenHidden);
+  },[flushPdfBookmark]);
   const changePdfPage=(next:number)=>{
     if (!pdf) return;
     const page=Math.max(1,Math.min(20000,Math.floor(next)||1));
     setPdf(p=>p?{...p,page}:p);
-    if (pdf.resourceId) void act(async()=>{
-      await api(`/api/resources/${pdf.resourceId}/reading-position`,user,{method:'PATCH',body:{page}});
-    });
+    if (pdf.resourceId) {
+      const id=pdf.resourceId;
+      setData(previous=>({...previous,resources:previous.resources.map(r=>r.id===id?{...r,last_page:page}:r)}));
+      pdfBookmarkPendingRef.current={id,page};
+      if(pdfBookmarkTimerRef.current)clearTimeout(pdfBookmarkTimerRef.current);
+      pdfBookmarkTimerRef.current=setTimeout(flushPdfBookmark,650);
+    }
   };
   const linkDriveFile=(file:DriveEntry)=>void act(async()=>{
     if(!linkCourse)throw new Error('Select a course before linking a PDF');
-    await api('/api/resources',user,{method:'POST',body:{course_id:linkCourse,week_number:linkScope==='course'?null:linkWeek,title:file.name,kind:linkKind,source:'drive',drive_file_id:file.id,item_id:linkScope==='course'?null:(linkItem||null)}});
-    await loadIndex();
-  });
+    const saved=await api<Resource>('/api/resources',user,{method:'POST',body:{course_id:linkCourse,week_number:linkScope==='course'?null:linkWeek,title:file.name,kind:linkKind,source:'drive',drive_file_id:file.id,item_id:linkScope==='course'?null:(linkItem||null)}});
+    // Reindex in the background; the returned resource updates the course immediately.
+    void loadIndex();
+    return saved;
+  },{collection:'resources'});
   const selectBackupFolder=()=>void act(async()=>{
     if(currentFolder.id==='root')throw new Error('Choose the Goodnotes backup folder, not the root of your Drive');
     const result=await api<{folder:DriveSource}>('/api/drive/source-folder',user,{method:'POST',body:{folder_id:currentFolder.id}});
     setSourceFolder(result.folder);setDriveIndex([]);
-  });
+  },{collection:'none'});
   const scanBackup=async()=>{
     setScanBusy(true);setError('');
     try {
@@ -328,10 +418,12 @@ export default function Page() {
   const confirmSuggestion=(entry:DriveIndexed)=>void act(async()=>{
     if (!entry.suggestion)throw new Error('This PDF needs manual course/week selection');
     const suggestion=entry.suggestion;
-    await api('/api/resources',user,{method:'POST',body:{course_id:suggestion.course_id,
+    const saved=await api<Resource>('/api/resources',user,{method:'POST',body:{course_id:suggestion.course_id,
       week_number:['textbook','handwritten'].includes(suggestion.kind)?null:suggestion.week_number,title:entry.name,kind:suggestion.kind,source:'drive',drive_file_id:entry.id}});
-    await loadIndex();
-  });
+    // Reindex in the background; the returned resource updates the course immediately.
+    void loadIndex();
+    return saved;
+  },{collection:'resources'});
   const indexedVisible=driveIndex.filter(f=>indexFilter==='all'||(indexFilter==='unlinked'?f.links.length===0:(!f.suggestion&&f.links.length===0)));
   const currentFolder=folderPath.at(-1)!;
   useEffect(()=>{if(tab==='library'&&drive.connected&&driveFiles.length===0)void browseDrive(currentFolder.id);},[tab,drive.connected]); // initial browse only
@@ -352,7 +444,7 @@ export default function Page() {
         </div>
         <div className="sidebar-footer-row">
           <span className="sidebar-account"><span className="live-dot" aria-hidden="true"/>{useFirebase?'Private workspace':'Local development'}</span>
-          {useFirebase&&<button className="link-btn sidebar-signout" aria-label="Sign out of Study Hub" onClick={()=>void signOutUser()}>Sign out</button>}
+          {useFirebase&&<button type="button" className="sidebar-signout" aria-label="Sign out of Study Hub" onClick={()=>void signOutUser()}><LogOut size={15}/> Sign out</button>}
         </div>
       </div>
     </aside>
@@ -362,7 +454,6 @@ export default function Page() {
           <span className="topbar-clock" title="Your local time (24-hour clock)" aria-label={`Local time ${timeLabel}`}><Clock3 size={14} aria-hidden="true"/><time dateTime={clockReady?new Date(now*1000).toISOString():undefined}>{timeLabel}</time></span>
           <button className="topbar-theme" disabled={loading||refreshing||busy} aria-label="Refresh study data" title="Refresh study data" onClick={()=>void load()}>{loading||refreshing?<LoaderCircle size={17} className="spin"/>:<RotateCcw size={17}/>}</button>
           <button className="topbar-theme" aria-label={theme==='light'?'Switch to dark theme':'Switch to light theme'} title={theme==='light'?'Dark theme':'Light theme'} onClick={toggleTheme}>{theme==='light'?<Moon size={17}/>:<Sun size={17}/>}</button>
-          <span className="avatar" title={profileName} aria-label={`Signed in as ${profileName}`}>{profileInitials}</span>
         </div></header>
       <main className={'page-content'+(tab==='today'?' dashboard-page':'')}>
         {error&&<div className="alert" role="alert"><span>{error}</span><button onClick={()=>setError('')} aria-label="Dismiss error"><X size={17}/></button></div>}
@@ -399,7 +490,7 @@ export default function Page() {
                           <div className="home-course-heading"><div className="home-course-icon"><BookOpen size={24}/></div><div className="home-course-title"><h3>{group.course.code} · {group.course.title}</h3><span>{weekLabel}</span></div>{group.overdueCount?<span className="home-overdue-pill">{group.overdueCount} overdue</span>:<span className="home-today-pill">Today</span>}</div>
                           <div className="home-course-progress"><span>{group.doneCount} / {group.activityCount} activities</span><div className="home-progress-track" role="progressbar" aria-label={`${group.course.title} selected week activity progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><div style={{width:`${progress}%`}}/></div></div>
                           <div className="home-course-activities">
-                            {group.tasks.slice(0,2).map(i=><div className={'home-course-task'+(isOverdue(i,today)?' late':'')} key={i.id}><input type="checkbox" aria-label={`Complete ${i.title}`} disabled={busy} checked={i.done} onChange={()=>toggle(i)}/><button className="home-course-task-title" title={`Open ${i.title} in course`} onClick={()=>openCourse(group.course.id,i.week_number||undefined)}>{i.title}{group.weekNumbers.length>1&&i.week_number&&<small>W{i.week_number}</small>}</button>{isOverdue(i,today)&&<span className="home-overdue-pill compact">Overdue</span>}{i.resource_id&&<button className="home-task-resource" disabled={busy} onClick={()=>openTaskResource(i)} aria-label={`Open resource for ${i.title}`} title="Open linked resource"><BookOpen size={15}/></button>}</div>)}
+                            {group.tasks.slice(0,2).map(i=><div className={'home-course-task'+(isOverdue(i,today)?' late':'')} key={i.id}><input type="checkbox" aria-label={`Complete ${i.title}`} disabled={busy||pendingItems.has(i.id)} checked={i.done} onChange={()=>toggle(i)}/><button className="home-course-task-title" title={`Open ${i.title} in course`} onClick={()=>openCourse(group.course.id,i.week_number||undefined)}>{i.title}{group.weekNumbers.length>1&&i.week_number&&<small>W{i.week_number}</small>}</button>{isOverdue(i,today)&&<span className="home-overdue-pill compact">Overdue</span>}{i.resource_id&&<button className="home-task-resource" disabled={busy} onClick={()=>openTaskResource(i)} aria-label={`Open resource for ${i.title}`} title="Open linked resource"><BookOpen size={15}/></button>}</div>)}
                             {group.tasks.length>2&&<button className="home-extra-items" onClick={()=>navigate('tasks')}>+ {group.tasks.length-2} more tasks <ArrowRight size={13}/></button>}
                           </div>
                           <div className="home-course-actions"><button className="home-open-course" onClick={()=>openCourse(group.course.id,group.tasks[0]?.week_number||undefined)}>Open course <ArrowRight size={16}/></button><button className="home-subtle-button" aria-label={`View tasks for ${group.course.title}`} title="View all tasks" onClick={()=>navigate('tasks')}><MoreHorizontal size={20}/></button></div>
@@ -411,7 +502,7 @@ export default function Page() {
                 </section>
                 <section className="home-panel home-priorities" aria-labelledby="home-priorities-title">
                   <div className="home-panel-heading"><div className="home-heading-icon"><CheckCircle2 size={21}/></div><div><h2 id="home-priorities-title">Today’s priorities</h2><p>Your planned, due, and overdue work.</p></div><div className="home-priority-filters" aria-label="Filter priorities">{(['all','course','personal'] as const).map(filter=><button key={filter} onClick={()=>setPriorityFilter(filter)} className={priorityFilter===filter?'active':''} aria-pressed={priorityFilter===filter}>{filter==='all'?'All':filter==='course'?'Course':'Personal'}</button>)}</div></div>
-                  {filteredPriorities.length?<div className="home-priority-list">{filteredPriorities.slice(0,6).map(i=><div key={i.id} className={'home-priority-row'+(isOverdue(i,today)?' overdue':'')}><input type="checkbox" aria-label={`Complete ${i.title}`} disabled={busy} checked={i.done} onChange={()=>toggle(i)}/><div className="home-priority-info"><strong>{i.title}</strong><small>{i.course_id?(data.courses.find(c=>c.id===i.course_id)?.code||'Course'):'Personal'}{i.week_number?` · Week ${i.week_number}`:''}{i.due_date&&i.due_date<today?` · Due ${dateText(i.due_date)}`:i.planned_date&&i.planned_date<today?` · Planned ${dateText(i.planned_date)}`:''}</small></div><span className={'home-priority-tag'+(isOverdue(i,today)?' overdue':'')}>{isOverdue(i,today)?'Overdue':'Today'}</span>{i.resource_id&&<button className="home-row-action" aria-label={`Open resource for ${i.title}`} disabled={busy} onClick={()=>openTaskResource(i)} title="Open linked resource"><BookOpen size={16}/></button>}<button className="home-row-action" aria-label={`Focus on ${i.title}`} disabled={busy} onClick={()=>startFrom(i)} title="Focus on task"><Play size={15}/></button></div>)}</div>:<div className="home-list-empty"><CheckCircle2 size={19}/> {priorityFilter==='all'?'Nothing overdue or due today. Enjoy a clear slate!':`No ${priorityFilter} priorities for today.`}</div>}
+                  {filteredPriorities.length?<div className="home-priority-list">{filteredPriorities.slice(0,6).map(i=><div key={i.id} className={'home-priority-row'+(isOverdue(i,today)?' overdue':'')}><input type="checkbox" aria-label={`Complete ${i.title}`} disabled={busy||pendingItems.has(i.id)} checked={i.done} onChange={()=>toggle(i)}/><div className="home-priority-info"><strong>{i.title}</strong><small>{i.course_id?(data.courses.find(c=>c.id===i.course_id)?.code||'Course'):'Personal'}{i.week_number?` · Week ${i.week_number}`:''}{i.due_date&&i.due_date<today?` · Due ${dateText(i.due_date)}`:i.planned_date&&i.planned_date<today?` · Planned ${dateText(i.planned_date)}`:''}</small></div><span className={'home-priority-tag'+(isOverdue(i,today)?' overdue':'')}>{isOverdue(i,today)?'Overdue':'Today'}</span>{i.resource_id&&<button className="home-row-action" aria-label={`Open resource for ${i.title}`} disabled={busy} onClick={()=>openTaskResource(i)} title="Open linked resource"><BookOpen size={16}/></button>}<button className="home-row-action" aria-label={`Focus on ${i.title}`} disabled={busy} onClick={()=>startFrom(i)} title="Focus on task"><Play size={15}/></button></div>)}</div>:<div className="home-list-empty"><CheckCircle2 size={19}/> {priorityFilter==='all'?'Nothing overdue or due today. Enjoy a clear slate!':`No ${priorityFilter} priorities for today.`}</div>}
                   {filteredPriorities.length>6&&<button className="home-panel-link home-list-footer" onClick={()=>navigate('tasks')}>View {filteredPriorities.length-6} more tasks <ArrowRight size={14}/></button>}
                 </section>
               </div>
@@ -428,18 +519,18 @@ export default function Page() {
             </div>
           </div>}
 
-          {tab==='courses'&&<CoursePlanner data={data} user={user} busy={busy}
+          {tab==='courses'&&<CoursePlanner data={data} user={user} busy={busy} pendingItems={pendingItems}
             courseId={courseId} weekNumber={weekNumber} landingItem={courseLandingItem} selectCourse={rememberCourse} selectWeek={rememberWeek}
             run={act} toggleItem={toggle} focusOn={startFrom}
             openResource={r=>{if(r.source==='drive'&&r.drive_file_id)previewPdf(r.drive_file_id,r.title,r.id,r.last_page);else if(r.url)window.open(r.url,'_blank','noopener,noreferrer');}}
             openDrive={(id,week,kind,scope)=>{setLinkCourse(id);setLinkWeek(week);setLinkScope(scope);setLinkKind(kind);setLinkItem('');setTab('library');}}
           />}
 
-          {tab==='tasks'&&<TasksPlanner items={tasks} courses={data.courses} user={user} busy={busy}
+          {tab==='tasks'&&<TasksPlanner items={tasks} courses={data.courses} user={user} busy={busy} pendingItems={pendingItems}
             run={act} onToggle={toggle} onFocus={startFrom} onOpenResource={openTaskResource} createOpen={taskForm} setCreateOpen={setTaskForm}
             initialTaskMode={taskLandingMode} taskJump={taskJump} onTaskJumpHandled={()=>setTaskJump(null)}/>}
 
-          {tab==='calendar'&&<TasksPlanner items={tasks} courses={data.courses} user={user} busy={busy}
+          {tab==='calendar'&&<TasksPlanner items={tasks} courses={data.courses} user={user} busy={busy} pendingItems={pendingItems}
             run={act} onToggle={toggle} onFocus={startFrom} onOpenResource={openTaskResource} createOpen={taskForm} setCreateOpen={setTaskForm}
             calendarOnly calendarJump={calendarJump}/>}
 
@@ -461,7 +552,7 @@ export default function Page() {
             <div className="two-col-layout course-layout"><div className="stack">
               <Card><SectionTitle title="Google Drive connection"/>
                 <p className="muted">Use the PDF backup you already have in Goodnotes. Study Hub indexes file names and folder paths without copying the notes.</p>
-                {drive.connected?<div className="connection-status"><span className="live-dot"/> Connected privately <button className="text-button" onClick={()=>{if(confirm('Disconnect Google Drive and erase the local folder index? Existing linked resources will remain.'))void act(async()=>{await api('/api/drive/disconnect',user,{method:'DELETE'});setDrive({connected:false,configured:drive.configured});setDriveFiles([]);setSourceFolder(null);setDriveIndex([]);});}}>Disconnect</button></div>:<button className="btn primary" disabled={!drive.configured||busy} onClick={connectDrive}><Cloud size={16}/> Connect my Drive</button>}
+                {drive.connected?<div className="connection-status"><span className="live-dot"/> Connected privately <button className="text-button" onClick={()=>{if(confirm('Disconnect Google Drive and erase the local folder index? Existing linked resources will remain.'))void act(async()=>{await api('/api/drive/disconnect',user,{method:'DELETE'});setDrive({connected:false,configured:drive.configured});setDriveFiles([]);setSourceFolder(null);setDriveIndex([]);},{collection:'none'});}}>Disconnect</button></div>:<button className="btn primary" disabled={!drive.configured||busy} onClick={connectDrive}><Cloud size={16}/> Connect my Drive</button>}
                 {!drive.configured&&<div className="subtle-notice">First add your own Google OAuth credentials to <code>backend/.env</code>. The rest of Study Hub works offline.</div>}
               </Card>
               {drive.connected&&<Card><SectionTitle title="Your Goodnotes backup folder" aside={sourceFolder?<Badge tone="good"><FolderCheck size={13}/> Selected</Badge>:<Badge>Not selected</Badge>}/>

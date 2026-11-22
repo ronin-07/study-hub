@@ -120,3 +120,51 @@ def test_focus_session_can_link_personal_task_without_course(client):
     assert started.status_code == 201, started.text
     assert started.json()['item_id'] == task.json()['id']
     assert started.json()['course_id'] is None
+
+
+def test_items_only_refresh_and_server_timing_header(client):
+    item = client.post('/api/items', json={'kind': 'personal', 'title': 'Quick update'}).json()
+    completed = client.patch(f"/api/items/{item['id']}", json={'done': True})
+    assert completed.status_code == 200
+    assert completed.json()['done'] is True
+    assert 'Server-Timing' in completed.headers
+    refreshed = client.get('/api/items')
+    assert refreshed.status_code == 200
+    assert [i['id'] for i in refreshed.json()] == [item['id']]
+    assert refreshed.json()[0]['done'] is True
+    assert 'api;dur=' in refreshed.headers['Server-Timing']
+
+
+def test_course_name_edit_does_not_read_unrelated_collections(client, monkeypatch):
+    import app.main as main
+    course = client.post('/api/courses', json={'code': '02516', 'title': 'Original title'}).json()
+    store = main.app_store
+    old_list = store.list
+    scanned = []
+
+    def recording_list(uid, kind):
+        scanned.append(kind)
+        return old_list(uid, kind)
+
+    monkeypatch.setattr(store, 'list', recording_list)
+    response = client.patch(f"/api/courses/{course['id']}", json={'title': 'Renamed course'})
+    assert response.status_code == 200
+    assert response.json()['title'] == 'Renamed course'
+    assert not any(kind in scanned for kind in ('weeks', 'items', 'resources'))
+
+
+def test_cloud_snapshot_reads_collections_concurrently(client, monkeypatch):
+    import threading
+    import app.main as main
+    barrier = threading.Barrier(6, timeout=3)
+    observed = []
+    def fake_collection_list(uid, kind):
+        barrier.wait()  # would fail if Firestore collection reads were serialized
+        observed.append(kind)
+        return []
+    monkeypatch.setenv('STORAGE_BACKEND', 'firestore')
+    monkeypatch.setattr(main, 'all_docs', fake_collection_list)
+    response = client.get('/api/snapshot')
+    assert response.status_code == 200
+    assert set(observed) == {'courses', 'weeks', 'items', 'resources', 'sessions', 'semesters'}
+    assert all(not values for values in response.json().values())

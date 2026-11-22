@@ -96,9 +96,12 @@ async def edit_course(identifier: str, patch: CoursePatch, user: User = Depends(
     if value.semester_id:
         semester = require(user.uid, 'semesters', value.semester_id)
         value.semester = semester['name']
-    for kind, field in [('weeks', 'number'), ('items', 'week_number'), ('resources', 'week_number')]:
-        if any(row.get('course_id') == identifier and (row.get(field) or 0) > value.week_count for row in store().list(user.uid, kind)):
-            raise HTTPException(409, 'Cannot shorten course while later weeks contain data')
+    # Only scan linked collections when the week count is actually being shortened.
+    # Ordinary title/semester edits should not trigger three unnecessary Firestore streams.
+    if value.week_count < original['week_count']:
+        for kind, field in [('weeks', 'number'), ('items', 'week_number'), ('resources', 'week_number')]:
+            if any(row.get('course_id') == identifier and (row.get(field) or 0) > value.week_count for row in store().list(user.uid, kind)):
+                raise HTTPException(409, 'Cannot shorten course while later weeks contain data')
     store().put(user.uid, 'courses', value.model_dump(mode='json'))
     return value
 

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent } 
 import type { User } from 'firebase/auth';
 import { AlertTriangle, ArrowLeft, ArrowRight, BookOpen, CalendarDays, CheckCircle2, Clock3, GripVertical, ListTodo, LoaderCircle, Plus, Repeat2, Timer, Trash2, X } from 'lucide-react';
 import { api } from '@/lib/api';
+import type { MutationHint } from '@/lib/snapshot-cache';
 import { Badge, Card, DayStatus, EmptyState, FormRow } from '@/components/common';
 import { formatDate, kindLabels, localToday, type Course, type Item, type Priority } from '@/lib/types';
 import { isOverdue, todayPriorities, upcomingWork, shiftCalendarMonth } from '@/lib/task-view';
@@ -24,9 +25,9 @@ function monthDays(year:number,month:number){
   return Array.from({length:42},(_,i)=>{const d=new Date(first);d.setDate(first.getDate()+i);return {key:dateKey(d),outside:d.getMonth()!==month,day:d.getDate()};});
 }
 
-export function TasksPlanner({items,courses,user,busy,run,onToggle,onFocus,onOpenResource,createOpen,setCreateOpen,calendarJump,calendarOnly=false,initialTaskMode='today',taskJump,onTaskJumpHandled}:{
-  items:Item[];courses:Course[];user:User|null;busy:boolean;
-  run:(fn:()=>Promise<unknown>)=>Promise<boolean>;
+export function TasksPlanner({items,courses,user,busy,pendingItems,run,onToggle,onFocus,onOpenResource,createOpen,setCreateOpen,calendarJump,calendarOnly=false,initialTaskMode='today',taskJump,onTaskJumpHandled}:{
+  items:Item[];courses:Course[];user:User|null;busy:boolean;pendingItems:ReadonlySet<string>;
+  run:(fn:()=>Promise<unknown>,mutation?:MutationHint)=>Promise<boolean>;
   onToggle:(item:Item)=>void;onFocus:(item:Item)=>void;onOpenResource:(item:Item)=>void;
   createOpen:boolean;setCreateOpen:(value:boolean)=>void;
   calendarJump?:{date:string;token:number}|null;
@@ -105,13 +106,13 @@ export function TasksPlanner({items,courses,user,busy,run,onToggle,onFocus,onOpe
     const ok=await run(()=>editing
       ?api(`/api/items/${editing.id}`,user,{method:'PATCH',body:{...payload,submitted:editing.kind==='assignment'?draft.submitted:undefined}})
       :api('/api/items',user,{method:'POST',body:{...payload,kind:itemKind,course_id:draft.course_id||null,
-        week_number:draft.course_id&&draft.week_number?Number(draft.week_number):null,is_task:true}}));
+        week_number:draft.course_id&&draft.week_number?Number(draft.week_number):null,is_task:true}}),{collection:'items'});
     if(ok){closeForm();setDraft(blank(today));}
   };
   const reschedule=async(id:string,date:string)=>{
     const item=items.find(i=>i.id===id);
-    if(!item||item.done||busy)return;
-    await run(()=>api(`/api/items/${id}`,user,{method:'PATCH',body:{planned_date:date}}));
+    if(!item||item.done||busy||pendingItems.has(id))return;
+    await run(()=>api(`/api/items/${id}`,user,{method:'PATCH',body:{planned_date:date}}),{collection:'items'});
   };
   const drop=(e:DragEvent<HTMLButtonElement>,date:string)=>{
     e.preventDefault();setHoverDay('');
@@ -120,17 +121,17 @@ export function TasksPlanner({items,courses,user,busy,run,onToggle,onFocus,onOpe
   };
   const remove=async(item:Item)=>{
     if(!window.confirm(`Delete “${item.title}”? This removes the task, not its course or PDFs.`))return;
-    await run(()=>api(`/api/items/${item.id}`,user,{method:'DELETE'}));
+    await run(()=>api(`/api/items/${item.id}`,user,{method:'DELETE'}),{collection:'items',deleteId:item.id});
     closeForm();
   };
   const formVisible=createOpen||editing!==null;
   const formCourse=availableCourses.find(c=>c.id===draft.course_id);
   const showRow=(i:Item,drag=false)=>{
     const course=availableCourses.find(c=>c.id===i.course_id);
-    return <div className={'planner-v05-task'+(isOverdue(i,today)?' planner-task-overdue':'')+(highlightedTask===i.id?' planner-target-item':'')} ref={highlightedTask===i.id?highlightedRef:undefined} key={i.id} draggable={drag&&!busy&&!i.done}
+    return <div className={'planner-v05-task'+(isOverdue(i,today)?' planner-task-overdue':'')+(highlightedTask===i.id?' planner-target-item':'')} ref={highlightedTask===i.id?highlightedRef:undefined} key={i.id} draggable={drag&&!busy&&!i.done&&!pendingItems.has(i.id)} aria-busy={pendingItems.has(i.id)}
         onDragStart={e=>{if(drag)e.dataTransfer.setData('text/plain',i.id);}}>
       {drag&&<GripVertical className="planner-v05-drag" size={15} aria-hidden="true"/>}
-      <input type="checkbox" checked={i.done} disabled={busy} aria-label={`Complete ${i.title}`} onChange={()=>onToggle(i)}/>
+      <input type="checkbox" checked={i.done} disabled={busy||pendingItems.has(i.id)} aria-label={`Complete ${i.title}`} onChange={()=>onToggle(i)}/>
       <div className="planner-v05-taskbody"><strong className={i.done?'complete':''}>{i.title}</strong>
         <div className="planner-v05-tags"><span>{course?.code||'Personal'}</span>{i.kind==='assignment'&&<span>Assignment</span>}
           {isOverdue(i,today)&&<span className="planner-overdue-tag"><AlertTriangle size={12}/> Overdue</span>}{i.priority==='high'&&<span className="priority">High priority</span>}
@@ -138,7 +139,7 @@ export function TasksPlanner({items,courses,user,busy,run,onToggle,onFocus,onOpe
         </div><DayStatus i={i}/>
       </div>
       <div className="planner-v05-row-actions">
-        <button className="btn secondary small" disabled={busy} onClick={()=>openEdit(i)}>Edit</button>
+        <button className="btn secondary small" disabled={busy||pendingItems.has(i.id)} onClick={()=>openEdit(i)}>Edit</button>
         {i.resource_id&&<button className="icon-btn" disabled={busy} title="Open linked notes or textbook" aria-label={`Open resource for ${i.title}`} onClick={()=>onOpenResource(i)}><BookOpen size={16}/></button>}
         <button className="icon-btn" disabled={busy||i.done} title="Focus on this task" aria-label={`Focus on ${i.title}`} onClick={()=>onFocus(i)}><Timer size={16}/></button>
       </div>
