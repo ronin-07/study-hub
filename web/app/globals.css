@@ -1119,6 +1119,58 @@
 
 .planner-empty-main .photo-empty-state svg{margin-bottom:0}
 
+/* v0.5 hotfix — panoramic Home course empty state only.
+   Preserve the shared PhotoEmptyState for priorities, calendars and resources. */
+.home-course-panel > .photo-empty-home{
+  min-height:242px;margin:0;max-width:none;justify-content:center;
+  text-align:left;background:#271a30;box-shadow:none
+}
+.home-course-panel > .photo-empty-home .photo-empty-backdrop{
+  background-color:#271a30;
+  background-image:linear-gradient(90deg,#271a30 0%,#271a30 23%,rgba(39,26,48,.98) 36%,rgba(39,26,48,.78) 51%,rgba(39,26,48,.25) 68%,rgba(39,26,48,.04) 87%),url('/empty-states/home.webp');
+  background-size:100% 100%,68% auto;
+  background-position:center,right center;
+  background-repeat:no-repeat
+}
+.home-course-panel > .photo-empty-home .photo-empty-content{
+  width:min(760px,70%);min-height:242px;box-sizing:border-box;
+  align-items:flex-start;justify-content:center;text-align:left;
+  gap:11px;padding:23px clamp(22px,4vw,54px)
+}
+.home-course-panel > .photo-empty-home .photo-empty-icon{
+  width:42px;height:42px;border-radius:13px;
+  background:rgba(107,65,93,.66);border-color:rgba(233,163,205,.28)
+}
+.home-course-panel > .photo-empty-home h3{
+  font-size:clamp(1.33rem,1.85vw,1.7rem);line-height:1.2;letter-spacing:-.035em
+}
+.home-course-panel > .photo-empty-home p{
+  max-width:560px;font-size:.81rem;line-height:1.55;color:#e9dce9!important
+}
+.home-course-panel > .photo-empty-home .photo-empty-actions{
+  justify-content:flex-start;gap:10px;margin-top:12px
+}
+.home-course-panel > .photo-empty-home .photo-empty-actions button{
+  min-height:38px;padding:9px 17px;font-size:.76rem
+}
+@media(max-width:700px){
+  .home-course-panel > .photo-empty-home{min-height:232px}
+  .home-course-panel > .photo-empty-home .photo-empty-backdrop{
+    background-image:linear-gradient(90deg,rgba(39,26,48,.99) 0%,rgba(39,26,48,.95) 36%,rgba(39,26,48,.81) 65%,rgba(39,26,48,.48) 100%),url('/empty-states/home.webp');
+    background-size:100% 100%,auto 100%;background-position:center,68% center
+  }
+  .home-course-panel > .photo-empty-home .photo-empty-content{
+    width:100%;min-height:232px;padding:21px 20px;gap:9px
+  }
+  .home-course-panel > .photo-empty-home h3{font-size:1.3rem}
+  .home-course-panel > .photo-empty-home p{max-width:310px;font-size:.76rem}
+  .home-course-panel > .photo-empty-home .photo-empty-actions{margin-top:9px}
+}
+@media(max-width:390px){
+  .home-course-panel > .photo-empty-home .photo-empty-actions{gap:7px}
+  .home-course-panel > .photo-empty-home .photo-empty-actions button{padding:8px 12px;font-size:.72rem}
+}
+
 /* UI Polish 5 — compact, non-blocking feedback below the global top bar. */
 .study-feedback-stack{position:fixed;top:76px;right:24px;width:min(354px,calc(100vw - 32px));display:flex;flex-direction:column;align-items:stretch;gap:9px;z-index:120;pointer-events:none}
 .study-feedback-toast{--feedback-accent:#c3a1d5;position:relative;display:flex;align-items:flex-start;gap:11px;padding:13px 13px 13px 15px;pointer-events:auto;background:linear-gradient(130deg,#302331,#392839);color:#f9f3f7;border:1px solid #be86a270;border-left:3px solid var(--feedback-accent);border-radius:14px;box-shadow:0 16px 40px #0c08128c;animation:study-feedback-in .26s ease-out both}

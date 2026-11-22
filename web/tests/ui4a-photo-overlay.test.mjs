@@ -39,3 +39,11 @@ test('compact cards, reduced motion and the course menu remain intact',()=>{
   assert.match(css,/@media\(prefers-reduced-motion:reduce\)\{\.photo-empty-actions button/);
   assert.match(css,/\.home-course-menu\{position:fixed/);
 });
+
+test('Home course empty state keeps its photo panoramic, blended and separate from shared cards',()=>{
+  assert.match(css,/\.home-course-panel > \.photo-empty-home\{[\s\S]*?text-align:left;/);
+  assert.match(css,/\.home-course-panel > \.photo-empty-home \.photo-empty-backdrop\{[\s\S]*?background-image:linear-gradient\(90deg,[^\r\n]*url\('\/empty-states\/home\.webp'\);/);
+  assert.match(css,/background-size:100% 100%,68% auto;/);
+  assert.match(css,/\.home-course-panel > \.photo-empty-home \.photo-empty-content\{[\s\S]*?align-items:flex-start;/);
+  assert.match(css,/@media\(max-width:700px\)\{[\s\S]*?\.home-course-panel > \.photo-empty-home \.photo-empty-backdrop\{/);
+});
