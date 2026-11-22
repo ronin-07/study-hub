@@ -1118,3 +1118,25 @@
 @media(prefers-reduced-motion:reduce){.photo-empty-actions button{transition:none!important;transform:none!important}}
 
 .planner-empty-main .photo-empty-state svg{margin-bottom:0}
+
+/* UI Polish 5 — compact, non-blocking feedback below the global top bar. */
+.study-feedback-stack{position:fixed;top:76px;right:24px;width:min(354px,calc(100vw - 32px));display:flex;flex-direction:column;align-items:stretch;gap:9px;z-index:120;pointer-events:none}
+.study-feedback-toast{--feedback-accent:#c3a1d5;position:relative;display:flex;align-items:flex-start;gap:11px;padding:13px 13px 13px 15px;pointer-events:auto;background:linear-gradient(130deg,#302331,#392839);color:#f9f3f7;border:1px solid #be86a270;border-left:3px solid var(--feedback-accent);border-radius:14px;box-shadow:0 16px 40px #0c08128c;animation:study-feedback-in .26s ease-out both}
+.study-feedback-toast.is-success{--feedback-accent:#8ed3a8;border-color:#7bc99a65;border-left-color:var(--feedback-accent)}
+.study-feedback-toast.is-error{--feedback-accent:#f0a0a0;border-color:#df898b80;border-left-color:var(--feedback-accent)}
+.study-feedback-icon{flex:0 0 auto;color:var(--feedback-accent);margin-top:1px}
+.study-feedback-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.study-feedback-body strong{font-size:.81rem;line-height:1.35;font-weight:800;overflow-wrap:anywhere}
+.study-feedback-body>span{font-size:.72rem;line-height:1.45;color:#ead8e5;overflow-wrap:anywhere}
+.study-feedback-action{align-self:flex-start;margin-top:6px;border:1px solid #c89bb66b;color:#f5bbd1;background:#f1bbd114;font-size:.73rem;font-weight:750;padding:5px 11px;border-radius:8px}
+.study-feedback-action:hover{background:#f1bbd12b}
+.study-feedback-dismiss{border:0;background:transparent;color:#dac4d4;display:grid;place-items:center;min-width:27px;min-height:27px;border-radius:8px;flex-shrink:0}
+.study-feedback-dismiss:hover{background:#ffffff18;color:#fff}
+@keyframes study-feedback-in{from{opacity:0;transform:translateY(-9px)}to{opacity:1;transform:translateY(0)}}
+@media(max-width:650px){.study-feedback-stack{right:12px;top:69px;width:min(354px,calc(100vw - 24px))}}
+@media(prefers-reduced-motion:reduce){.study-feedback-toast{animation:none}}
+.app-shell:not(.theme-dark) .study-feedback-toast{background:linear-gradient(135deg,#fffafb,#fff2f7);color:#342538;border-color:#b787a365;border-left-color:var(--feedback-accent);box-shadow:0 12px 30px #59435a35}
+.app-shell:not(.theme-dark) .study-feedback-body>span{color:#705c6d}
+.app-shell:not(.theme-dark) .study-feedback-dismiss{color:#756174}
+.app-shell:not(.theme-dark) .study-feedback-dismiss:hover{background:#4d284813;color:#3e2b3d}
+.app-shell:not(.theme-dark) .study-feedback-action{color:#874e75;background:#e1a6c021}

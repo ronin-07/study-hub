@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent } 
 import type { User } from 'firebase/auth';
 import { AlertTriangle, ArrowLeft, ArrowRight, BookOpen, CalendarDays, CheckCircle2, Clock3, GripVertical, LoaderCircle, Plus, Repeat2, Timer, Trash2, X } from 'lucide-react';
 import { api } from '@/lib/api';
+import type { FeedbackMessage } from '@/components/feedback-toasts';
 import type { MutationHint } from '@/lib/snapshot-cache';
 import { Card, DayStatus, FormRow } from '@/components/common';
 import { PhotoEmptyState } from '@/components/photo-empty-state';
@@ -28,7 +29,7 @@ function monthDays(year:number,month:number){
 
 export function TasksPlanner({items,courses,user,busy,pendingItems,completingIds,exitingIds,run,onToggle,onFocus,onOpenResource,createOpen,setCreateOpen,calendarJump,calendarOnly=false,initialTaskMode='today',taskJump,onTaskJumpHandled}:{
   items:Item[];courses:Course[];user:User|null;busy:boolean;pendingItems:ReadonlySet<string>;completingIds:ReadonlySet<string>;exitingIds:ReadonlySet<string>;
-  run:(fn:()=>Promise<unknown>,mutation?:MutationHint)=>Promise<boolean>;
+  run:(fn:()=>Promise<unknown>,mutation?:MutationHint,feedback?:FeedbackMessage)=>Promise<boolean>;
   onToggle:(item:Item)=>void;onFocus:(item:Item)=>void;onOpenResource:(item:Item)=>void;
   createOpen:boolean;setCreateOpen:(value:boolean)=>void;
   calendarJump?:{date:string;token:number}|null;
@@ -110,7 +111,8 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,completingIds
     const ok=await run(()=>editing
       ?api(`/api/items/${editing.id}`,user,{method:'PATCH',body:{...payload,submitted:editing.kind==='assignment'?draft.submitted:undefined}})
       :api('/api/items',user,{method:'POST',body:{...payload,kind:itemKind,course_id:draft.course_id||null,
-        week_number:draft.course_id&&draft.week_number?Number(draft.week_number):null,is_task:true}}),{collection:'items'});
+        week_number:draft.course_id&&draft.week_number?Number(draft.week_number):null,is_task:true}}),{collection:'items'},
+      {title:editing?'Task updated':'Task created',detail:draft.title.trim()});
     if(ok){closeForm();setDraft(blank(today));}
   };
   const reschedule=async(id:string,date:string)=>{
@@ -121,7 +123,8 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,completingIds
       return;
     }
     setDragNotice('');
-    await run(()=>api(`/api/items/${id}`,user,{method:'PATCH',body:{planned_date:date}}),{collection:'items'});
+    await run(()=>api(`/api/items/${id}`,user,{method:'PATCH',body:{planned_date:date}}),{collection:'items'},
+      {title:'Task rescheduled',detail:`${item.title} · ${formatDate(date)}`});
   };
   const drop=(e:DragEvent<HTMLButtonElement>,date:string)=>{
     e.preventDefault();setHoverDay('');setDraggedTaskId(null);
@@ -130,8 +133,9 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,completingIds
   };
   const remove=async(item:Item)=>{
     if(!window.confirm(`Delete “${item.title}”? This removes the task, not its course or PDFs.`))return;
-    await run(()=>api(`/api/items/${item.id}`,user,{method:'DELETE'}),{collection:'items',deleteId:item.id});
-    closeForm();
+    const ok=await run(()=>api(`/api/items/${item.id}`,user,{method:'DELETE'}),{collection:'items',deleteId:item.id},
+      {title:'Task deleted',detail:item.title});
+    if(ok)closeForm();
   };
   const formDateInvalid=Boolean(draft.planned_date&&draft.due_date&&draft.planned_date>draft.due_date);
   const draggedTask=draggedTaskId?items.find(i=>i.id===draggedTaskId):null;

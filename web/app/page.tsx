@@ -24,6 +24,7 @@ import {
 import { TasksPlanner } from '@/components/tasks-planner';
 import { PhotoEmptyState } from '@/components/photo-empty-state';
 import { CourseActionsMenu } from '@/components/course-actions-menu';
+import { FeedbackToasts, useFeedbackToasts, type FeedbackMessage } from '@/components/feedback-toasts';
 import { COMPLETION_HOLD_MS, COMPLETION_EXIT_MS, presentCompletingItems, type CompletionPhase } from '@/lib/task-completion-presentation';
 import { isActionable, isOverdue, todayPriorities, upcomingDeadlines, focusTasksForContext } from '@/lib/task-view';
 import { todayStudyCourses, nextSevenDays, nextDeadlineDays, agendaForDate } from '@/lib/home-view';
@@ -55,6 +56,8 @@ export default function Page() {
   const loadedUserRef=useRef<string|null>(null);
   const loadRequestRef=useRef(0);
   const [busy,setBusy] = useState(false);
+  const mutationBusyRef = useRef(false);
+  const { messages: feedbackMessages, notify, dismiss: dismissFeedback, clearAll: clearFeedback } = useFeedbackToasts();
   const [focusBusy,setFocusBusy] = useState(false);
   const [focusPreview,setFocusPreview] = useState<FocusSession|null>(null);
   const [focusClock,setFocusClock] = useState<FocusClockAnchor|null>(null);
@@ -165,6 +168,7 @@ export default function Page() {
   const [sourceFolder,setSourceFolder] = useState<DriveSource|null>(null);
   const [driveIndex,setDriveIndex] = useState<DriveIndexed[]>([]);
   const [scanBusy,setScanBusy] = useState(false);
+  const scanBusyRef = useRef(false);
   const [indexFilter,setIndexFilter] = useState<'unlinked'|'all'|'needs-review'>('unlinked');
   const [visibleCount,setVisibleCount] = useState(30);
   const [linkCourse,setLinkCourse] = useState('');
@@ -172,6 +176,7 @@ export default function Page() {
   const [linkScope,setLinkScope] = useState<'course'|'week'>('week');
   const [linkKind,setLinkKind] = useState<Resource['kind']>('handwritten');
   const [linkItem,setLinkItem] = useState('');
+  const [linkingFileId,setLinkingFileId] = useState<string|null>(null);
 
   useEffect(()=>{
     if (!firebaseAuth) return;
@@ -184,6 +189,7 @@ export default function Page() {
       completionTimersRef.current.clear();setCompletionPhases({});
       focusBusyRef.current=false;focusRevisionRef.current++;setFocusBusy(false);setFocusPreview(null);setFocusClock(null);
       setFinishReview(false);setQuickFocusOpen(false);
+      clearFeedback();
       setUser(u);setAuthReady(true);
     });
   },[]);
@@ -282,25 +288,35 @@ export default function Page() {
 
   // Collection-scoped mutations remove an otherwise mandatory six-collection refresh.
   // Other operations keep the existing full refresh for compatibility.
-  const act = async(fn:()=>Promise<unknown>, mutation?:MutationHint):Promise<boolean>=>{
+  const act = async(fn:()=>Promise<unknown>, mutation?:MutationHint, feedback?:FeedbackMessage):Promise<boolean>=>{
+    // An immediate ref guard prevents double submits before React commits busy=true.
+    if (mutationBusyRef.current) return false;
+    mutationBusyRef.current=true;
     setBusy(true);setError('');
+    const uid=user?.uid||'local';
+    const sameUser=()=>!useFirebase||firebaseAuth?.currentUser?.uid===uid;
     try {
       const result=await fn();
+      if(!sameUser())return false;
+      let synchronized = true;
       if(mutation){
         if(mutation.collection!=='none') {
           if(!mutation.deleteId&&(!result||typeof result!=='object'||!('id' in result))){
             // A write may have succeeded even if the response shape changed. Reconcile once.
-            const refreshed=await load();
-            if(!refreshed)throw new Error('Saved, but could not synchronize the latest state. Refresh to verify.');
+            synchronized=await load();
           }else setData(previous=>applyMutation(previous,mutation,result));
         }
-      } else {
-        const refreshed=await load();
-        if(!refreshed)setError('Changes were saved, but the dashboard could not refresh. Use the refresh button to reload your data.');
+      } else synchronized=await load();
+      if(!synchronized) {
+        notify({kind:'error',title:'Saved, but sync failed',detail:'Your change may be saved. Refresh to verify before trying again.'});
+        return true; // Avoid creating a duplicate if the user retries a successful write.
       }
+      if(feedback)notify({kind:'success',...feedback});
       return true;
-    } catch(e) {setError(e instanceof Error?e.message:'Action failed');return false;}
-    finally {setBusy(false);}
+    } catch(e) {
+      if(sameUser())notify({kind:'error',title:'Could not save changes',detail:e instanceof Error?e.message:'Please try again. Your edits are still here.'});
+      return false;
+    } finally {mutationBusyRef.current=false;setBusy(false);}
   };
   const scrollCourses = (direction: -1 | 1) => {
     const scroller = courseScrollerRef.current;
@@ -401,7 +417,7 @@ export default function Page() {
             setData(previous=>({...previous,items:allItems.map(i=>
               pendingItemsRef.current.has(i.id)&&i.id!==item.id?previous.items.find(old=>old.id===i.id)||i:i)}));
           }catch{
-            setError('Completion saved, but the next recurring task did not load. Refresh to sync.');
+            notify({kind:'error',title:'Task saved, sync incomplete',detail:'The next recurring task did not load. Refresh to sync.'});
           }
         }
       }catch(e){
@@ -409,7 +425,7 @@ export default function Page() {
         // Roll back only the completion bit; don't clobber a concurrent metadata edit.
         clearCompletion(item.id);
         setData(previous=>({...previous,items:previous.items.map(i=>i.id===item.id?{...i,done:item.done}:i)}));
-        setError(`Could not save “${item.title}”. ${e instanceof Error?e.message:'Please retry.'}`);
+        notify({kind:'error',title:'Task update failed',detail:`${item.title}: ${e instanceof Error?e.message:'Please retry.'}`});
       }finally{
         pendingItemsRef.current.delete(item.id);
         setPendingItems(new Set(pendingItemsRef.current));
@@ -490,7 +506,7 @@ export default function Page() {
       return true;
     }catch(e){
       if(sameUser()){
-        setError(`Focus action failed: ${e instanceof Error?e.message:'Please retry.'} Refresh if another tab changed the session.`);
+        notify({kind:'error',title:'Focus action failed',detail:`${e instanceof Error?e.message:'Please retry.'} Refresh if another tab changed the session.`});
         onFailure?.();
       }
       return false;
@@ -588,7 +604,7 @@ export default function Page() {
     const confirmed=Number(finishSeconds);
     if(!Number.isInteger(confirmed)||confirmed<0||confirmed>reviewLimit)return;
     void focusRequest(null,`/api/sessions/${active.id}/finish`,{confirmed_seconds:confirmed},
-      ()=>{setFinishReview(false);setFocusClock(null);});
+      ()=>{setFinishReview(false);setFocusClock(null);notify({kind:'success',title:'Focus session saved',detail:`${duration(confirmed)} recorded.`});});
   };
   const loadDriveStatus=useCallback(async()=>{
     if (useFirebase&&!user) return;
@@ -654,29 +670,38 @@ export default function Page() {
       pdfBookmarkTimerRef.current=setTimeout(flushPdfBookmark,650);
     }
   };
-  const linkDriveFile=(file:DriveEntry)=>void act(async()=>{
+  const linkDriveFile=(file:DriveEntry)=>{
+    if(mutationBusyRef.current)return;
+    setLinkingFileId(file.id);
+    void act(async()=>{
     if(!linkCourse)throw new Error('Select a course before linking a PDF');
     const saved=await api<Resource>('/api/resources',user,{method:'POST',body:{course_id:linkCourse,week_number:linkScope==='course'?null:linkWeek,title:file.name,kind:linkKind,source:'drive',drive_file_id:file.id,item_id:linkScope==='course'?null:(linkItem||null)}});
     // Reindex in the background; the returned resource updates the course immediately.
     void loadIndex();
     return saved;
-  },{collection:'resources'});
+    },{collection:'resources'},{title:'PDF linked',detail:`${file.name} added to your course.`}).finally(()=>setLinkingFileId(null));
+  };
   const selectBackupFolder=()=>void act(async()=>{
     if(currentFolder.id==='root')throw new Error('Choose the Goodnotes backup folder, not the root of your Drive');
     const result=await api<{folder:DriveSource}>('/api/drive/source-folder',user,{method:'POST',body:{folder_id:currentFolder.id}});
     setSourceFolder(result.folder);setDriveIndex([]);
-  },{collection:'none'});
+  },{collection:'none'},{title:'Backup folder selected',detail:'Ready to scan Goodnotes PDFs.'});
   const scanBackup=async()=>{
-    setScanBusy(true);setError('');
+    if(scanBusyRef.current)return;
+    scanBusyRef.current=true;setScanBusy(true);setError('');
     try {
       const result=await api<DriveScanResponse>('/api/drive/scan',user,{method:'POST'});
       setDriveIndex(result.files);
       setSourceFolder(f=>f?{...f,scanned_at:result.scanned_at}:f);
       setVisibleCount(30);
-    }catch(e){setError(e instanceof Error?e.message:'Backup scan failed');}
-    finally{setScanBusy(false);}
+      notify({kind:'success',title:'Drive scan completed',detail:`${result.count} PDFs indexed.`});
+    }catch(e){notify({kind:'error',title:'Drive scan failed',detail:e instanceof Error?e.message:'Try again.',action:{label:'Retry scan',onClick:()=>{void scanBackup();}}});}
+    finally{scanBusyRef.current=false;setScanBusy(false);}
   };
-  const confirmSuggestion=(entry:DriveIndexed)=>void act(async()=>{
+  const confirmSuggestion=(entry:DriveIndexed)=>{
+    if(mutationBusyRef.current)return;
+    setLinkingFileId(entry.id);
+    void act(async()=>{
     if (!entry.suggestion)throw new Error('This PDF needs manual course/week selection');
     const suggestion=entry.suggestion;
     const saved=await api<Resource>('/api/resources',user,{method:'POST',body:{course_id:suggestion.course_id,
@@ -684,7 +709,8 @@ export default function Page() {
     // Reindex in the background; the returned resource updates the course immediately.
     void loadIndex();
     return saved;
-  },{collection:'resources'});
+    },{collection:'resources'},{title:'PDF linked',detail:`${entry.name} added to your course.`}).finally(()=>setLinkingFileId(null));
+  };
   const indexedVisible=driveIndex.filter(f=>indexFilter==='all'||(indexFilter==='unlinked'?f.links.length===0:(!f.suggestion&&f.links.length===0)));
   const currentFolder=folderPath.at(-1)!;
   useEffect(()=>{if(tab==='library'&&drive.connected&&driveFiles.length===0)void browseDrive(currentFolder.id);},[tab,drive.connected]); // initial browse only
@@ -693,6 +719,7 @@ export default function Page() {
   if (useFirebase&&!user) return <main className="login-shell"><Card className="login-card"><span className="brand-mark"><GraduationCap/></span><h1>Study Hub</h1><p>Sign in to continue.</p><button className="btn primary" onClick={()=>void signIn()}>Sign in with Google</button></Card></main>;
 
   return <div className={`app-shell ${theme==='dark'?'theme-dark':''}`}>
+    <FeedbackToasts messages={feedbackMessages} dismiss={dismissFeedback}/>
     <aside className="sidebar">
       <div className="brand"><span className="brand-mark"><BookOpen size={21}/></span><div><strong>Study Hub</strong><small>DTU</small></div></div>
       <div className="nav-label">MY WORKSPACE</div>
@@ -853,7 +880,7 @@ export default function Page() {
               {!drive.connected&&data.resources.length===0&&<PhotoEmptyState compact scene="resources" title="No resources yet" detail="Link slides, books, and notes from your courses." actionLabel="Open Study" onAction={()=>navigate('courses')}/>}
               <Card><SectionTitle title="Google Drive connection"/>
                 <p className="muted">Use the PDF backup you already have in Goodnotes. Study Hub indexes file names and folder paths without copying the notes.</p>
-                {drive.connected?<div className="connection-status"><span className="live-dot"/> Connected privately <button className="text-button" onClick={()=>{if(confirm('Disconnect Google Drive and erase the local folder index? Existing linked resources will remain.'))void act(async()=>{await api('/api/drive/disconnect',user,{method:'DELETE'});setDrive({connected:false,configured:drive.configured});setDriveFiles([]);setSourceFolder(null);setDriveIndex([]);},{collection:'none'});}}>Disconnect</button></div>:<button className="btn primary" disabled={!drive.configured||busy} onClick={connectDrive}><Cloud size={16}/> Connect my Drive</button>}
+                {drive.connected?<div className="connection-status"><span className="live-dot"/> Connected privately <button className="text-button" onClick={()=>{if(confirm('Disconnect Google Drive and erase the local folder index? Existing linked resources will remain.'))void act(async()=>{await api('/api/drive/disconnect',user,{method:'DELETE'});setDrive({connected:false,configured:drive.configured});setDriveFiles([]);setSourceFolder(null);setDriveIndex([]);},{collection:'none'},{title:'Google Drive disconnected',detail:'Existing linked resources are kept.'});}}>Disconnect</button></div>:<button className="btn primary" disabled={!drive.configured||busy} onClick={connectDrive}><Cloud size={16}/> Connect my Drive</button>}
                 {!drive.configured&&<div className="subtle-notice">First add your own Google OAuth credentials to <code>backend/.env</code>. The rest of Study Hub works offline.</div>}
               </Card>
               {drive.connected&&<Card><SectionTitle title="Your Goodnotes backup folder" aside={sourceFolder?<Badge tone="good"><FolderCheck size={13}/> Selected</Badge>:<Badge>Not selected</Badge>}/>
@@ -862,7 +889,7 @@ export default function Page() {
                 <div className="folder-path"><button onClick={()=>{setFolderPath([{id:'root',name:'My Drive'}]);void browseDrive('root');}}>My Drive</button>{folderPath.slice(1).map(f=><span key={f.id}> / {f.name}</span>)}</div>
                 <div className="folder-picker-actions">{folderPath.length>1&&<button className="btn secondary small" onClick={backFolder}><ArrowLeft size={14}/> Back</button>}{currentFolder.id!=='root'&&<button className="btn secondary small" disabled={busy} onClick={selectBackupFolder}><FolderCheck size={14}/> Use this folder</button>}</div>
                 {driveBusy&&<p className="muted"><LoaderCircle size={15} className="spin"/> Loading Drive folders…</p>}
-                {driveFiles.map(f=><div className="drive-row" key={f.id}><span className="resource-icon">{f.mimeType==='application/pdf'?<FileText size={18}/>:<Folder size={18}/>}</span><div className="task-content"><strong>{f.name}</strong><small>{f.mimeType==='application/pdf'?'PDF document':'Folder'}{f.modifiedTime?' · '+new Date(f.modifiedTime).toLocaleDateString():''}</small></div>{f.mimeType==='application/pdf'?<><button className="icon-btn" title="Read PDF" onClick={()=>previewPdf(f.id,f.name)}><BookOpen size={16}/></button><button className="btn secondary small" disabled={!linkCourse||busy} onClick={()=>linkDriveFile(f)}>Link</button></>:<button className="icon-btn" title="Open folder" onClick={()=>openFolder(f)}><ArrowRight size={17}/></button>}</div>)}
+                {driveFiles.map(f=><div className="drive-row" key={f.id}><span className="resource-icon">{f.mimeType==='application/pdf'?<FileText size={18}/>:<Folder size={18}/>}</span><div className="task-content"><strong>{f.name}</strong><small>{f.mimeType==='application/pdf'?'PDF document':'Folder'}{f.modifiedTime?' · '+new Date(f.modifiedTime).toLocaleDateString():''}</small></div>{f.mimeType==='application/pdf'?<><button className="icon-btn" title="Read PDF" onClick={()=>previewPdf(f.id,f.name)}><BookOpen size={16}/></button><button className="btn secondary small" disabled={!linkCourse||busy} aria-busy={linkingFileId===f.id} onClick={()=>linkDriveFile(f)}>{linkingFileId===f.id?<><LoaderCircle size={14} className="spin"/> Linking…</>:'Link'}</button></>:<button className="icon-btn" title="Open folder" onClick={()=>openFolder(f)}><ArrowRight size={17}/></button>}</div>)}
                 {!driveBusy&&driveFiles.length===0&&<p className="muted">No PDFs or subfolders here.</p>}
                 {driveNext&&<button className="btn secondary full" onClick={()=>void browseDrive(currentFolder.id,true,driveNext)}>Load more</button>}
               </Card>}
@@ -871,7 +898,7 @@ export default function Page() {
                 <div className="index-controls"><label>Show <select value={indexFilter} onChange={e=>{setIndexFilter(e.target.value as typeof indexFilter);setVisibleCount(30);}}><option value="unlinked">Unlinked files</option><option value="needs-review">Need manual matching</option><option value="all">All files</option></select></label><button className="btn secondary small" onClick={()=>void loadIndex()}><RotateCcw size={14}/> Refresh</button></div>
                 {indexedVisible.slice(0,visibleCount).map(f=><div className="indexed-pdf" key={f.id}><div className="indexed-pdf-head"><span className="resource-icon"><FileText size={18}/></span><div className="task-content"><strong>{f.name}</strong><small title={f.path}>{f.path}{f.modifiedTime?` · Updated ${new Date(f.modifiedTime).toLocaleDateString()}`:''}</small></div>{f.links.length>0?<Badge tone="good">Linked</Badge>:null}</div>
                   {f.suggestion?<div className="match-recommendation"><span><Sparkles size={14}/> Suggested: {f.suggestion.course_code} · Week {f.suggestion.week_number} · {f.suggestion.kind}</span><Badge tone={f.suggestion.confidence==='high'?'good':'warning'}>{f.suggestion.confidence} confidence</Badge></div>:<p className="match-missing">No clear course/week match — select the fields on the right to link manually.</p>}
-                  <div className="indexed-actions"><button className="btn secondary small" onClick={()=>previewPdf(f.id,f.name)}><BookOpen size={14}/> Preview</button>{f.links.length===0&&f.suggestion&&<button className="btn primary small" disabled={busy} onClick={()=>confirmSuggestion(f)}><Check size={14}/> Confirm match</button>}{f.links.length===0&&<button className="btn secondary small" disabled={!linkCourse||busy} onClick={()=>linkDriveFile(f)}><Link2 size={14}/> Link manually</button>}</div>
+                  <div className="indexed-actions"><button className="btn secondary small" onClick={()=>previewPdf(f.id,f.name)}><BookOpen size={14}/> Preview</button>{f.links.length===0&&f.suggestion&&<button className="btn primary small" disabled={busy} aria-busy={linkingFileId===f.id} onClick={()=>confirmSuggestion(f)}>{linkingFileId===f.id?<LoaderCircle size={14} className="spin"/>:<Check size={14}/>} {linkingFileId===f.id?'Linking…':'Confirm match'}</button>}{f.links.length===0&&<button className="btn secondary small" disabled={!linkCourse||busy} aria-busy={linkingFileId===f.id} onClick={()=>linkDriveFile(f)}>{linkingFileId===f.id?<LoaderCircle size={14} className="spin"/>:<Link2 size={14}/>} {linkingFileId===f.id?'Linking…':'Link manually'}</button>}</div>
                 </div>)}
                 {indexedVisible.length===0&&(driveIndex.length===0?<PhotoEmptyState compact scene="resources" title="No backup PDFs yet" detail="Scan your Goodnotes folder to discover PDF files." actionLabel="Scan folder" onAction={()=>void scanBackup()}/>:<EmptyState icon={<FileText size={23}/>} title="No files in this filter" detail="Try All files to view your indexed PDFs."/>)}
                 {indexedVisible.length>visibleCount&&<button className="btn secondary full" onClick={()=>setVisibleCount(n=>n+30)}>Show more ({indexedVisible.length-visibleCount} remaining)</button>}

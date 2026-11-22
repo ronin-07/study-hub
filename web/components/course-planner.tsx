@@ -12,6 +12,7 @@ import type { MutationHint } from '@/lib/snapshot-cache';
 import { Badge, Card, EmptyState, FormRow, SectionTitle } from '@/components/common';
 import { ProgressTrack, ProgressValue } from '@/components/progress-motion';
 import { PhotoEmptyState } from '@/components/photo-empty-state';
+import type { FeedbackMessage } from '@/components/feedback-toasts';
 import { isActionable, isOverdue } from '@/lib/task-view';
 import { resolveWorkspaceSemester } from '@/lib/course-navigation';
 import { type Course, type Item, type Resource, type Semester, type Snapshot, formatDate, kindLabels, localToday } from '@/lib/types';
@@ -51,7 +52,7 @@ interface Props {
   sectionJump?: {courseId:string;section:'course-library'|'tasks';token:number}|null;
   selectCourse: (id: string) => void;
   selectWeek: (week: number) => void;
-  run: (operation: () => Promise<unknown>, mutation?: MutationHint) => Promise<boolean>;
+  run: (operation: () => Promise<unknown>, mutation?: MutationHint, feedback?: FeedbackMessage) => Promise<boolean>;
   toggleItem: (item: Item) => void;
   focusOn: (item: Item) => void;
   openResource: (resource: Resource) => void;
@@ -184,7 +185,7 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
     const ok = await run(async () => {
       saved = await api<Semester>(semDraft.id ? `/api/semesters/${semDraft.id}` : '/api/semesters', user,
         { method: semDraft.id ? 'PATCH' : 'POST', body: payload });
-    });
+    }, undefined, {title:semDraft.id?'Semester updated':'Semester created',detail:semDraft.name.trim()});
     if (ok) { if (saved) setSemesterKey(`id:${(saved as Semester).id}`); setDialog(null); }
   };
   const saveCourse = async (e: FormEvent) => {
@@ -199,23 +200,28 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
       saved = await api<Course>(editCourseId ? `/api/courses/${editCourseId}` : '/api/courses', user,
         { method: editCourseId ? 'PATCH' : 'POST', body: payload });
       return saved;
-    },{collection:'courses'});
+    },{collection:'courses'}, {title:editCourseId?'Course updated':'Course created',detail:`${payload.code} · ${payload.title}`});
     if (ok) { setDialog(null); setSemesterKey(target.key); setShowArchived(false); if (saved) selectCourse((saved as Course).id); selectWeek(1); }
   };
   const archive = async () => {
     if (!selected) return;
-    const ok = await run(() => api(`/api/courses/${selected.id}/archive`, user, { method:'POST' }),{collection:'courses'});
+    const archivedId=selected.id;
+    const ok = await run(() => api(`/api/courses/${archivedId}/archive`, user, { method:'POST' }),{collection:'courses'},
+      {title:'Course archived',detail:`${selected.code} is in Archived courses.`,
+        action:{label:'Undo',onClick:()=>run(()=>api(`/api/courses/${archivedId}/restore`,user,{method:'POST'}),
+          {collection:'courses'},{title:'Course restored',detail:'Your course is active again.'}).then(()=>{})}});
     if (ok) { setDialog(null); setShowArchived(false); selectCourse(matching.find(c => c.id !== selected.id && !c.archived)?.id || ''); }
   };
   const restore = async (course: Course) => {
-    const ok = await run(() => api(`/api/courses/${course.id}/restore`, user, { method:'POST' }),{collection:'courses'});
+    const ok = await run(() => api(`/api/courses/${course.id}/restore`, user, { method:'POST' }),{collection:'courses'},
+      {title:'Course restored',detail:`${course.code} is active again.`});
     if (ok) { setShowArchived(false); selectCourse(course.id); setWorkspaceTab('overview'); }
   };
   const saveWeek = async (e: FormEvent) => {
     e.preventDefault(); if (!selected) return;
     const ok = await run(() => api(week ? `/api/weeks/${week.id}` : '/api/weeks', user, {
       method: week ? 'PATCH' : 'POST', body: week ? weekDraft : { ...weekDraft, course_id:selected.id, number:weekNumber }
-    }),{collection:'weeks'});
+    }),{collection:'weeks'},{title:'Week saved',detail:`Week ${weekNumber} updated.`});
     if (ok) setDialog(null);
   };
   const startNote = () => {
@@ -231,7 +237,7 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
     if(!noteDraft.id||!noteDraft.title.trim())return;
     const ok=await run(()=>api(`/api/items/${noteDraft.id}`,user,{
       method:'PATCH',body:{title:noteDraft.title.trim(),notes:noteDraft.notes}
-    }),{collection:'items'});
+    }),{collection:'items'},{title:'Note saved',detail:noteDraft.title.trim()});
     if(ok)setDialog(null);
   };
   const saveItem = async (e: FormEvent) => {
@@ -241,7 +247,8 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
       is_task: itemDraft.kind === 'assignment' || itemDraft.is_task || !!itemDraft.planned_date,
       planned_date:itemDraft.planned_date || null, due_date:itemDraft.due_date || null,
       resource_id:itemDraft.resource_id || null, page_start:numberOrNull(itemDraft.page_start), page_end:numberOrNull(itemDraft.page_end) };
-    const ok=await run(() => api('/api/items', user, { method:'POST', body: payload }),{collection:'items'});
+    const ok=await run(() => api('/api/items', user, { method:'POST', body: payload }),{collection:'items'},
+      {title:'Activity added',detail:itemDraft.title.trim()});
     if (ok) { setDialog(null); setItemDraft(itemDraftDefaults); }
   };
   const planItem = data.items.find(i => i.id === planItemId);
@@ -255,13 +262,14 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
     // One item ID remains shared between Week checklist, Tasks, and Home.
     const ok = await run(() => api(`/api/items/${planItem.id}`, user, {
       method:'PATCH', body:{planned_date:date}
-    }),{collection:'items'});
+    }),{collection:'items'},{title:'Study plan saved',detail:date?`Planned for ${formatDate(date)}.`:'Planned date cleared.'});
     if (ok) setDialog(null);
   };
   const saveExam = async (e: FormEvent) => {
     e.preventDefault(); if (!selected || !examTitle.trim()) return;
     const ok = await run(() => api('/api/items',user,{method:'POST',body:{course_id:selected.id,week_number:null,
-      kind:'revision',is_task:true,title:examTitle.trim()}}),{collection:'items'});
+      kind:'revision',is_task:true,title:examTitle.trim()}}),{collection:'items'},
+      {title:'Exam task added',detail:examTitle.trim()});
     if (ok) setExamTitle('');
   };
   const openResourceForm = (scope: 'course' | 'week', resource?: Resource) => {
@@ -280,16 +288,19 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
     const existing = data.resources.find(r=>r.id===resourceEditId);
     const payload = existing ? base : {...base,course_id:selected.id,source:resourceDraft.source,url:resourceDraft.url};
     const ok = await run(() => api(resourceEditId?`/api/resources/${resourceEditId}`:'/api/resources',user,
-      {method:resourceEditId?'PATCH':'POST',body:payload}),{collection:'resources'});
+      {method:resourceEditId?'PATCH':'POST',body:payload}),{collection:'resources'},
+      {title:resourceEditId?'Resource updated':'Resource linked',detail:resourceDraft.title.trim()});
     if (ok) {setDialog(null);setResourceEditId('');}
   };
   const removeResource = async (r:Resource) => {
     if (!confirm(`Remove the Study Hub link to “${r.title}”? Your original PDF in Drive or DTU Learn will not be deleted.`))return;
-    await run(() => api(`/api/resources/${r.id}`,user,{method:'DELETE'}),{collection:'resources',deleteId:r.id});
+    await run(() => api(`/api/resources/${r.id}`,user,{method:'DELETE'}),{collection:'resources',deleteId:r.id},
+      {title:'Resource unlinked',detail:r.title});
   };
   const deleteItem = async (i:Item) => {
     if (!confirm(`Remove study activity “${i.title}”? Linked resources must be detached first.`)) return;
-    await run(() => api(`/api/items/${i.id}`,user,{method:'DELETE'}),{collection:'items',deleteId:i.id});
+    await run(() => api(`/api/items/${i.id}`,user,{method:'DELETE'}),{collection:'items',deleteId:i.id},
+      {title:'Activity removed',detail:i.title});
   };
   const sourceLabel=(r:Resource)=>r.source==='drive'?'Goodnotes / Google Drive':r.source==='dtu'?'DTU Learn':'Web link';
   const resourceRow = (r:Resource) => <div className="planner-file-row" key={r.id}>
@@ -433,7 +444,7 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
             {!courseItems.some(i=>isActionable(i))&&<EmptyState icon={<CalendarDays size={24}/>} title="No scheduled work" detail="Add assignments or schedule a revision activity."/>}
           </Card>}
           {workspaceTab==='exam'&&<Card><SectionTitle title="Exam preparation" aside={<Badge>{examItems.filter(i=>i.done).length}/{examItems.length} completed</Badge>}/>
-            {!isReadOnly&&<form className="exam-task-form" onSubmit={e=>void saveExam(e)}><input aria-label="Exam preparation task" placeholder="Practise old exam papers" value={examTitle} onChange={e=>setExamTitle(e.target.value)} required/><button className="btn primary small" disabled={busy||!examTitle.trim()}>Add task</button></form>}
+            {!isReadOnly&&<form className="exam-task-form" onSubmit={e=>void saveExam(e)}><input aria-label="Exam preparation task" placeholder="Practise old exam papers" value={examTitle} onChange={e=>setExamTitle(e.target.value)} required/><button className="btn primary small" disabled={busy||!examTitle.trim()} aria-busy={busy}>{busy?<><LoaderCircle size={14} className="spin"/> Saving…</>:'Add task'}</button></form>}
             {examItems.map(i=><div className={'planner-task-row task-completion-row'+(landingItem?.id===i.id?' planner-target-item':'')+(completingIds.has(i.id)?' is-completing':'')} ref={landingItem?.id===i.id?landingRef:undefined} key={i.id}><input type="checkbox" className="task-completion-check" disabled={isReadOnly||busy||pendingItems.has(i.id)||completingIds.has(i.id)} checked={i.done||completingIds.has(i.id)} onChange={()=>toggleItem(i)}/><div><strong className={i.done?'complete':''}>{i.title}</strong></div>{!isReadOnly&&<button className="icon-btn" onClick={()=>focusOn(i)} title="Start focus"><Timer size={16}/></button>}</div>)}
             {!examItems.length&&<EmptyState icon={<BookMarked size={23}/>} title="Exam preparation starts here" detail="Add past papers, mock exams and course-wide revision plans."/>}
           </Card>}
@@ -454,7 +465,7 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
         {planItem.planned_date&&<p className="planner-plan-note">Clearing the date keeps this activity in the Tasks inbox as unscheduled work.</p>}
       </>}
       {dialog==='item'&&<><h2>New study activity</h2><p>Reading and notes can reference the shared course book or notebook.</p><form onSubmit={e=>void saveItem(e)}><FormRow label="Title"><input required value={itemDraft.title} onChange={e=>setItemDraft(p=>({...p,title:e.target.value}))}/></FormRow><div className="form-grid"><FormRow label="Activity type"><select value={itemDraft.kind} onChange={e=>setItemDraft(p=>({...p,kind:e.target.value as Item['kind']}))}>{(['lecture','notes','reading','revision','assignment'] as const).map(kind=><option key={kind} value={kind}>{kindLabels[kind]}</option>)}</select></FormRow><FormRow label="Reference a shared book or notebook"><select value={itemDraft.resource_id} onChange={e=>setItemDraft(p=>({...p,resource_id:e.target.value}))}><option value="">No linked document</option>{shared.map(r=><option value={r.id} key={r.id}>{r.title}</option>)}</select></FormRow><FormRow label="Chapter / section"><input value={itemDraft.chapter} onChange={e=>setItemDraft(p=>({...p,chapter:e.target.value}))}/></FormRow><FormRow label="Pages from"><input type="number" min={1} value={itemDraft.page_start} onChange={e=>setItemDraft(p=>({...p,page_start:e.target.value}))}/></FormRow><FormRow label="Pages to"><input type="number" min={1} value={itemDraft.page_end} onChange={e=>setItemDraft(p=>({...p,page_end:e.target.value}))}/></FormRow><FormRow label="Planned date"><input type="date" max={itemDraft.due_date||undefined} value={itemDraft.planned_date} onChange={e=>setItemDraft(p=>({...p,planned_date:e.target.value}))}/></FormRow><FormRow label="Due date"><input type="date" min={itemDraft.planned_date||undefined} value={itemDraft.due_date} onChange={e=>setItemDraft(p=>({...p,due_date:e.target.value}))}/></FormRow></div><FormRow label="Notes (optional)"><textarea rows={3} maxLength={5000} placeholder="Quick notes, lecture takeaways or reference details" value={itemDraft.notes} onChange={e=>setItemDraft(p=>({...p,notes:e.target.value}))}/></FormRow><label className="inline-check"><input type="checkbox" checked={itemDraft.kind==='assignment'||itemDraft.is_task} disabled={itemDraft.kind==='assignment'} onChange={e=>setItemDraft(p=>({...p,is_task:e.target.checked}))}/> Include in Tasks</label><div className="form-actions"><button type="button" className="btn secondary" disabled={busy} onClick={()=>setDialog(null)}>Cancel</button><button className="btn primary" disabled={busy||!itemDraft.title.trim()||Boolean(itemDraft.planned_date&&itemDraft.due_date&&itemDraft.planned_date>itemDraft.due_date)} aria-busy={busy}>{busy?<><LoaderCircle size={15} className="spin"/> Saving…</>:'Add activity'}</button></div></form></>}
-      {dialog==='edit-note'&&<><h2>Edit quick note</h2><p>Saved to the current course's teaching week and available across devices.</p><form onSubmit={e=>void saveNote(e)}><FormRow label="Title"><input required autoFocus maxLength={240} value={noteDraft.title} onChange={e=>setNoteDraft(p=>({...p,title:e.target.value}))}/></FormRow><FormRow label="Note"><textarea rows={5} maxLength={5000} value={noteDraft.notes} onChange={e=>setNoteDraft(p=>({...p,notes:e.target.value}))}/></FormRow><div className="form-actions"><button type="button" className="btn secondary" disabled={busy} onClick={()=>setDialog(null)}>Cancel</button><button type="submit" className="btn primary" disabled={busy||!noteDraft.title.trim()} aria-busy={busy}>{busy?'Saving…':'Save note'}</button></div></form></>}
+      {dialog==='edit-note'&&<><h2>Edit quick note</h2><p>Saved to the current course's teaching week and available across devices.</p><form onSubmit={e=>void saveNote(e)}><FormRow label="Title"><input required autoFocus maxLength={240} value={noteDraft.title} onChange={e=>setNoteDraft(p=>({...p,title:e.target.value}))}/></FormRow><FormRow label="Note"><textarea rows={5} maxLength={5000} value={noteDraft.notes} onChange={e=>setNoteDraft(p=>({...p,notes:e.target.value}))}/></FormRow><div className="form-actions"><button type="button" className="btn secondary" disabled={busy} onClick={()=>setDialog(null)}>Cancel</button><button type="submit" className="btn primary" disabled={busy||!noteDraft.title.trim()} aria-busy={busy}>{busy?<><LoaderCircle size={14} className="spin"/> Saving…</>:'Save note'}</button></div></form></>}
       {dialog==='resource'&&<><h2>{resourceEditId?'Edit resource':'Link a resource'}</h2><p>Keep whole-course books and notebooks shared; use weekly links for lecture slides.</p><form onSubmit={e=>void saveResource(e)}><FormRow label="Resource title"><input required value={resourceDraft.title} onChange={e=>setResourceDraft(p=>({...p,title:e.target.value}))}/></FormRow><FormRow label="Available in"><select value={resourceScope} onChange={e=>setResourceScope(e.target.value as 'course'|'week')}><option value="course">Course Library — all weeks</option><option value="week">Only Week {weekNumber}</option></select></FormRow>{!editingResource&&<FormRow label="Document URL (HTTPS)"><input type="url" required value={resourceDraft.url} placeholder="https://..." onChange={e=>setResourceDraft(p=>({...p,url:e.target.value}))}/></FormRow>}<div className="form-grid"><FormRow label="Document type"><select value={resourceDraft.kind} onChange={e=>setResourceDraft(p=>({...p,kind:e.target.value as ResourceKind}))}>{(['textbook','handwritten','slides','annotated','other'] as const).map(k=><option key={k} value={k}>{k}</option>)}</select></FormRow>{!editingResource&&<FormRow label="Source"><select value={resourceDraft.source} onChange={e=>setResourceDraft(p=>({...p,source:e.target.value as 'dtu'|'link'}))}><option value="dtu">DTU Learn</option><option value="link">Other link</option></select></FormRow>}{resourceScope==='week'&&<FormRow label="Attach to study activity"><select value={resourceDraft.item_id} onChange={e=>setResourceDraft(p=>({...p,item_id:e.target.value}))}><option value="">Whole week</option>{items.map(i=><option value={i.id} key={i.id}>{i.title}</option>)}</select></FormRow>}<FormRow label="Chapter"><input value={resourceDraft.chapter} onChange={e=>setResourceDraft(p=>({...p,chapter:e.target.value}))}/></FormRow><FormRow label="Page start"><input type="number" min={1} value={resourceDraft.page_start} onChange={e=>setResourceDraft(p=>({...p,page_start:e.target.value}))}/></FormRow><FormRow label="Page end"><input type="number" min={1} value={resourceDraft.page_end} onChange={e=>setResourceDraft(p=>({...p,page_end:e.target.value}))}/></FormRow></div><div className="form-actions"><button type="button" className="btn secondary" disabled={busy} onClick={()=>setDialog(null)}>Cancel</button><button type="submit" className="btn primary" disabled={busy} aria-busy={busy}>{busy?<><LoaderCircle size={15} className="spin" aria-hidden="true"/> Saving…</>:'Save link'}</button></div></form></>}
       {busy&&<p className="planner-save-status" role="status" aria-live="polite"><LoaderCircle size={14} className="spin" aria-hidden="true"/> Saving changes to Study Hub…</p>}
     </div></div>}
