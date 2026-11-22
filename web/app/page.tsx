@@ -14,8 +14,11 @@ import { describeSnapshotFailure, fetchSnapshotWithRetry, type SnapshotLoadProbl
 import { Badge, Card, EmptyState, FormRow, SectionTitle } from '@/components/common';
 import { PdfWorkspace } from '@/components/pdf-workspace';
 import { CoursePlanner } from '@/components/course-planner';
-import { FocusElapsed } from '@/components/focus-elapsed';
-import { previewPause, previewResume, sessionReviewLimit } from '@/lib/focus-timing';
+import { FocusElapsed, FocusDial } from '@/components/focus-elapsed';
+import {
+  previewPause, previewResume, recoverFocusClock, startFocusClock, pauseFocusClock,
+  resumeFocusClock, focusClockSeconds, rekeyFocusClock, type FocusClockAnchor,
+} from '@/lib/focus-timing';
 import { TasksPlanner } from '@/components/tasks-planner';
 import { isActionable, isOverdue, todayPriorities, upcomingDeadlines, focusTasksForContext } from '@/lib/task-view';
 import { todayStudyCourses, nextSevenDays, nextDeadlineDays, agendaForDate } from '@/lib/home-view';
@@ -49,6 +52,7 @@ export default function Page() {
   const [busy,setBusy] = useState(false);
   const [focusBusy,setFocusBusy] = useState(false);
   const [focusPreview,setFocusPreview] = useState<FocusSession|null>(null);
+  const [focusClock,setFocusClock] = useState<FocusClockAnchor|null>(null);
   const focusBusyRef = useRef(false);
   const focusRevisionRef = useRef(0);
   const [pendingItems,setPendingItems] = useState<Set<string>>(()=>new Set());
@@ -118,7 +122,7 @@ export default function Page() {
     if (!firebaseAuth) return;
     return onAuthStateChanged(firebaseAuth, u=>{
       pendingItemsRef.current.clear();setPendingItems(new Set());
-      focusBusyRef.current=false;focusRevisionRef.current++;setFocusBusy(false);setFocusPreview(null);
+      focusBusyRef.current=false;focusRevisionRef.current++;setFocusBusy(false);setFocusPreview(null);setFocusClock(null);
       setFinishReview(false);setQuickFocusOpen(false);
       setUser(u);setAuthReady(true);
     });
@@ -281,6 +285,19 @@ export default function Page() {
   const dateLabel=clockReady?formatLocalDate(now*1000):'—';
   const timeLabel=clockReady?formatLocalClock(now*1000):'--:--';
   const active=focusPreview??data.sessions.find(s=>s.status==='running'||s.status==='paused');
+  // A Firestore snapshot only initializes a clock when it truly represents a
+  // new session or externally changed status; local API responses never reset
+  // the clock's fractional second and therefore cannot make it jump backward.
+  useEffect(()=>{
+    setFocusClock(previous=>{
+      if(!active)return null;
+      if(previous?.sessionId===active.id&&previous.status===active.status)return previous;
+      return recoverFocusClock(active,Date.now(),performance.now());
+    });
+  },[active?.id,active?.status,active?.started_at,active?.pause_started_at,active?.accumulated_pause_seconds]);
+  const focusClockAt=(session:FocusSession,wallMs:number,monoMs:number)=>
+    focusClock?.sessionId===session.id&&focusClock.status===session.status
+      ?focusClock:recoverFocusClock(session,wallMs,monoMs);
   const currentWeekStart=useMemo(()=>{const d=new Date();d.setHours(0,0,0,0);const weekday=(d.getDay()+6)%7;d.setDate(d.getDate()-weekday);return Math.floor(d.getTime()/1000);},[today]);
   const {weekSeconds,totalSeconds}=useMemo(()=>{
     let weekly=0,all=0;
@@ -408,17 +425,23 @@ export default function Page() {
   const startFocus=async(course:string,itemId:string,mode:'25'|'50'|'90'|'free')=>{
     if(active||focusBusyRef.current||busy)return;
     const item=data.items.find(i=>i.id===itemId);
-    const timestamp=Math.floor(Date.now()/1000);
+    const wallMs=Date.now();
+    const monoMs=performance.now();
+    const timestamp=Math.floor(wallMs/1000);
     const optimistic:FocusSession={
-      id:`pending-${timestamp}`,course_id:course||null,item_id:itemId||null,
+      id:`pending-${wallMs}`,course_id:course||null,item_id:itemId||null,
       week_number:item?.week_number||null,mode,status:'running',started_at:timestamp,
       pause_started_at:null,accumulated_pause_seconds:0,ended_at:null,focus_seconds:null
     };
     setQuickFocusOpen(false);
+    setFocusClock(startFocusClock(optimistic.id,wallMs,monoMs));
     await focusRequest(optimistic,'/api/sessions/start',{
       item_id:itemId||null,course_id:course||null,week_number:item?.week_number||null,mode,
       requested_at:timestamp
-    });
+    }, saved=>setFocusClock(previous=>
+      previous?.sessionId===optimistic.id ? rekeyFocusClock(previous,saved.id)
+        :recoverFocusClock(saved,Date.now(),performance.now())),
+    ()=>setFocusClock(null));
   };
   const startQuickFocus=async()=>{
     if(active){setQuickFocusOpen(false);return;}
@@ -433,26 +456,47 @@ export default function Page() {
   const beginFocus=()=>void startFocus(focusCourse,focusItem,focusMode);
   const sessionAction=(verb:'pause'|'resume')=>{
     if(!active||focusBusyRef.current)return;
-    const at=Math.floor(Date.now()/1000);
-    const preview=verb==='pause'?previewPause(active,at):previewResume(active,at);
-    const body=verb==='pause'?{displayed_seconds:sessionReviewLimit(active,Date.now())}:undefined;
-    void focusRequest(preview,`/api/sessions/${active.id}/${verb}`,body);
+    const wallMs=Date.now();
+    const monoMs=performance.now();
+    const existing=focusClockAt(active,wallMs,monoMs);
+    const nextClock=verb==='pause'
+      ?pauseFocusClock(existing,wallMs,monoMs)
+      :resumeFocusClock(existing,wallMs,monoMs);
+    setFocusClock(nextClock);
+    const preview=verb==='pause'
+      ?previewPause(active,Math.floor(wallMs/1000))
+      :previewResume(active,Math.floor(wallMs/1000));
+    const body=verb==='pause'
+      ?{displayed_seconds:focusClockSeconds(nextClock,wallMs,monoMs)}
+      :{requested_at:Math.floor(wallMs/1000)};
+    void focusRequest(preview,`/api/sessions/${active.id}/${verb}`,body,
+      undefined,()=>setFocusClock(existing));
   };
   const reviewFinish=()=>{
     if(!active||focusBusyRef.current)return;
-    const at=Date.now();
-    const seconds=sessionReviewLimit(active,at);
+    const wallMs=Date.now();
+    const monoMs=performance.now();
+    const existing=focusClockAt(active,wallMs,monoMs);
+    const stopped=pauseFocusClock(existing,wallMs,monoMs);
+    const seconds=Math.min(86400,focusClockSeconds(stopped,wallMs,monoMs));
+    setFocusClock(stopped);
     setReviewLimit(seconds);setFinishSeconds(String(seconds));setFinishReview(true);
     if(active.status==='running'){
-      // End means stop *now*, even while the review dialog is open. Cancel leaves
-      // the session paused so no study time is accidentally added in a slow request.
-      void focusRequest(previewPause(active,Math.floor(at/1000)),`/api/sessions/${active.id}/pause`,
+      // Freeze at the clicked second even if the network takes several seconds.
+      void focusRequest(previewPause(active,Math.floor(wallMs/1000)),`/api/sessions/${active.id}/pause`,
         {displayed_seconds:seconds},
         saved=>{
-          const limit=Math.min(seconds,sessionReviewLimit(saved,Date.now()));
+          // The backend can only reduce the counted duration, never inflate it.
+          const serverLimit=Math.max(0,saved.started_at!==undefined
+            ?Math.floor((saved.pause_started_at! - saved.started_at - saved.accumulated_pause_seconds)) :seconds);
+          const limit=Math.min(seconds,serverLimit);
           setReviewLimit(limit);
           setFinishSeconds(previous=>String(Math.min(Number(previous)||0,limit)));
-        },()=>setFinishReview(false));
+          // A server correction is exceptional (e.g. device clock skew); ensure
+          // the visible paused stopwatch still agrees with what can be saved.
+          if(limit<seconds)setFocusClock(current=>current?.sessionId===active.id
+            ?{...current,elapsedMs:limit*1000}:current);
+        },()=>{setFocusClock(existing);setFinishReview(false);});
     }
   };
   const finish=()=>{
@@ -460,7 +504,7 @@ export default function Page() {
     const confirmed=Number(finishSeconds);
     if(!Number.isInteger(confirmed)||confirmed<0||confirmed>reviewLimit)return;
     void focusRequest(null,`/api/sessions/${active.id}/finish`,{confirmed_seconds:confirmed},
-      ()=>setFinishReview(false));
+      ()=>{setFinishReview(false);setFocusClock(null);});
   };
   const loadDriveStatus=useCallback(async()=>{
     if (useFirebase&&!user) return;
@@ -588,7 +632,7 @@ export default function Page() {
             {active?<>
               <button type="button" className="topbar-focus-session" aria-expanded={quickFocusOpen} aria-controls="active-focus-menu" onClick={()=>setQuickFocusOpen(value=>!value)} title="Manage focus session" aria-label={`${active.status==='paused'?'Paused':'Running'} focus session; manage session`}>
                 <span className={'topbar-focus-dot'+(active.status==='paused'?' paused':'')}/>
-                <span>{active.status==='paused'?'Paused':'Focus'} · <FocusElapsed session={active}/></span>
+                <span>{active.status==='paused'?'Paused':'Focus'} · <FocusElapsed session={active} anchor={focusClock}/></span>
                 <ChevronDown size={15} aria-hidden="true"/>
               </button>
               {quickFocusOpen&&<div id="active-focus-menu" className="active-focus-menu" role="group" aria-label="Focus session controls">
@@ -707,7 +751,7 @@ export default function Page() {
               {!active&&<div className="focus-settings"><FormRow label="Course (optional)"><select value={focusCourse} onChange={e=>{setFocusCourse(e.target.value);setFocusItem('');}}><option value="">General / personal</option>{data.courses.filter(c=>!c.archived).map(c=><option key={c.id} value={c.id}>{c.code} · {c.title}</option>)}</select></FormRow><FormRow label="Focus task (optional)"><select value={focusItem} onChange={e=>setFocusItem(e.target.value)}><option value="">No linked task</option>{focusTasksForContext(data.items,focusCourse).map(i=><option key={i.id} value={i.id}>{i.title}</option>)}</select></FormRow></div>}
               {active&&<div className="focus-context"><Badge tone="good">Active session</Badge><strong>{data.items.find(i=>i.id===active.item_id)?.title||data.courses.find(c=>c.id===active.course_id)?.title||'General focus'}</strong></div>}
               <div className="focus-modes">{(['25','50','90','free'] as const).map(m=><button key={m} disabled={!!active} className={focusMode===m?'current':''} onClick={()=>setFocusMode(m)}>{m==='free'?'Stopwatch':`${m} min`}</button>)}</div>
-              <div className="timer-dial"><span className="dial-label">{active?active.status==='paused'?'PAUSED':'FOCUSING':focusMode==='free'?'STOPWATCH':'FOCUS TARGET'}</span><strong>{active?<FocusElapsed session={active}/>:focusMode==='free'?'00:00:00':duration(Number(focusMode)*60)}</strong><span className="dial-sub">{active?.mode!=='free'&&active?`Target: ${active.mode} minutes`:active?'Count-up session':'Ready when you are'}</span></div>
+              {active?<FocusDial session={active} anchor={focusClock}/>:<div className="timer-dial"><span className="dial-label">{focusMode==='free'?'STOPWATCH':'FOCUS TARGET'}</span><strong>{focusMode==='free'?'00:00:00':duration(Number(focusMode)*60)}</strong><span className="dial-sub">Ready when you are</span></div>}
               {active? <div className="focus-buttons"><button className="btn secondary" onClick={()=>sessionAction(active.status==='running'?'pause':'resume')} disabled={focusBusy}>{active.status==='running'?<Pause size={17}/>:<Play size={17}/>} {active.status==='running'?'Pause':'Resume'}</button><button className="btn primary" disabled={focusBusy} onClick={reviewFinish}><Square size={15}/> Finish & review</button></div>:<button className="btn primary focus-start" disabled={busy||focusBusy} onClick={beginFocus}><Play size={18}/> Start focusing</button>}
               <p className="focus-tip">Sessions persist after closing the tab. End immediately pauses the clock before review; canceling the review keeps it paused. Timed modes are goals, not automatic stops.</p>
             </Card><div className="stack"><Card><SectionTitle title="Your focus statistics"/><div className="focus-stat"><span>This week</span><strong>{(weekSeconds/3600).toFixed(1)} hours</strong></div><div className="focus-stat"><span>All time</span><strong>{(totalSeconds/3600).toFixed(1)} hours</strong></div><div className="focus-stat"><span>Completed sessions</span><strong>{data.sessions.filter(s=>s.status==='finished').length}</strong></div></Card>

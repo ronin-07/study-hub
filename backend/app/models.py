@@ -150,6 +150,11 @@ class PauseFocus(BaseModel):
     displayed_seconds: int | None = Field(default=None, ge=0, le=86400)
 
 
+class ResumeFocus(BaseModel):
+    # Optional click timestamp to prevent network latency extending a pause.
+    requested_at: int | None = Field(default=None, ge=1)
+
+
 class FinishFocus(BaseModel):
     confirmed_seconds: int | None = Field(default=None, ge=0, le=86400)
 

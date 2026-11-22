@@ -78,3 +78,33 @@ def test_start_timestamp_cannot_be_backdated_more_than_five_seconds(setup_api):
     assert api.post('/api/sessions/start', json={'mode': 'free', 'requested_at': 1}).json()['started_at'] == 995
     # One active Focus session per user remains enforced.
     assert api.post('/api/sessions/start', json={'mode': 'free', 'requested_at': 2000}).status_code == 409
+
+
+def test_resume_uses_click_timestamp_not_delayed_request_arrival(setup_api):
+    api, current = setup_api
+    session = api.post('/api/sessions/start', json={'mode': 'free'}).json()
+    current[0] = 1021
+    assert api.post(f"/api/sessions/{session['id']}/pause", json={'displayed_seconds': 21}).status_code == 200
+    current[0] = 1052  # user clicked Resume at 1050; API took two seconds
+    resumed = api.post(f"/api/sessions/{session['id']}/resume", json={'requested_at': 1050})
+    assert resumed.status_code == 200
+    assert resumed.json()['accumulated_pause_seconds'] == 29
+    current[0] = 1062
+    assert api.post(f"/api/sessions/{session['id']}/pause", json={'displayed_seconds': 33}).status_code == 200
+    assert api.post(f"/api/sessions/{session['id']}/finish", json={'confirmed_seconds': 33}).status_code == 200
+
+
+def test_resume_timestamp_is_bounded_and_old_client_is_supported(setup_api):
+    api, current = setup_api
+    session = api.post('/api/sessions/start', json={'mode': 'free'}).json()
+    current[0] = 1010
+    assert api.post(f"/api/sessions/{session['id']}/pause").status_code == 200
+    current[0] = 1020
+    # Arbitrary old timestamps are clamped, not trusted.
+    resumed = api.post(f"/api/sessions/{session['id']}/resume", json={'requested_at': 1})
+    assert resumed.status_code == 200
+    assert resumed.json()['accumulated_pause_seconds'] == 5
+    current[0] = 1021
+    assert api.post(f"/api/sessions/{session['id']}/pause").status_code == 200
+    current[0] = 1022
+    assert api.post(f"/api/sessions/{session['id']}/resume").status_code == 200

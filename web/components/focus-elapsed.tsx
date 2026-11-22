@@ -1,25 +1,78 @@
 'use client';
 
-import { memo, useEffect, useState } from 'react';
+import { memo, useMemo, useSyncExternalStore, type CSSProperties } from 'react';
 import { type FocusSession, duration } from '@/lib/types';
-import { currentFocusSeconds } from '@/lib/focus-timing';
+import {
+  type FocusClockAnchor, recoverFocusClock, focusClockSeconds, focusClockProgress,
+} from '@/lib/focus-timing';
 
-/** Isolated clock: ticking does not rerender the entire planner/calendar dashboard. */
-export const FocusElapsed = memo(function FocusElapsed({session}: {session: FocusSession}) {
-  const [epochMs, setEpochMs] = useState(() => Date.now());
-  useEffect(() => {
-    setEpochMs(Date.now());
-    if (session.status !== 'running') return;
-    const refresh = () => setEpochMs(previous => {
-      const current=Date.now();
-      return Math.floor(previous/1000)===Math.floor(current/1000) ? previous : current;
-    });
-    const interval = window.setInterval(refresh, 250);
-    document.addEventListener('visibilitychange', refresh);
-    return () => {
+function monotonicNow(): number {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now();
+}
+
+type FocusTick = {wallMs:number; monoMs:number};
+const serverTick: FocusTick = {wallMs:0, monoMs:0};
+let tick: FocusTick = {wallMs:Date.now(), monoMs:monotonicNow()};
+const listeners = new Set<() => void>();
+let interval: ReturnType<typeof setInterval> | null = null;
+
+function publishTick() {
+  tick = {wallMs:Date.now(), monoMs:monotonicNow()};
+  listeners.forEach(listener => listener());
+}
+
+/** One shared 100ms ticker for both readouts, independent of the main Page. */
+function subscribeToTick(listener: () => void) {
+  listeners.add(listener);
+  if (interval === null) {
+    interval = window.setInterval(publishTick, 100);
+    document.addEventListener('visibilitychange', publishTick);
+    publishTick();
+  }
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0 && interval !== null) {
       window.clearInterval(interval);
-      document.removeEventListener('visibilitychange', refresh);
-    };
-  }, [session.status, session.id]);
-  return <>{duration(currentFocusSeconds(session, session.status==='paused' ? Math.max(epochMs,(session.pause_started_at??0)*1000) : epochMs))}</>;
+      document.removeEventListener('visibilitychange', publishTick);
+      interval = null;
+    }
+  };
+}
+const noSubscription = () => () => {};
+const getTick = () => tick;
+const getServerTick = () => serverTick;
+
+/** Only the timer children subscribe: nothing else rerenders every 100ms. */
+function useClockSample(session: FocusSession, anchor: FocusClockAnchor | null) {
+  const recovered = useMemo(
+    () => recoverFocusClock(session, Date.now(), monotonicNow()),
+    [session.id, session.status, session.started_at, session.pause_started_at,
+      session.accumulated_pause_seconds, session.ended_at],
+  );
+  const clock = anchor?.sessionId === session.id && anchor.status === session.status ? anchor : recovered;
+  const sample = useSyncExternalStore(clock.status==='running'?subscribeToTick:noSubscription,
+    getTick, getServerTick);
+  return { clock, wallMs:sample.wallMs, monoMs:sample.monoMs };
+}
+
+export const FocusElapsed = memo(function FocusElapsed({session, anchor}: {
+  session: FocusSession; anchor: FocusClockAnchor | null;
+}) {
+  const {clock, wallMs, monoMs} = useClockSample(session, anchor);
+  return <>{duration(focusClockSeconds(clock, wallMs, monoMs))}</>;
+});
+
+export const FocusDial = memo(function FocusDial({session, anchor}: {
+  session: FocusSession; anchor: FocusClockAnchor | null;
+}) {
+  const {clock, wallMs, monoMs} = useClockSample(session, anchor);
+  const elapsedSeconds = focusClockSeconds(clock, wallMs, monoMs);
+  const progress = focusClockProgress(clock, session.mode, wallMs, monoMs);
+  const style = {'--focus-progress': `${(progress * 100).toFixed(2)}%`} as CSSProperties;
+  return <div className="timer-dial focus-dial-progress" style={style}
+    role="timer" aria-label={`Focus timer ${clock.status}, ${duration(elapsedSeconds)}`}>
+    <span className="dial-label">{clock.status==='paused'?'PAUSED':'FOCUSING'}</span>
+    <strong>{duration(elapsedSeconds)}</strong>
+    <span className="dial-sub">{session.mode==='free'?'Count-up session':`Target: ${session.mode} minutes`}</span>
+  </div>;
 });

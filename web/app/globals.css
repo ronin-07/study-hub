@@ -954,3 +954,9 @@
 .planner-study-week-toolbar .planner-week-select-wrap select{width:100%;margin:0;min-width:119px;appearance:none;-webkit-appearance:none;-moz-appearance:none;padding:7px 34px 7px 12px;cursor:pointer}
 .planner-study-week-toolbar .planner-week-select-chevron{position:absolute;right:11px;top:50%;transform:translateY(-50%);pointer-events:none;flex-shrink:0;color:var(--text);opacity:.86}
 .planner-study-week-toolbar .planner-week-select-wrap:focus-within .planner-week-select-chevron{opacity:1}
+
+/* Active Focus dial is driven by the same monotonic clock as the header digits. */
+.timer-dial.focus-dial-progress::before {
+  background:conic-gradient(from -90deg, var(--focus-ring-fill, #b780b3) 0 var(--focus-progress,0%), var(--focus-ring-track, #49374c) var(--focus-progress,0%) 100%);
+}
+.theme-light .timer-dial.focus-dial-progress::before { --focus-ring-track:#e5d9e6; }

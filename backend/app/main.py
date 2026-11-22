@@ -13,7 +13,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import ValidationError
 
 from .workspace_models import Semester
-from .models import Course, FocusSession, FinishFocus, Item, ItemPatch, PauseFocus, ReadingPosition, Resource, StartFocus, Week
+from .models import Course, FocusSession, FinishFocus, Item, ItemPatch, PauseFocus, ResumeFocus, ReadingPosition, Resource, StartFocus, Week
 from .security import User, current_user, firebase_app
 from .deployment import validate_deployment_environment
 from .storage import (ActiveSessionExists, DocumentAlreadyExists, DocumentMissing,
@@ -353,13 +353,18 @@ def pause_session(identifier: str, value: PauseFocus | None = None, user: User =
 
 
 @app.post('/api/sessions/{identifier}/resume', response_model=FocusSession)
-def resume_session(identifier: str, user: User = Depends(current_user)):
+def resume_session(identifier: str, value: ResumeFocus | None = None, user: User = Depends(current_user)):
     timestamp = now_s()
 
     def resume(entry: dict) -> dict:
         if entry['status'] != 'paused':
             raise HTTPException(409, 'Only a paused session can be resumed')
-        entry['accumulated_pause_seconds'] += max(0, timestamp - entry['pause_started_at'])
+        # Count the pause only until the user clicked Resume, not until this
+        # request reached Vercel. Clamp to a five-second trust window.
+        requested = value.requested_at if value is not None else None
+        resumed_at = max(timestamp - 5, min(timestamp, requested)) if requested is not None else timestamp
+        resumed_at = max(entry['pause_started_at'], resumed_at)
+        entry['accumulated_pause_seconds'] += max(0, resumed_at - entry['pause_started_at'])
         entry['pause_started_at'] = None
         entry['status'] = 'running'
         return entry

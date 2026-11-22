@@ -38,5 +38,6 @@ test('Focus clock is isolated from the page render and stopping immediately paus
   assert.match(page,/<FocusElapsed session=\{active\}/);
   assert.doesNotMatch(page,/running\?1000:30000/);
   assert.match(component,/memo\(function FocusElapsed/);
-  assert.match(component,/setInterval\(refresh, 250\)/);
+  assert.match(component,/useClockSample/);
+  assert.match(component,/FocusDial/);
 });
