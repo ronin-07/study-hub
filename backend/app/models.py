@@ -141,6 +141,13 @@ class StartFocus(BaseModel):
     item_id: str | None = None
     week_number: int | None = Field(default=None, ge=1, le=30)
     mode: Literal['25', '50', '90', 'free'] = '50'
+    requested_at: int | None = Field(default=None, ge=1)
+
+
+class PauseFocus(BaseModel):
+    # A voluntary downward correction prevents API latency from adding focus time.
+    # Never permit an increase beyond the server-calculated unpaused duration.
+    displayed_seconds: int | None = Field(default=None, ge=0, le=86400)
 
 
 class FinishFocus(BaseModel):

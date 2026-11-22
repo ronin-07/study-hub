@@ -13,7 +13,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import ValidationError
 
 from .workspace_models import Semester
-from .models import Course, FocusSession, FinishFocus, Item, ItemPatch, ReadingPosition, Resource, StartFocus, Week
+from .models import Course, FocusSession, FinishFocus, Item, ItemPatch, PauseFocus, ReadingPosition, Resource, StartFocus, Week
 from .security import User, current_user, firebase_app
 from .deployment import validate_deployment_environment
 from .storage import (ActiveSessionExists, DocumentAlreadyExists, DocumentMissing,
@@ -83,12 +83,12 @@ async def snapshot(user: User = Depends(current_user)):
 
 
 @app.get('/api/items', response_model=list[Item])
-async def list_items(user: User = Depends(current_user)):
+def list_items(user: User = Depends(current_user)):
     return all_docs(user.uid, 'items')
 
 
 @app.post('/api/courses', response_model=Course, status_code=201)
-async def add_course(value: Course, user: User = Depends(current_user)):
+def add_course(value: Course, user: User = Depends(current_user)):
     if not value.semester_id:
         raise HTTPException(422, 'A registered semester_id is required')
     value.code = value.code.strip()
@@ -114,7 +114,7 @@ async def add_course(value: Course, user: User = Depends(current_user)):
 
 
 @app.post('/api/weeks', response_model=Week, status_code=201)
-async def add_week(value: Week, user: User = Depends(current_user)):
+def add_week(value: Week, user: User = Depends(current_user)):
     def operation(tx):
         course = tx.get('courses', value.course_id)
         if not course:
@@ -136,7 +136,7 @@ async def add_week(value: Week, user: User = Depends(current_user)):
 
 
 @app.post('/api/items', response_model=Item, status_code=201)
-async def add_item(value: Item, user: User = Depends(current_user)):
+def add_item(value: Item, user: User = Depends(current_user)):
     if value.planned_date and value.due_date and value.planned_date > value.due_date:
         raise HTTPException(422, 'Planned work date cannot be after the deadline')
 
@@ -169,7 +169,7 @@ async def add_item(value: Item, user: User = Depends(current_user)):
 
 
 @app.patch('/api/items/{identifier}', response_model=Item)
-async def patch_item(identifier: str, updates: ItemPatch, user: User = Depends(current_user)):
+def patch_item(identifier: str, updates: ItemPatch, user: User = Depends(current_user)):
     fields = updates.model_dump(exclude_unset=True, mode='json')
 
     def update(original: dict) -> tuple[dict, dict | None]:
@@ -197,7 +197,7 @@ async def patch_item(identifier: str, updates: ItemPatch, user: User = Depends(c
     return Item.model_validate(result)
 
 @app.delete('/api/items/{identifier}', status_code=204)
-async def delete_item(identifier: str, user: User = Depends(current_user)):
+def delete_item(identifier: str, user: User = Depends(current_user)):
     def operation(tx):
         item = tx.get('items', identifier)
         if not item:
@@ -216,7 +216,7 @@ async def delete_item(identifier: str, user: User = Depends(current_user)):
 
 
 @app.post('/api/resources', response_model=Resource, status_code=201)
-async def add_resource(value: Resource, user: User = Depends(current_user)):
+def add_resource(value: Resource, user: User = Depends(current_user)):
     def operation(tx):
         course = tx.get('courses', value.course_id)
         if not course:
@@ -249,7 +249,7 @@ async def add_resource(value: Resource, user: User = Depends(current_user)):
 
 
 @app.patch('/api/resources/{identifier}/reading-position', response_model=Resource)
-async def update_reading_position(identifier: str, value: ReadingPosition, user: User = Depends(current_user)):
+def update_reading_position(identifier: str, value: ReadingPosition, user: User = Depends(current_user)):
     def operation(tx):
         entry = tx.get('resources', identifier)
         if not entry:
@@ -264,7 +264,7 @@ async def update_reading_position(identifier: str, value: ReadingPosition, user:
 
 
 @app.delete('/api/resources/{identifier}', status_code=204)
-async def delete_resource(identifier: str, user: User = Depends(current_user)):
+def delete_resource(identifier: str, user: User = Depends(current_user)):
     def operation(tx):
         entry = tx.get('resources', identifier)
         if not entry:
@@ -293,7 +293,7 @@ def focus_seconds(session: dict, now: int):
 
 
 @app.post('/api/sessions/start', response_model=FocusSession, status_code=201)
-async def start_session(value: StartFocus, user: User = Depends(current_user)):
+def start_session(value: StartFocus, user: User = Depends(current_user)):
     validate_context(user.uid, value.course_id, value.week_number)
     if value.item_id:
         item = app_store.get(user.uid, 'items', value.item_id)
@@ -309,7 +309,11 @@ async def start_session(value: StartFocus, user: User = Depends(current_user)):
         if value.week_number is None and item.get('week_number'):
             value.week_number = item['week_number']
     if value.course_id: ensure_course_active(user.uid, value.course_id)
-    session = FocusSession(**value.model_dump(), started_at=now_s())
+    timestamp = now_s()
+    # Accept up to five seconds of network latency, but never trust an arbitrary
+    # client-supplied start time. Old callers that omit requested_at are unchanged.
+    started_at = max(timestamp - 5, min(timestamp, value.requested_at)) if value.requested_at is not None else timestamp
+    session = FocusSession(**value.model_dump(exclude={'requested_at'}), started_at=started_at)
     try:
         app_store.start_focus_atomic(user.uid, session.model_dump(mode='json'))
     except ActiveSessionExists:
@@ -329,12 +333,18 @@ def update_focus_or_error(uid: str, identifier: str, mutate):
 
 
 @app.post('/api/sessions/{identifier}/pause', response_model=FocusSession)
-async def pause_session(identifier: str, user: User = Depends(current_user)):
+def pause_session(identifier: str, value: PauseFocus | None = None, user: User = Depends(current_user)):
     timestamp = now_s()
 
     def pause(entry: dict) -> dict:
         if entry['status'] != 'running':
             raise HTTPException(409, 'Only a running session can be paused')
+        # The user's stopwatch stops on click, not when the server response arrives.
+        # A caller can only shorten focus time; inflating it is not allowed.
+        if value is not None and value.displayed_seconds is not None:
+            actual = focus_seconds(entry, timestamp)
+            corrected = min(value.displayed_seconds, actual)
+            entry['accumulated_pause_seconds'] += actual - corrected
         entry['status'] = 'paused'
         entry['pause_started_at'] = timestamp
         return entry
@@ -343,7 +353,7 @@ async def pause_session(identifier: str, user: User = Depends(current_user)):
 
 
 @app.post('/api/sessions/{identifier}/resume', response_model=FocusSession)
-async def resume_session(identifier: str, user: User = Depends(current_user)):
+def resume_session(identifier: str, user: User = Depends(current_user)):
     timestamp = now_s()
 
     def resume(entry: dict) -> dict:
@@ -358,7 +368,7 @@ async def resume_session(identifier: str, user: User = Depends(current_user)):
 
 
 @app.post('/api/sessions/{identifier}/finish', response_model=FocusSession)
-async def finish_session(identifier: str, value: FinishFocus, user: User = Depends(current_user)):
+def finish_session(identifier: str, value: FinishFocus, user: User = Depends(current_user)):
     timestamp = now_s()
 
     def finish(entry: dict) -> dict:
@@ -377,7 +387,7 @@ async def finish_session(identifier: str, value: FinishFocus, user: User = Depen
 
 
 @app.delete('/api/sessions/{identifier}', status_code=204)
-async def delete_session(identifier: str, user: User = Depends(current_user)):
+def delete_session(identifier: str, user: User = Depends(current_user)):
     session = app_store.get(user.uid, 'sessions', identifier)
     if not session:
         raise HTTPException(404, 'Session not found')

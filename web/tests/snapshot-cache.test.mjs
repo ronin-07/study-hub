@@ -60,7 +60,8 @@ test('the top-right noninteractive avatar is gone and sign-out is a real button'
 });
 
 test('clock rerenders are limited when no focus timer is running',()=>{
-  assert.match(page,/running\?1000:30000/);
+  assert.match(page,/setInterval\(refresh,30000\)/);
+  assert.match(page,/<FocusElapsed session=\{active\}\/>/);
   assert.match(page,/Date\.now\(\)-lastLoadedAtRef\.current>=30000/);
 });
 

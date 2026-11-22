@@ -54,7 +54,7 @@ def validate(model, values):
 
 
 @router.post('/semesters', response_model=Semester, status_code=201)
-async def create_semester(value: Semester, user: User = Depends(current_user)):
+def create_semester(value: Semester, user: User = Depends(current_user)):
     value.name = value.name.strip()
     if not value.name:
         raise HTTPException(422, 'Semester name cannot be blank')
@@ -72,7 +72,7 @@ async def create_semester(value: Semester, user: User = Depends(current_user)):
 
 
 @router.patch('/semesters/{identifier}', response_model=Semester)
-async def edit_semester(identifier: str, patch: SemesterPatch, user: User = Depends(current_user)):
+def edit_semester(identifier: str, patch: SemesterPatch, user: User = Depends(current_user)):
     fields = patch.model_dump(mode='json', exclude_unset=True)
 
     def operation(tx):
@@ -103,7 +103,7 @@ async def edit_semester(identifier: str, patch: SemesterPatch, user: User = Depe
 
 
 @router.delete('/semesters/{identifier}', status_code=204)
-async def remove_semester(identifier: str, user: User = Depends(current_user)):
+def remove_semester(identifier: str, user: User = Depends(current_user)):
     def operation(tx):
         if not tx.get('semesters', identifier):
             raise HTTPException(404, 'semesters not found')
@@ -115,7 +115,7 @@ async def remove_semester(identifier: str, user: User = Depends(current_user)):
 
 
 @router.patch('/courses/{identifier}', response_model=Course)
-async def edit_course(identifier: str, patch: CoursePatch, user: User = Depends(current_user)):
+def edit_course(identifier: str, patch: CoursePatch, user: User = Depends(current_user)):
     fields = patch.model_dump(mode='json', exclude_unset=True)
     fields.pop('semester', None)  # Browser-provided labels are display hints only.
     if 'semester_id' in fields and not fields['semester_id']:
@@ -154,7 +154,7 @@ async def edit_course(identifier: str, patch: CoursePatch, user: User = Depends(
 
 
 @router.post('/courses/{identifier}/archive', response_model=Course)
-async def archive_course(identifier: str, user: User = Depends(current_user)):
+def archive_course(identifier: str, user: User = Depends(current_user)):
     def operation(tx):
         doc = tx.get('courses', identifier)
         if not doc:
@@ -178,7 +178,7 @@ async def archive_course(identifier: str, user: User = Depends(current_user)):
 
 
 @router.post('/courses/{identifier}/restore', response_model=Course)
-async def restore_course(identifier: str, user: User = Depends(current_user)):
+def restore_course(identifier: str, user: User = Depends(current_user)):
     def operation(tx):
         doc = tx.get('courses', identifier)
         if not doc:
@@ -191,13 +191,13 @@ async def restore_course(identifier: str, user: User = Depends(current_user)):
 
 
 @router.delete('/courses/{identifier}')
-async def remove_course(identifier: str, user: User = Depends(current_user)):
+def remove_course(identifier: str, user: User = Depends(current_user)):
     require(user.uid, 'courses', identifier)
     raise HTTPException(405, 'Permanent deletion is disabled; archive the course instead')
 
 
 @router.patch('/weeks/{identifier}', response_model=Week)
-async def edit_week(identifier: str, patch: WeekPatch, user: User = Depends(current_user)):
+def edit_week(identifier: str, patch: WeekPatch, user: User = Depends(current_user)):
     fields = patch.model_dump(mode='json', exclude_unset=True)
 
     def operation(tx):
@@ -217,7 +217,7 @@ async def edit_week(identifier: str, patch: WeekPatch, user: User = Depends(curr
 
 
 @router.patch('/resources/{identifier}', response_model=Resource)
-async def edit_resource(identifier: str, patch: ResourcePatch, user: User = Depends(current_user)):
+def edit_resource(identifier: str, patch: ResourcePatch, user: User = Depends(current_user)):
     fields = patch.model_dump(mode='json', exclude_unset=True)
 
     def operation(tx):

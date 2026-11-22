@@ -14,13 +14,15 @@ import { describeSnapshotFailure, fetchSnapshotWithRetry, type SnapshotLoadProbl
 import { Badge, Card, EmptyState, FormRow, SectionTitle } from '@/components/common';
 import { PdfWorkspace } from '@/components/pdf-workspace';
 import { CoursePlanner } from '@/components/course-planner';
+import { FocusElapsed } from '@/components/focus-elapsed';
+import { previewPause, previewResume, sessionReviewLimit } from '@/lib/focus-timing';
 import { TasksPlanner } from '@/components/tasks-planner';
 import { isActionable, isOverdue, todayPriorities, upcomingDeadlines, focusTasksForContext } from '@/lib/task-view';
 import { todayStudyCourses, nextSevenDays, nextDeadlineDays, agendaForDate } from '@/lib/home-view';
 import { firebaseAuth, onAuthStateChanged, signIn, signOutUser, useFirebase } from '@/lib/auth';
 import { type DriveEntry, type DriveList, type FocusSession, type Item,
   type Resource, type Snapshot, type Tab, type DriveIndexed, type DriveSource, type DriveIndexResponse, type DriveScanResponse, duration,
-  elapsedFocus, formatDate, kindLabels, localToday } from '@/lib/types';
+  formatDate, kindLabels, localToday } from '@/lib/types';
 
 type DriveStatus = { connected: boolean; configured: boolean };
 const empty: Snapshot = {courses:[], weeks:[], items:[], resources:[], sessions:[], semesters:[]};
@@ -45,6 +47,10 @@ export default function Page() {
   const loadedUserRef=useRef<string|null>(null);
   const loadRequestRef=useRef(0);
   const [busy,setBusy] = useState(false);
+  const [focusBusy,setFocusBusy] = useState(false);
+  const [focusPreview,setFocusPreview] = useState<FocusSession|null>(null);
+  const focusBusyRef = useRef(false);
+  const focusRevisionRef = useRef(0);
   const [pendingItems,setPendingItems] = useState<Set<string>>(()=>new Set());
   const pendingItemsRef=useRef<Set<string>>(new Set());
   const lastLoadedAtRef=useRef(0);
@@ -79,6 +85,7 @@ export default function Page() {
   const [focusMode,setFocusMode] = useState<'25'|'50'|'90'|'free'>('50');
   const [finishReview,setFinishReview] = useState(false);
   const [finishSeconds,setFinishSeconds] = useState('0');
+  const [reviewLimit,setReviewLimit] = useState(0);
   const [weeklyGoal,setWeeklyGoal] = useState(20);
   useEffect(()=>{
     if(!quickFocusOpen)return;
@@ -111,6 +118,8 @@ export default function Page() {
     if (!firebaseAuth) return;
     return onAuthStateChanged(firebaseAuth, u=>{
       pendingItemsRef.current.clear();setPendingItems(new Set());
+      focusBusyRef.current=false;focusRevisionRef.current++;setFocusBusy(false);setFocusPreview(null);
+      setFinishReview(false);setQuickFocusOpen(false);
       setUser(u);setAuthReady(true);
     });
   },[]);
@@ -118,11 +127,12 @@ export default function Page() {
     // Render the clock only after hydration to avoid server/client time mismatches.
     setNow(Math.floor(Date.now()/1000));
     setClockReady(true);
-    // A running timer needs second-level updates; the ordinary header clock does not.
-    const running=data.sessions.some(session=>session.status==='running');
-    const id=window.setInterval(()=>setNow(Math.floor(Date.now()/1000)),running?1000:30000);
-    return ()=>clearInterval(id);
-  },[data.sessions]);
+    // FocusElapsed owns the second-level clock: do not rerender the full planner on every tick.
+    const refresh = () => setNow(Math.floor(Date.now()/1000));
+    const id=window.setInterval(refresh,30000);
+    document.addEventListener('visibilitychange',refresh);
+    return ()=>{clearInterval(id);document.removeEventListener('visibilitychange',refresh);};
+  },[]);
   useEffect(()=>{
     const preference=window.localStorage.getItem('studyhub-theme');
     if(preference==='dark'||preference==='light')setTheme(preference);
@@ -146,6 +156,7 @@ export default function Page() {
     const uid=user?.uid||'local';
     const hadSnapshot=loadedUserRef.current===uid;
     const requestNumber=++loadRequestRef.current;
+    const focusRevisionAtStart=focusRevisionRef.current;
     if (!hadSnapshot) {
       // Never show data from a previously signed-in account.
       setData(empty);setSnapshotReady(false);setSnapshotIssue(null);setLoading(true);
@@ -154,10 +165,14 @@ export default function Page() {
       const snap=await fetchSnapshotWithRetry(()=>api<Snapshot>('/api/snapshot',user,{timeoutMs:15000}));
       if (requestNumber!==loadRequestRef.current) return false;
       // Keep pending checkbox changes visible if a manual refresh finishes mid-save.
-      setData(previous=>pendingItemsRef.current.size ? { ...snap, items:snap.items.map(item=>{
-        if(!pendingItemsRef.current.has(item.id)) return item;
-        return previous.items.find(old=>old.id===item.id)||item;
-      }) } : snap);
+      setData(previous=>{
+        const items=pendingItemsRef.current.size ? snap.items.map(item=>
+          pendingItemsRef.current.has(item.id)?previous.items.find(old=>old.id===item.id)||item:item
+        ) : snap.items;
+        // An older snapshot must not undo a Focus mutation that committed while it was loading.
+        const sessions=focusRevisionAtStart===focusRevisionRef.current?snap.sessions:previous.sessions;
+        return {...snap,items,sessions};
+      });
       lastLoadedAtRef.current=Date.now();
       loadedUserRef.current=uid;
       setSnapshotReady(true);
@@ -234,15 +249,15 @@ export default function Page() {
   };
   const selectedCourse = data.courses.find(c=>c.id===courseId&&!c.archived);
   const selectedWeek = data.weeks.find(w=>w.course_id===courseId && w.number===weekNumber);
-  const activeCourseIds = new Set(data.courses.filter(c=>!c.archived).map(c=>c.id));
-  const tasks = data.items.filter(i=>isActionable(i)&&(!i.course_id||activeCourseIds.has(i.course_id)));
+  const activeCourseIds = useMemo(()=>new Set(data.courses.filter(c=>!c.archived).map(c=>c.id)),[data.courses]);
+  const tasks = useMemo(()=>data.items.filter(i=>isActionable(i)&&(!i.course_id||activeCourseIds.has(i.course_id))),[data.items,activeCourseIds]);
   const today=localToday();
-  const openTasks = tasks.filter(i=>!i.done);
-  const plannedToday=openTasks.filter(i=>i.planned_date===today);
-  const todayWork=todayPriorities(openTasks,today);
-  const overdue=todayWork.filter(i=>isOverdue(i,today));
-  const upcoming=upcomingDeadlines(openTasks,today);
-  const studyGroups=todayStudyCourses(data.courses,data.items,today);
+  const openTasks = useMemo(()=>tasks.filter(i=>!i.done),[tasks]);
+  const plannedToday = useMemo(()=>openTasks.filter(i=>i.planned_date===today),[openTasks,today]);
+  const todayWork = useMemo(()=>todayPriorities(openTasks,today),[openTasks,today]);
+  const overdue = useMemo(()=>todayWork.filter(i=>isOverdue(i,today)),[todayWork,today]);
+  const upcoming = useMemo(()=>upcomingDeadlines(openTasks,today),[openTasks,today]);
+  const studyGroups = useMemo(()=>todayStudyCourses(data.courses,data.items,today),[data.courses,data.items,today]);
   useEffect(() => {
     // Keep carousel labels accurate across responsive breakpoints and data changes.
     const refresh = () => syncCourseScroll();
@@ -250,9 +265,9 @@ export default function Page() {
     window.addEventListener('resize', refresh);
     return () => window.removeEventListener('resize', refresh);
   }, [studyGroups.length, tab, snapshotReady]);
-  const calendarDays=nextSevenDays(today,openTasks);
-  const homeAgenda=homeSelectedDate?agendaForDate(openTasks,homeSelectedDate):[];
-  const filteredPriorities=todayWork.filter(i=>priorityFilter==='all'||(priorityFilter==='course'?!!i.course_id:!i.course_id));
+  const calendarDays=useMemo(()=>nextSevenDays(today,openTasks),[today,openTasks]);
+  const homeAgenda=useMemo(()=>homeSelectedDate?agendaForDate(openTasks,homeSelectedDate):[],[homeSelectedDate,openTasks]);
+  const filteredPriorities=useMemo(()=>todayWork.filter(i=>priorityFilter==='all'||(priorityFilter==='course'?!!i.course_id:!i.course_id)),[todayWork,priorityFilter]);
   const hour=new Date(now*1000).getHours();
   const hello=hour<12?'Good morning':hour<17?'Good afternoon':'Good evening';
   const firstName=user?.displayName?.trim().split(/\s+/)[0]||'';
@@ -265,10 +280,18 @@ export default function Page() {
     'No work is due or planned for today. Pick up a course or plan something new.';
   const dateLabel=clockReady?formatLocalDate(now*1000):'—';
   const timeLabel=clockReady?formatLocalClock(now*1000):'--:--';
-  const active=data.sessions.find(s=>s.status==='running'||s.status==='paused');
+  const active=focusPreview??data.sessions.find(s=>s.status==='running'||s.status==='paused');
   const currentWeekStart=useMemo(()=>{const d=new Date();d.setHours(0,0,0,0);const weekday=(d.getDay()+6)%7;d.setDate(d.getDate()-weekday);return Math.floor(d.getTime()/1000);},[today]);
-  const weekSeconds=data.sessions.filter(s=>s.status==='finished'&&s.ended_at && s.ended_at>=currentWeekStart).reduce((n,s)=>n+(s.focus_seconds||0),0);
-  const totalSeconds=data.sessions.filter(s=>s.status==='finished').reduce((n,s)=>n+(s.focus_seconds||0),0);
+  const {weekSeconds,totalSeconds}=useMemo(()=>{
+    let weekly=0,all=0;
+    for(const session of data.sessions){
+      if(session.status!=='finished')continue;
+      const seconds=session.focus_seconds||0;
+      all+=seconds;
+      if(session.ended_at&&session.ended_at>=currentWeekStart)weekly+=seconds;
+    }
+    return {weekSeconds:weekly,totalSeconds:all};
+  },[data.sessions,currentWeekStart]);
   const weekPct=Math.min(100,Math.round((weekSeconds/(weeklyGoal*3600))*100));
   const toggle=(item:Item)=>{
     if(pendingItemsRef.current.has(item.id))return;
@@ -352,34 +375,93 @@ export default function Page() {
     setTaskForm(false);
     setTab(target);
   };
-  const startQuickFocus=async()=>{
-    if(active){setQuickFocusOpen(false);setTab('focus');return;}
-    const item=data.items.find(i=>i.id===quickFocusItem);
-    const ok=await act(()=>api<FocusSession>('/api/sessions/start',user,{method:'POST',body:{
-      item_id:quickFocusItem||null,course_id:quickFocusCourse||null,
-      week_number:item?.week_number||null,mode:quickFocusMode
-    }}),{collection:'sessions'});
-    if(ok){
-      setFocusCourse(quickFocusCourse);setFocusItem(quickFocusItem);setFocusMode(quickFocusMode);
-      setQuickFocusOpen(false);
+  // Focus actions use an optimistic overlay and a separate in-flight lock: the controls
+  // change immediately, without waiting for a six-collection refresh or blocking other UI.
+  const focusRequest=async(
+    preview:FocusSession|null,route:string,body?:unknown,
+    onSuccess?:(saved:FocusSession)=>void,onFailure?:()=>void
+  ):Promise<boolean>=>{
+    if(focusBusyRef.current)return false;
+    focusBusyRef.current=true;focusRevisionRef.current++;
+    setFocusBusy(true);setFocusPreview(preview);setError('');
+    const uid=user?.uid||'local';
+    const sameUser=()=>!useFirebase||firebaseAuth?.currentUser?.uid===uid;
+    try {
+      const saved=await api<FocusSession>(route,user,{method:'POST',...(body!==undefined?{body}:{})});
+      if(!sameUser())return false;
+      setData(previous=>applyMutation(previous,{collection:'sessions'},saved));
+      onSuccess?.(saved);
+      return true;
+    }catch(e){
+      if(sameUser()){
+        setError(`Focus action failed: ${e instanceof Error?e.message:'Please retry.'} Refresh if another tab changed the session.`);
+        onFailure?.();
+      }
+      return false;
+    }finally{
+      if(sameUser()){
+        focusBusyRef.current=false;
+        setFocusPreview(null);setFocusBusy(false);
+      }
     }
+  };
+  const startFocus=async(course:string,itemId:string,mode:'25'|'50'|'90'|'free')=>{
+    if(active||focusBusyRef.current||busy)return;
+    const item=data.items.find(i=>i.id===itemId);
+    const timestamp=Math.floor(Date.now()/1000);
+    const optimistic:FocusSession={
+      id:`pending-${timestamp}`,course_id:course||null,item_id:itemId||null,
+      week_number:item?.week_number||null,mode,status:'running',started_at:timestamp,
+      pause_started_at:null,accumulated_pause_seconds:0,ended_at:null,focus_seconds:null
+    };
+    setQuickFocusOpen(false);
+    await focusRequest(optimistic,'/api/sessions/start',{
+      item_id:itemId||null,course_id:course||null,week_number:item?.week_number||null,mode,
+      requested_at:timestamp
+    });
+  };
+  const startQuickFocus=async()=>{
+    if(active){setQuickFocusOpen(false);return;}
+    setFocusCourse(quickFocusCourse);setFocusItem(quickFocusItem);setFocusMode(quickFocusMode);
+    await startFocus(quickFocusCourse,quickFocusItem,quickFocusMode);
   };
   const startFrom=(i?:Item)=>{
     // Personal tasks have no course; the selector still needs to retain their item ID.
     setFocusCourse(i?.course_id||'');setFocusItem(i?.id||'');
     setTab('focus');
   };
-  const beginFocus=()=>void act(()=>{
-    const item=data.items.find(i=>i.id===focusItem);
-    return api<FocusSession>('/api/sessions/start',user,{method:'POST',body:{item_id:focusItem||null,course_id:focusCourse||null,week_number:item?.week_number||null,mode:focusMode}});
-  },{collection:'sessions'});
-  const sessionAction=(verb:'pause'|'resume')=>{if(!active)return;void act(()=>api<FocusSession>(`/api/sessions/${active.id}/${verb}`,user,{method:'POST'}),{collection:'sessions'});};
-  const reviewFinish=()=>{if(!active)return;setFinishSeconds(String(Math.min(86400,elapsedFocus(active,now))));setFinishReview(true);};
-  const finish=()=>{if(!active)return;void (async()=>{
-    const id=active.id;
-    const ok=await act(()=>api<FocusSession>(`/api/sessions/${id}/finish`,user,{method:'POST',body:{confirmed_seconds:Math.round(Number(finishSeconds))}}),{collection:'sessions'});
-    if(ok)setFinishReview(false);
-  })();};
+  const beginFocus=()=>void startFocus(focusCourse,focusItem,focusMode);
+  const sessionAction=(verb:'pause'|'resume')=>{
+    if(!active||focusBusyRef.current)return;
+    const at=Math.floor(Date.now()/1000);
+    const preview=verb==='pause'?previewPause(active,at):previewResume(active,at);
+    const body=verb==='pause'?{displayed_seconds:sessionReviewLimit(active,Date.now())}:undefined;
+    void focusRequest(preview,`/api/sessions/${active.id}/${verb}`,body);
+  };
+  const reviewFinish=()=>{
+    if(!active||focusBusyRef.current)return;
+    const at=Date.now();
+    const seconds=sessionReviewLimit(active,at);
+    setReviewLimit(seconds);setFinishSeconds(String(seconds));setFinishReview(true);
+    if(active.status==='running'){
+      // End means stop *now*, even while the review dialog is open. Cancel leaves
+      // the session paused so no study time is accidentally added in a slow request.
+      void focusRequest(previewPause(active,Math.floor(at/1000)),`/api/sessions/${active.id}/pause`,
+        {displayed_seconds:seconds},
+        saved=>{
+          const limit=Math.min(seconds,sessionReviewLimit(saved,Date.now()));
+          setReviewLimit(limit);
+          setFinishSeconds(previous=>String(Math.min(Number(previous)||0,limit)));
+        },()=>setFinishReview(false));
+    }
+  };
+  const finish=()=>{
+    if(!active||focusBusyRef.current||active.status!=='paused')return;
+    const confirmed=Number(finishSeconds);
+    if(!Number.isInteger(confirmed)||confirmed<0||confirmed>reviewLimit)return;
+    void focusRequest(null,`/api/sessions/${active.id}/finish`,{confirmed_seconds:confirmed},
+      ()=>setFinishReview(false));
+  };
   const loadDriveStatus=useCallback(async()=>{
     if (useFirebase&&!user) return;
     try {setDrive(await api<DriveStatus>('/api/drive/status',user));}catch{/* noncritical */}
@@ -504,19 +586,19 @@ export default function Page() {
           <span className="topbar-datetime"><span className="topbar-date-section"><CalendarDays size={15} aria-hidden="true"/>{dateLabel}</span><span className="topbar-datetime-divider" aria-hidden="true"/><span title="Your local time (24-hour clock)" aria-label={`Local time ${timeLabel}`}><Clock3 size={15} aria-hidden="true"/><time dateTime={clockReady?new Date(now*1000).toISOString():undefined}>{timeLabel}</time></span></span>
           <div className="topbar-focus-wrap" ref={quickFocusRef}>
             {active?<>
-              <button type="button" className="topbar-focus-session" aria-expanded={quickFocusOpen} aria-controls="active-focus-menu" onClick={()=>setQuickFocusOpen(value=>!value)} title="Manage focus session" aria-label={`${active.status==='paused'?'Paused':'Running'} focus session, ${duration(elapsedFocus(active,now))}; manage session`}>
+              <button type="button" className="topbar-focus-session" aria-expanded={quickFocusOpen} aria-controls="active-focus-menu" onClick={()=>setQuickFocusOpen(value=>!value)} title="Manage focus session" aria-label={`${active.status==='paused'?'Paused':'Running'} focus session; manage session`}>
                 <span className={'topbar-focus-dot'+(active.status==='paused'?' paused':'')}/>
-                <span>{active.status==='paused'?'Paused':'Focus'} · {duration(elapsedFocus(active,now))}</span>
+                <span>{active.status==='paused'?'Paused':'Focus'} · <FocusElapsed session={active}/></span>
                 <ChevronDown size={15} aria-hidden="true"/>
               </button>
               {quickFocusOpen&&<div id="active-focus-menu" className="active-focus-menu" role="group" aria-label="Focus session controls">
-                <button type="button" disabled={busy} onClick={()=>{setQuickFocusOpen(false);sessionAction(active.status==='running'?'pause':'resume');}}>
+                <button type="button" disabled={focusBusy} onClick={()=>{setQuickFocusOpen(false);sessionAction(active.status==='running'?'pause':'resume');}}>
                   {active.status==='running'?<Pause size={16}/>:<Play size={16}/>} {active.status==='running'?'Pause session':'Resume session'}
                 </button>
-                <button type="button" disabled={busy} onClick={()=>{setQuickFocusOpen(false);reviewFinish();}}><Square size={15}/> End session</button>
+                <button type="button" disabled={focusBusy} onClick={()=>{setQuickFocusOpen(false);reviewFinish();}}><Square size={15}/> End session</button>
               </div>}
             </>:<>
-              <button type="button" className="topbar-quick-focus" aria-expanded={quickFocusOpen} aria-controls="quick-focus-menu" onClick={()=>setQuickFocusOpen(value=>!value)} disabled={busy||!snapshotReady}>
+              <button type="button" className="topbar-quick-focus" aria-expanded={quickFocusOpen} aria-controls="quick-focus-menu" onClick={()=>setQuickFocusOpen(value=>!value)} disabled={busy||focusBusy||!snapshotReady}>
                 <Timer size={16}/> Quick focus <ChevronDown size={14}/>
               </button>
               {quickFocusOpen&&<div className="quick-focus-menu" id="quick-focus-menu" role="group" aria-label="Quick focus setup">
@@ -538,7 +620,7 @@ export default function Page() {
                     {focusTasksForContext(data.items,quickFocusCourse).map(item=><option key={item.id} value={item.id}>{item.title}</option>)}
                   </select>
                 </label>
-                <button type="button" className="btn primary quick-focus-start" disabled={busy} onClick={()=>void startQuickFocus()}><Play size={15}/> Start focus</button>
+                <button type="button" className="btn primary quick-focus-start" disabled={busy||focusBusy} onClick={()=>void startQuickFocus()}><Play size={15}/> Start focus</button>
                 <p>Timed modes are targets; finish sessions manually in Focus.</p>
               </div>}
             </>}
@@ -625,9 +707,9 @@ export default function Page() {
               {!active&&<div className="focus-settings"><FormRow label="Course (optional)"><select value={focusCourse} onChange={e=>{setFocusCourse(e.target.value);setFocusItem('');}}><option value="">General / personal</option>{data.courses.filter(c=>!c.archived).map(c=><option key={c.id} value={c.id}>{c.code} · {c.title}</option>)}</select></FormRow><FormRow label="Focus task (optional)"><select value={focusItem} onChange={e=>setFocusItem(e.target.value)}><option value="">No linked task</option>{focusTasksForContext(data.items,focusCourse).map(i=><option key={i.id} value={i.id}>{i.title}</option>)}</select></FormRow></div>}
               {active&&<div className="focus-context"><Badge tone="good">Active session</Badge><strong>{data.items.find(i=>i.id===active.item_id)?.title||data.courses.find(c=>c.id===active.course_id)?.title||'General focus'}</strong></div>}
               <div className="focus-modes">{(['25','50','90','free'] as const).map(m=><button key={m} disabled={!!active} className={focusMode===m?'current':''} onClick={()=>setFocusMode(m)}>{m==='free'?'Stopwatch':`${m} min`}</button>)}</div>
-              <div className="timer-dial"><span className="dial-label">{active?active.status==='paused'?'PAUSED':'FOCUSING':focusMode==='free'?'STOPWATCH':'FOCUS TARGET'}</span><strong>{active?duration(elapsedFocus(active,now)):focusMode==='free'?'00:00:00':duration(Number(focusMode)*60)}</strong><span className="dial-sub">{active?.mode!=='free'&&active?`Target: ${active.mode} minutes`:active?'Count-up session':'Ready when you are'}</span></div>
-              {active? <div className="focus-buttons"><button className="btn secondary" onClick={()=>sessionAction(active.status==='running'?'pause':'resume')} disabled={busy}>{active.status==='running'?<Pause size={17}/>:<Play size={17}/>} {active.status==='running'?'Pause':'Resume'}</button><button className="btn primary" onClick={reviewFinish}><Square size={15}/> Finish & review</button></div>:<button className="btn primary focus-start" disabled={busy} onClick={beginFocus}><Play size={18}/> Start focusing</button>}
-              <p className="focus-tip">Sessions persist after closing the tab. Timed modes are targets, not automatic stop timers yet. Finish manually and correct any idle time in the review.</p>
+              <div className="timer-dial"><span className="dial-label">{active?active.status==='paused'?'PAUSED':'FOCUSING':focusMode==='free'?'STOPWATCH':'FOCUS TARGET'}</span><strong>{active?<FocusElapsed session={active}/>:focusMode==='free'?'00:00:00':duration(Number(focusMode)*60)}</strong><span className="dial-sub">{active?.mode!=='free'&&active?`Target: ${active.mode} minutes`:active?'Count-up session':'Ready when you are'}</span></div>
+              {active? <div className="focus-buttons"><button className="btn secondary" onClick={()=>sessionAction(active.status==='running'?'pause':'resume')} disabled={focusBusy}>{active.status==='running'?<Pause size={17}/>:<Play size={17}/>} {active.status==='running'?'Pause':'Resume'}</button><button className="btn primary" disabled={focusBusy} onClick={reviewFinish}><Square size={15}/> Finish & review</button></div>:<button className="btn primary focus-start" disabled={busy||focusBusy} onClick={beginFocus}><Play size={18}/> Start focusing</button>}
+              <p className="focus-tip">Sessions persist after closing the tab. End immediately pauses the clock before review; canceling the review keeps it paused. Timed modes are goals, not automatic stops.</p>
             </Card><div className="stack"><Card><SectionTitle title="Your focus statistics"/><div className="focus-stat"><span>This week</span><strong>{(weekSeconds/3600).toFixed(1)} hours</strong></div><div className="focus-stat"><span>All time</span><strong>{(totalSeconds/3600).toFixed(1)} hours</strong></div><div className="focus-stat"><span>Completed sessions</span><strong>{data.sessions.filter(s=>s.status==='finished').length}</strong></div></Card>
               <Card className="focus-week-goal"><SectionTitle title="Weekly focus goal" aside={<Badge>{(weekSeconds/3600).toFixed(1)} / {weeklyGoal} h</Badge>}/>
                 <div className="home-progress-track" role="progressbar" aria-label="Weekly focus goal progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={weekPct}><div style={{width:`${weekPct}%`}}/></div>
@@ -671,7 +753,7 @@ export default function Page() {
           </>}
         </>}
       </main>
-      {finishReview&&active&&<div className="dialog-backdrop" role="presentation"><div className="dialog" role="dialog" aria-modal="true" aria-label="Review focus session"><button className="dialog-close" onClick={()=>setFinishReview(false)} aria-label="Cancel"><X size={18}/></button><h2>Review session</h2><p>Confirm your actual focus time. If you left the browser open, reduce the time to exclude inactivity.</p><FormRow label={`Actual focus seconds (maximum ${Math.min(86400,elapsedFocus(active,now))})`}><input type="number" min={0} max={Math.min(86400,elapsedFocus(active,now))} value={finishSeconds} onChange={e=>setFinishSeconds(e.target.value)}/></FormRow><div className="dialog-actions"><button className="btn secondary" onClick={()=>setFinishReview(false)}>Keep session</button><button className="btn primary" disabled={busy||!Number.isInteger(Number(finishSeconds))||Number(finishSeconds)<0||Number(finishSeconds)>Math.min(86400,elapsedFocus(active,now))} onClick={finish}>Save session</button></div></div></div>}
+      {finishReview&&active&&<div className="dialog-backdrop" role="presentation"><div className="dialog" role="dialog" aria-modal="true" aria-label="Review focus session"><button className="dialog-close" onClick={()=>setFinishReview(false)} aria-label="Cancel"><X size={18}/></button><h2>Review session</h2><p>Timer paused at {duration(reviewLimit)}. Adjust for idle time if needed. Cancel leaves the session paused; Resume starts it again.</p><FormRow label={`Actual focus seconds (maximum ${reviewLimit})`}><input type="number" min={0} max={reviewLimit} value={finishSeconds} onChange={e=>setFinishSeconds(e.target.value)}/></FormRow><div className="dialog-actions"><button className="btn secondary" onClick={()=>setFinishReview(false)}>Keep paused</button><button className="btn primary" disabled={focusBusy||active.status!=='paused'||!Number.isInteger(Number(finishSeconds))||Number(finishSeconds)<0||Number(finishSeconds)>reviewLimit} onClick={finish}>{focusBusy?'Saving timer…':'Save session'}</button></div></div></div>}
     </div>
     <nav className="mobile-nav" aria-label="Mobile navigation">{tabs.map(t=><button key={t.id} className={tab===t.id?'current':''} onClick={()=>setTab(t.id)}><t.icon size={19}/><span>{t.label}</span></button>)}</nav>
     {pdf&&<PdfWorkspace pdf={pdf} items={data.items}
