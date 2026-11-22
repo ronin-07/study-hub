@@ -107,3 +107,16 @@ def test_oauth_state_signature_protection():
     with pytest.raises(HTTPException) as info:
         _decode_state(state[:-1] + ('a' if state[-1] != 'a' else 'b'), 'my_very_long_server_secret')
     assert info.value.status_code == 400
+
+
+def test_focus_session_can_link_personal_task_without_course(client):
+    task = client.post('/api/items', json={
+        'kind': 'personal', 'title': 'Read for 20 minutes', 'planned_date': '2026-11-22'
+    })
+    assert task.status_code == 201
+    started = client.post('/api/sessions/start', json={
+        'mode': '25', 'item_id': task.json()['id'], 'course_id': None, 'week_number': None
+    })
+    assert started.status_code == 201, started.text
+    assert started.json()['item_id'] == task.json()['id']
+    assert started.json()['course_id'] is None

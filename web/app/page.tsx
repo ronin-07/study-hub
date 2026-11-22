@@ -5,14 +5,14 @@ import type { User } from 'firebase/auth';
 import {
   ArrowLeft, ArrowRight, BookOpen, CalendarDays, Check, CheckCircle2, ChevronDown, Clock3,
   Cloud, ExternalLink, FileText, Folder, GraduationCap, Home, Link2, ListTodo, LoaderCircle, FolderCheck, ScanSearch,
-  Pause, Play, Plus, RotateCcw, Search, Square, Timer, Trash2, X, Sparkles, Sun, Moon, Zap, Target, Layers3
+  Pause, Play, Plus, RotateCcw, Search, Square, Timer, Trash2, X, Sparkles, Sun, Moon, Zap, Target, Layers3, AlertTriangle
 } from 'lucide-react';
 import { api, pdfBlob } from '@/lib/api';
 import { Badge, Card, EmptyState, FormRow, SectionTitle } from '@/components/common';
 import { PdfWorkspace } from '@/components/pdf-workspace';
 import { CoursePlanner } from '@/components/course-planner';
 import { TasksPlanner } from '@/components/tasks-planner';
-import { isActionable, isOverdue, todayPriorities, upcomingDeadlines } from '@/lib/task-view';
+import { isActionable, isOverdue, todayPriorities, upcomingDeadlines, focusTasksForContext } from '@/lib/task-view';
 import { firebaseAuth, onAuthStateChanged, signIn, signOutUser, useFirebase } from '@/lib/auth';
 import { type DriveEntry, type DriveList, type FocusSession, type Item,
   type Resource, type Snapshot, type Tab, type DriveIndexed, type DriveSource, type DriveIndexResponse, type DriveScanResponse, duration,
@@ -122,6 +122,11 @@ export default function Page() {
   const todayWork=todayPriorities(openTasks,today);
   const overdue=todayWork.filter(i=>isOverdue(i,today));
   const upcoming=upcomingDeadlines(openTasks,today);
+  const greeting=overdue.length ? `${overdue.length} ${overdue.length===1?'task needs':'tasks need'} your attention.` :
+    todayWork.length ? `${todayWork.length} ${todayWork.length===1?'priority':'priorities'} for today.` : 'Your day is yours to plan.';
+  const greetingDetail=overdue.length ? 'Overdue work comes first. Clear or reschedule what matters, then return to studying.' :
+    todayWork.length ? 'Your plan is ready. Make a little progress, one task at a time.' :
+    'No work is due or planned for today. Pick up a course or plan something new.';
   const dateLabel=new Intl.DateTimeFormat('en-DK',{month:'short',day:'numeric',year:'numeric'}).format(new Date(now*1000));
   const active=data.sessions.find(s=>s.status==='running'||s.status==='paused');
   const currentWeekStart=useMemo(()=>{const d=new Date();d.setHours(0,0,0,0);const weekday=(d.getDay()+6)%7;d.setDate(d.getDate()-weekday);return Math.floor(d.getTime()/1000);},[today]);
@@ -130,7 +135,8 @@ export default function Page() {
   const weekPct=Math.min(100,Math.round((weekSeconds/(weeklyGoal*3600))*100));
   const toggle=(i:Item)=>void act(async()=>{await api(`/api/items/${i.id}`,user,{method:'PATCH',body:{done:!i.done}});});
   const startFrom=(i?:Item)=>{
-    setFocusItem(i?.id||'');setFocusCourse(i?.course_id||'');
+    // Personal tasks have no course; the selector still needs to retain their item ID.
+    setFocusCourse(i?.course_id||'');setFocusItem(i?.id||'');
     setTab('focus');
   };
   const beginFocus=()=>void act(async()=>{
@@ -236,16 +242,16 @@ export default function Page() {
         {loading?<div className="loading-state"><LoaderCircle className="spin"/> Loading your workspace…</div>:!snapshotReady?<Card className="load-error"><SectionTitle title="Could not load your Study Hub"/><p className="muted">Your data has not been loaded. Check your connection and retry; an empty dashboard here would be misleading.</p><button className="btn primary" onClick={()=>{setLoading(true);void load();}}><RotateCcw size={16}/> Retry loading</button></Card>:<>
           {tab==='today'&&<>
             <div className="page-heading"><div><span className="eyebrow"><Sparkles size={13}/> YOUR DAILY WORKSPACE</span><h1>Make today count.</h1><p>Everything you need to move forward, in one calm space.</p></div><button className="btn secondary" onClick={()=>{setTab('tasks');setTaskForm(true);}}><Plus size={16}/> Quick task</button></div>
-            <div className="welcome-hero"><div className="hero-copy"><span className="hero-label"><Sparkles size={15}/> A FRESH PAGE, EVERY DAY</span><h2>Small steps. Big progress.</h2><p>Pick a priority, settle in, and find your flow. You've got this.</p><div className="hero-actions"><button className="btn hero-primary" onClick={()=>setTab('courses')}><BookOpen size={15}/> Continue studying</button><button className="btn hero-secondary" onClick={()=>setTab('tasks')}><ListTodo size={15}/> My tasks</button></div></div><div className="hero-decoration" aria-hidden="true"><span className="hero-orb"><BookOpen size={57}/></span><span className="hero-float"><Sparkles size={27}/></span></div></div>
+            <div className={'welcome-hero'+(overdue.length?' needs-attention':'')}><div className="hero-copy"><span className="hero-label">{overdue.length?<AlertTriangle size={15}/>:<Sparkles size={15}/>} YOUR DAILY BRIEF · {dateLabel}</span><h2>{greeting}</h2><p>{greetingDetail}</p><div className="hero-actions"><button className="btn hero-primary" onClick={()=>setTab(overdue.length?'tasks':'courses')}>{overdue.length?<ListTodo size={15}/>:<BookOpen size={15}/>} {overdue.length?'Review priorities':selectedCourse?'Continue studying':'Open Study Planner'}</button><button className="btn hero-secondary" onClick={()=>setTab('tasks')}><CalendarDays size={15}/> View my plan</button></div></div><div className="hero-decoration" aria-hidden="true"><span className="hero-orb">{overdue.length?<AlertTriangle size={55}/>:<BookOpen size={57}/>}</span><span className="hero-float"><Sparkles size={27}/></span></div></div>
             <div className="stats-grid">
               <Card className="stat"><span className="stat-icon"><ListTodo/></span><span>Open tasks</span><strong>{openTasks.length}</strong><small>{todayWork.length} to handle today · {plannedToday.length} planned today</small></Card>
               <Card className="stat"><span className="stat-icon"><Clock3/></span><span>Focus this week</span><strong>{(weekSeconds/3600).toFixed(1)}<em>h</em></strong><small>Target: {weeklyGoal} hours · saved on this device</small></Card>
-              <Card className="stat"><span className="stat-icon"><CalendarDays/></span><span>Upcoming deadlines</span><strong>{upcoming.length}</strong><small>{overdue.length?`${overdue.length} overdue tasks need attention`:'No overdue tasks'}</small></Card>
+              <Card className={'stat'+(overdue.length?' stat-alert':'')}><span className="stat-icon">{overdue.length?<AlertTriangle/>:<CalendarDays/>}</span><span>Upcoming deadlines</span><strong>{upcoming.length}</strong><small>{overdue.length?<span className="stat-alert-label"><AlertTriangle size={13}/> {overdue.length} overdue · action needed</span>:'No overdue work'}</small></Card>
             </div>
             <div className="two-col-layout">
               <div className="stack">
                 <Card><SectionTitle title="Today's priorities" aside={<button className="text-button" onClick={()=>setTab('tasks')}>All tasks <ArrowRight size={14}/></button>}/>
-                  {todayWork.length?todayWork.slice(0,6).map(i=><div className="task-row" key={i.id}><input aria-label={`Complete ${i.title}`} type="checkbox" checked={i.done} disabled={busy} onChange={()=>toggle(i)}/><div className="task-content"><strong>{i.title}</strong><small>{i.course_id?(data.courses.find(c=>c.id===i.course_id)?.code||'Study'):'Personal'} · {kindLabels[i.kind]}{i.due_date&&i.due_date<=today?` · Due ${dateText(i.due_date)}`:''}</small></div>{isOverdue(i,today)&&<Badge tone="danger">Overdue</Badge>}{i.resource_id&&<button className="icon-btn" disabled={busy} aria-label={`Open resource for ${i.title}`} title="Open linked notes or textbook" onClick={()=>openTaskResource(i)}><BookOpen size={16}/></button>}{i.course_id&&<button className="icon-btn" title="Start focus" onClick={()=>startFrom(i)}><Timer size={16}/></button>}</div>):<EmptyState icon={<CheckCircle2 size={24}/>} title="A clear day" detail="No work due or planned for today. Plan a task or start a focus session."/>}
+                  {todayWork.length?todayWork.slice(0,6).map(i=><div className={'task-row'+(isOverdue(i,today)?' task-overdue':'')} key={i.id}><input aria-label={`Complete ${i.title}`} type="checkbox" checked={i.done} disabled={busy} onChange={()=>toggle(i)}/><div className="task-content"><strong>{i.title}</strong><small>{i.course_id?(data.courses.find(c=>c.id===i.course_id)?.code||'Study'):'Personal'} · {kindLabels[i.kind]}{i.due_date&&i.due_date<=today?` · Due ${dateText(i.due_date)}`:i.planned_date&&i.planned_date<today?` · Planned ${dateText(i.planned_date)}`:''}</small></div>{isOverdue(i,today)&&<Badge tone="danger"><AlertTriangle size={12}/> Overdue</Badge>}{i.resource_id&&<button className="icon-btn" disabled={busy} aria-label={`Open resource for ${i.title}`} title="Open linked notes or textbook" onClick={()=>openTaskResource(i)}><BookOpen size={16}/></button>}<button className="icon-btn" title={`Focus on ${i.title}`} aria-label={`Focus on ${i.title}`} disabled={busy} onClick={()=>startFrom(i)}><Timer size={16}/></button></div>):<EmptyState icon={<CheckCircle2 size={24}/>} title="A clear day" detail="No work due or planned for today. Plan a task or start a focus session."/>}
                   {todayWork.length>6&&<button className="text-button" onClick={()=>setTab('tasks')}>View {todayWork.length-6} more in Tasks <ArrowRight size={14}/></button>}
                 </Card>
                 <Card><SectionTitle title="Upcoming deadlines" aside={<Badge>{upcoming.length} open</Badge>}/>
@@ -254,7 +260,7 @@ export default function Page() {
                 </Card>
               </div>
               <div className="stack">
-                <Card className="accent-card"><div className="overline">YOUR COURSE WORKSPACE</div><div className="accent-icon"><BookOpen size={25}/></div><h2>{selectedCourse?.title||'Start your first course'}</h2><p>{selectedCourse?`${selectedCourse.code} · Week ${weekNumber}${selectedWeek?` · ${selectedWeek.title}`:''}`:'Add your DTU courses and weekly topics to organize all your learning materials.'}</p><button className="btn primary" onClick={()=>setTab('courses')}>{selectedCourse?'Open course':'Set up a course'} <ArrowRight size={16}/></button></Card>
+                <Card className="accent-card"><div className="overline">YOUR COURSE WORKSPACE</div><div className="accent-icon"><BookOpen size={25}/></div><h2>{selectedCourse?.title||'Start your first course'}</h2><p>{selectedCourse?`${selectedCourse.code} · Week ${weekNumber}${selectedWeek?` · ${selectedWeek.title}`:''}`:'Add your DTU courses and weekly topics to organize all your learning materials.'}</p><button className="btn primary" onClick={()=>{if(selectedCourse){setCourseId(selectedCourse.id);setWeekNumber(Math.min(weekNumber,selectedCourse.week_count));}setTab('courses');}} aria-label={selectedCourse?`Open ${selectedCourse.title} in Study Planner`:'Set up a course'}>{selectedCourse?'Open course':'Set up a course'} <ArrowRight size={16}/></button></Card>
                 <Card><SectionTitle title="Weekly focus goal" aside={<span className="quiet-number">{Math.round(weekSeconds/60)} / {weeklyGoal*60} min</span>}/><div className="progress-track"><div style={{width:`${weekPct}%`}}/></div><div className="goal-footer"><span>{weekPct}% of your goal</span><label>Goal <input type="number" min={1} max={80} value={weeklyGoal} onChange={e=>{const n=Math.max(1,Math.min(80,Number(e.target.value)||1));setWeeklyGoal(n);localStorage.setItem('studyhub-focus-goal',String(n));}}/> h / week</label></div></Card>
               </div>
             </div>
@@ -273,7 +279,7 @@ export default function Page() {
           {tab==='focus'&&<>
             <div className="page-heading"><div><span className="eyebrow"><Target size={13}/> DEEP WORK</span><h1>Find your flow.</h1><p>Settle into a distraction-free session. Every minute counts.</p></div><Badge tone={active?active.status==='running'?'good':'warning':'muted'}>{active?active.status:'Ready'}</Badge></div>
             <div className="focus-layout"><Card className="focus-card">
-              {!active&&<div className="focus-settings"><FormRow label="Course (optional)"><select value={focusCourse} onChange={e=>{setFocusCourse(e.target.value);setFocusItem('');}}><option value="">General study</option>{data.courses.filter(c=>!c.archived).map(c=><option key={c.id} value={c.id}>{c.code} · {c.title}</option>)}</select></FormRow><FormRow label="Study task (optional)"><select value={focusItem} onChange={e=>setFocusItem(e.target.value)}><option value="">No linked task</option>{data.items.filter(i=>i.course_id===focusCourse).map(i=><option key={i.id} value={i.id}>{i.title}</option>)}</select></FormRow></div>}
+              {!active&&<div className="focus-settings"><FormRow label="Course (optional)"><select value={focusCourse} onChange={e=>{setFocusCourse(e.target.value);setFocusItem('');}}><option value="">General / personal</option>{data.courses.filter(c=>!c.archived).map(c=><option key={c.id} value={c.id}>{c.code} · {c.title}</option>)}</select></FormRow><FormRow label="Focus task (optional)"><select value={focusItem} onChange={e=>setFocusItem(e.target.value)}><option value="">No linked task</option>{focusTasksForContext(data.items,focusCourse).map(i=><option key={i.id} value={i.id}>{i.title}</option>)}</select></FormRow></div>}
               {active&&<div className="focus-context"><Badge tone="good">Active session</Badge><strong>{data.items.find(i=>i.id===active.item_id)?.title||data.courses.find(c=>c.id===active.course_id)?.title||'General focus'}</strong></div>}
               <div className="focus-modes">{(['25','50','90','free'] as const).map(m=><button key={m} disabled={!!active} className={focusMode===m?'current':''} onClick={()=>setFocusMode(m)}>{m==='free'?'Stopwatch':`${m} min`}</button>)}</div>
               <div className="timer-dial"><span className="dial-label">{active?active.status==='paused'?'PAUSED':'FOCUSING':focusMode==='free'?'STOPWATCH':'FOCUS TARGET'}</span><strong>{active?duration(elapsedFocus(active,now)):focusMode==='free'?'00:00:00':duration(Number(focusMode)*60)}</strong><span className="dial-sub">{active?.mode!=='free'&&active?`Target: ${active.mode} minutes`:active?'Count-up session':'Ready when you are'}</span></div>

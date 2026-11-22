@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isActionable, belongsToToday, isOverdue, todayPriorities, upcomingWork, upcomingDeadlines, shiftCalendarMonth } from '../lib/task-view.ts';
+import { isActionable, belongsToToday, isOverdue, todayPriorities, upcomingWork, upcomingDeadlines, shiftCalendarMonth, focusTasksForContext } from '../lib/task-view.ts';
 
 const today = '2026-11-22';
 const task = (id, changes = {}) => ({
@@ -41,4 +41,14 @@ test('legacy due-only or planned weekly activities remain visible without migrat
   assert.equal(isActionable(task('reading', {is_task:false, kind:'reading', due_date:'2026-11-22'})),true);
   assert.equal(isActionable(task('notes', {is_task:false, kind:'notes'})),false);
   assert.equal(isActionable(task('exam', {is_task:false, kind:'assignment'})),true);
+});
+
+
+test('personal and course-specific focus selectors keep linked task identity', () => {
+  const personal = {...task('personal',{course_id:null}), is_task:true, kind:'personal'};
+  const course = {...task('course',{course_id:'c2'}), is_task:true, kind:'revision'};
+  const complete = {...task('finished',{course_id:null,done:true}), is_task:true, kind:'personal'};
+  const unplannedNotes = {...task('unplanned',{course_id:'c2'}), is_task:false, kind:'notes'};
+  assert.deepEqual(focusTasksForContext([personal,course,complete,unplannedNotes], '').map(t=>t.id), ['personal']);
+  assert.deepEqual(focusTasksForContext([personal,course,complete,unplannedNotes], 'c2').map(t=>t.id), ['course']);
 });

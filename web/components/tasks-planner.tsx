@@ -2,7 +2,7 @@
 
 import { useMemo, useState, type DragEvent, type FormEvent } from 'react';
 import type { User } from 'firebase/auth';
-import { ArrowLeft, ArrowRight, BookOpen, CalendarDays, CheckCircle2, Clock3, GripVertical, ListTodo, LoaderCircle, Plus, Repeat2, Timer, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, ArrowRight, BookOpen, CalendarDays, CheckCircle2, Clock3, GripVertical, ListTodo, LoaderCircle, Plus, Repeat2, Timer, Trash2, X } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Badge, Card, DayStatus, EmptyState, FormRow } from '@/components/common';
 import { formatDate, kindLabels, localToday, type Course, type Item, type Priority } from '@/lib/types';
@@ -106,20 +106,20 @@ export function TasksPlanner({items,courses,user,busy,run,onToggle,onFocus,onOpe
   const formCourse=availableCourses.find(c=>c.id===draft.course_id);
   const showRow=(i:Item,drag=false)=>{
     const course=availableCourses.find(c=>c.id===i.course_id);
-    return <div className="planner-v05-task" key={i.id} draggable={drag&&!busy&&!i.done}
+    return <div className={'planner-v05-task'+(isOverdue(i,today)?' planner-task-overdue':'')} key={i.id} draggable={drag&&!busy&&!i.done}
         onDragStart={e=>{if(drag)e.dataTransfer.setData('text/plain',i.id);}}>
       {drag&&<GripVertical className="planner-v05-drag" size={15} aria-hidden="true"/>}
       <input type="checkbox" checked={i.done} disabled={busy} aria-label={`Complete ${i.title}`} onChange={()=>onToggle(i)}/>
       <div className="planner-v05-taskbody"><strong className={i.done?'complete':''}>{i.title}</strong>
         <div className="planner-v05-tags"><span>{course?.code||'Personal'}</span>{i.kind==='assignment'&&<span>Assignment</span>}
-          {i.priority==='high'&&<span className="priority">High priority</span>}
+          {isOverdue(i,today)&&<span className="planner-overdue-tag"><AlertTriangle size={12}/> Overdue</span>}{i.priority==='high'&&<span className="priority">High priority</span>}
           {i.repeat&&i.repeat!=='none'&&<span><Repeat2 size={12}/> {cadenceLabel[i.repeat]}</span>}
         </div><DayStatus i={i}/>
       </div>
       <div className="planner-v05-row-actions">
         <button className="btn secondary small" disabled={busy} onClick={()=>openEdit(i)}>Edit</button>
         {i.resource_id&&<button className="icon-btn" disabled={busy} title="Open linked notes or textbook" aria-label={`Open resource for ${i.title}`} onClick={()=>onOpenResource(i)}><BookOpen size={16}/></button>}
-        {i.course_id&&<button className="icon-btn" title="Focus on this task" aria-label={`Focus on ${i.title}`} onClick={()=>onFocus(i)}><Timer size={16}/></button>}
+        <button className="icon-btn" disabled={busy||i.done} title="Focus on this task" aria-label={`Focus on ${i.title}`} onClick={()=>onFocus(i)}><Timer size={16}/></button>
       </div>
     </div>;
   };
@@ -129,7 +129,7 @@ export function TasksPlanner({items,courses,user,busy,run,onToggle,onFocus,onOpe
     <div className="planner-v05-summary">
       <div><span>Planned today</span><strong>{plannedToday.length}</strong></div>
       <div><span>Upcoming deadlines</span><strong>{open.filter(i=>i.due_date&&i.due_date>=today).length}</strong></div>
-      <div><span>Overdue</span><strong className={overdue.length?'danger':''}>{overdue.length}</strong></div>
+      <div className={overdue.length?'planner-overdue-summary':''}><span>Overdue</span><strong className={overdue.length?'danger':''}>{overdue.length}</strong></div>
     </div>
     <Card className="planner-v05-shell">
       <div className="planner-v05-toolbar">

@@ -48,3 +48,8 @@ export function shiftCalendarMonth(selectedDay: string, offset: number): string 
   const result = new Date(target.getFullYear(), target.getMonth(), Math.min(day, maxDay), 12);
   return `${result.getFullYear()}-${String(result.getMonth()+1).padStart(2,'0')}-${String(result.getDate()).padStart(2,'0')}`;
 }
+
+/** Empty course selection intentionally means personal/general focus. */
+export function focusTasksForContext(items: Item[], courseId: string): Item[] {
+  return items.filter(item => !item.done && isActionable(item) && (item.course_id || '') === courseId);
+}

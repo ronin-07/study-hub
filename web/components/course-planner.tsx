@@ -10,6 +10,7 @@ import {
 import { api } from '@/lib/api';
 import { Badge, Card, EmptyState, FormRow, SectionTitle } from '@/components/common';
 import { isActionable } from '@/lib/task-view';
+import { resolveWorkspaceSemester } from '@/lib/course-navigation';
 import { type Course, type Item, type Resource, type Semester, type Snapshot, formatDate, kindLabels, localToday } from '@/lib/types';
 
 type SemesterOption = { key: string; name: string; id: string | null; registered: boolean };
@@ -77,7 +78,11 @@ export function CoursePlanner({ data, user, busy, courseId, weekNumber, selectCo
   const [weekDraft, setWeekDraft] = useState({ title: '', objectives: '' });
   const [examTitle, setExamTitle] = useState('');
 
-  const currentSemesterKey = semesterOptions.some(s => s.key === semesterKey) ? semesterKey : (semesterOptions[0]?.key || '');
+  // The parent course selection is authoritative (e.g. Home -> Open course).
+  // Keep local semester selection when there is no selected course, such as an empty semester.
+  const requestedCourse = data.courses.find(c => c.id === courseId);
+  const requestedSemesterKey = requestedCourse ? courseSemester(requestedCourse, semesterOptions) : '';
+  const currentSemesterKey = resolveWorkspaceSemester(semesterOptions.map(s => s.key), semesterKey, requestedSemesterKey);
   const semester = semesterOptions.find(s => s.key === currentSemesterKey);
   const matching = data.courses.filter(c => courseSemester(c, semesterOptions) === currentSemesterKey);
   const visible = matching.filter(c => Boolean(c.archived) === showArchived);

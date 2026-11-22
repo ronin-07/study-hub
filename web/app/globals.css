@@ -199,3 +199,33 @@
 .load-error{max-width:520px;margin:48px auto;text-align:left}
 .load-error .btn{margin-top:9px}
 @media(max-width:540px){.planner-task-row{gap:8px}.planner-plan-btn{padding:7px 9px;font-size:.7rem}.load-error{margin:20px auto}}
+
+/* v0.5 daily workflow polish — intentionally scoped to Home and task lists. */
+.app-shell{--urgent:#af2b44;--urgent-bg:#fff0f2;--urgent-border:#ed8e9e}
+.app-shell.theme-dark{--urgent:#ffa8b6;--urgent-bg:#422834;--urgent-border:#e87890}
+.welcome-hero{min-height:184px;padding:26px 34px;margin-bottom:19px}
+.welcome-hero .hero-copy{max-width:610px}
+.welcome-hero.needs-attention .hero-label{color:#ffe0e6}
+.theme-dark .welcome-hero.needs-attention{background:radial-gradient(circle at 85% 25%,#a78aff66,transparent 33%),linear-gradient(120deg,#392e62,#60509a)}
+.stats-grid{gap:14px;margin-bottom:18px}
+.stat{min-height:127px;padding:20px 22px}
+.stat-alert{border-color:var(--urgent-border)}
+.stat-alert .stat-icon{background:var(--urgent-bg)!important;color:var(--urgent)!important}
+.stat-alert-label{color:var(--urgent);font-weight:800;display:inline-flex;gap:6px;align-items:center}
+.stat-alert-label svg{flex-shrink:0}
+.task-row.task-overdue{position:relative;background:var(--urgent-bg);border:1px solid var(--urgent-border);border-left:4px solid var(--urgent-border);border-radius:12px;padding:13px 11px;margin:8px 0}
+.task-row.task-overdue .task-content strong{color:var(--text);font-weight:800}
+.task-row.task-overdue .task-content small{color:var(--urgent)}
+.task-row.task-overdue .badge.danger{font-size:.67rem;background:var(--urgent);color:var(--paper);border:1px solid var(--urgent-border)}
+.theme-dark .task-row.task-overdue .badge.danger{background:#81283e;color:#fff3f5}
+.planner-v05-task.planner-task-overdue{border:1px solid var(--urgent-border);border-left:4px solid var(--urgent-border);background:var(--urgent-bg);border-radius:12px;padding:13px 10px;margin:8px 0}
+.planner-v05-task.planner-task-overdue .planner-v05-taskbody>strong{font-weight:800}
+.planner-v05-task.planner-task-overdue .item-dates{color:var(--urgent)}
+.planner-v05-tags>.planner-overdue-tag{background:var(--urgent);color:white;font-weight:850;gap:5px}
+.planner-v05-summary>div.planner-overdue-summary{border-color:var(--urgent-border);background:var(--urgent-bg)}
+.planner-v05-summary>.planner-overdue-summary span,.planner-v05-summary>.planner-overdue-summary strong{color:var(--urgent)}
+.accent-card{min-height:240px;background:linear-gradient(135deg,#373067,#5e4d9e)}
+.theme-dark .accent-card{background:linear-gradient(135deg,#353163,#584c9a)}
+.accent-card h2{overflow-wrap:anywhere}
+@media(max-width:810px){.welcome-hero{min-height:175px;padding:25px}.stats-grid{gap:10px}.stat{padding:15px}}
+@media(max-width:540px){.welcome-hero{min-height:175px;padding:22px}.task-row.task-overdue{flex-wrap:wrap;gap:8px}.task-row.task-overdue .badge{margin-left:27px}.planner-v05-task.planner-task-overdue{gap:7px;padding:11px 8px}.planner-v05-task.planner-task-overdue .planner-v05-row-actions{flex-wrap:wrap;justify-content:flex-end}}
