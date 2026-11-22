@@ -487,7 +487,7 @@ export default function Page() {
       <div className="brand"><span className="brand-mark"><BookOpen size={21}/></span><div><strong>Study Hub</strong><small>DTU</small></div></div>
       <div className="nav-label">MY WORKSPACE</div>
       <nav className="side-nav" aria-label="Main navigation">{tabs.map(t=><button key={t.id} type="button" onClick={()=>navigate(t.id)} className={'nav-btn '+(tab===t.id?'current':'')} aria-current={tab===t.id?"page":undefined}><t.icon size={18}/>{t.label}{t.id==='tasks'&&openTasks.length>0&&<span className="nav-count">{openTasks.length}</span>}</button>)}</nav>
-      {data.courses.some(c=>!c.archived)&&<div className="sidebar-courses"><div className="sidebar-courses-heading">COURSES</div>{data.courses.filter(c=>!c.archived).slice(0,6).map((c,index)=><button className={'sidebar-course-link'+(c.id===courseId&&tab==='courses'?' active':'')} key={c.id} onClick={()=>openCourse(c.id)}><span className={'sidebar-course-dot tone-'+(index%4)}/><span>{c.code} · {c.title}</span></button>)}</div>}<div className="sidebar-spacer"/>
+      {tab!=='courses'&&data.courses.some(c=>!c.archived)&&<div className="sidebar-courses"><div className="sidebar-courses-heading">COURSES</div>{data.courses.filter(c=>!c.archived).slice(0,6).map(c=><button className="sidebar-course-link" key={c.id} onClick={()=>openCourse(c.id)}><strong className="sidebar-course-code">{c.code}</strong><span>{c.title}</span></button>)}</div>}<div className="sidebar-spacer"/>
       <div className="sidebar-bottom">
         <div className="sidebar-profile">
           <span className="sidebar-profile-avatar" aria-hidden="true">{profileInitials}</span>
@@ -501,8 +501,7 @@ export default function Page() {
     </aside>
     <div className="main-area">
       <header className={'topbar'+(tab==='today'?' dashboard-topbar':'')}><div className="breadcrumb"><Sparkles size={16}/> PERSONAL HUB <span>/</span> <strong>{pageNames[tab]}</strong></div><div className="topbar-right">
-          <span className="topbar-date">{dateLabel}</span>
-          <span className="topbar-clock" title="Your local time (24-hour clock)" aria-label={`Local time ${timeLabel}`}><Clock3 size={14} aria-hidden="true"/><time dateTime={clockReady?new Date(now*1000).toISOString():undefined}>{timeLabel}</time></span>
+          <span className="topbar-datetime"><span className="topbar-date-section"><CalendarDays size={15} aria-hidden="true"/>{dateLabel}</span><span className="topbar-datetime-divider" aria-hidden="true"/><span title="Your local time (24-hour clock)" aria-label={`Local time ${timeLabel}`}><Clock3 size={15} aria-hidden="true"/><time dateTime={clockReady?new Date(now*1000).toISOString():undefined}>{timeLabel}</time></span></span>
           <div className="topbar-focus-wrap" ref={quickFocusRef}>
             {active?<div className="topbar-focus-active">
               <button type="button" className="topbar-focus-session" onClick={()=>navigate('focus')} title="Open your focus session" aria-label={`${active.status==='paused'?'Paused':'Focus'} session, ${duration(elapsedFocus(active,now))}; open Focus`}>

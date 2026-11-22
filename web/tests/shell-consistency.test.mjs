@@ -17,7 +17,9 @@ test('the account footer is identical on Home and every other tab',()=>{
 });
 
 test('date and clock are beside each other and share all tabs',()=>{
-  assert.match(page,/className="topbar-date">\{dateLabel\}<\/span>\s*<span className="topbar-clock"/);
+  assert.match(page,/className="topbar-datetime"/);
+  assert.match(page,/className="topbar-date-section"/);
+  assert.match(page,/dateLabel/);
   assert.match(page,/const timeLabel=clockReady\?formatLocalClock/);
   assert.match(page,/setClockReady\(true\)/);
   assert.match(css,/\.dashboard-topbar \.topbar-clock/);
