@@ -20,6 +20,7 @@ import {
   resumeFocusClock, focusClockSeconds, rekeyFocusClock, type FocusClockAnchor,
 } from '@/lib/focus-timing';
 import { TasksPlanner } from '@/components/tasks-planner';
+import { COMPLETION_HOLD_MS, COMPLETION_EXIT_MS, presentCompletingItems, type CompletionPhase } from '@/lib/task-completion-presentation';
 import { isActionable, isOverdue, todayPriorities, upcomingDeadlines, focusTasksForContext } from '@/lib/task-view';
 import { todayStudyCourses, nextSevenDays, nextDeadlineDays, agendaForDate } from '@/lib/home-view';
 import { firebaseAuth, onAuthStateChanged, signIn, signOutUser, useFirebase } from '@/lib/auth';
@@ -57,6 +58,55 @@ export default function Page() {
   const focusRevisionRef = useRef(0);
   const [pendingItems,setPendingItems] = useState<Set<string>>(()=>new Set());
   const pendingItemsRef=useRef<Set<string>>(new Set());
+  // Presentation-only completion states. Firebase writes still start immediately;
+  // active lists keep a successfully completed row until its animation can be seen.
+  const [completionPhases,setCompletionPhases] = useState<Record<string,CompletionPhase>>({});
+  const completionTimersRef = useRef(new Map<string,{
+    minimumElapsed:boolean; saved:boolean; leaving:boolean;
+    holdTimer:number; exitTimer?:number;
+  }>());
+  const clearCompletion = (id:string) => {
+    const record=completionTimersRef.current.get(id);
+    if(record){window.clearTimeout(record.holdTimer);if(record.exitTimer!==undefined)window.clearTimeout(record.exitTimer);}
+    completionTimersRef.current.delete(id);
+    setCompletionPhases(previous=>{
+      if(!(id in previous))return previous;
+      const next={...previous};delete next[id];return next;
+    });
+  };
+  const beginCompletionExit = (id:string) => {
+    const record=completionTimersRef.current.get(id);
+    if(!record||record.leaving)return;
+    record.leaving=true;
+    setCompletionPhases(previous=>({...previous,[id]:'leaving'}));
+    record.exitTimer=window.setTimeout(()=>clearCompletion(id),COMPLETION_EXIT_MS);
+  };
+  const startCompletion = (id:string) => {
+    if(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches)return;
+    clearCompletion(id);
+    const record={minimumElapsed:false,saved:false,leaving:false,holdTimer:0,exitTimer:undefined as number|undefined};
+    completionTimersRef.current.set(id,record);
+    setCompletionPhases(previous=>({...previous,[id]:'holding'}));
+    record.holdTimer=window.setTimeout(()=>{
+      record.minimumElapsed=true;
+      if(record.saved)beginCompletionExit(id);
+    },COMPLETION_HOLD_MS);
+  };
+  const completionSaved = (id:string) => {
+    const record=completionTimersRef.current.get(id);
+    if(!record)return;
+    record.saved=true;
+    if(record.minimumElapsed)beginCompletionExit(id);
+  };
+  useEffect(()=>()=>{
+    for(const record of completionTimersRef.current.values()){
+      window.clearTimeout(record.holdTimer);
+      if(record.exitTimer!==undefined)window.clearTimeout(record.exitTimer);
+    }
+    completionTimersRef.current.clear();
+  },[]);
+  const completingIds=useMemo(()=>new Set(Object.keys(completionPhases)),[completionPhases]);
+  const exitingIds=useMemo(()=>new Set(Object.keys(completionPhases).filter(id=>completionPhases[id]==='leaving')),[completionPhases]);
   const lastLoadedAtRef=useRef(0);
   const [error,setError] = useState('');
   const [courseId,setCourseId] = useState('');
@@ -122,6 +172,11 @@ export default function Page() {
     if (!firebaseAuth) return;
     return onAuthStateChanged(firebaseAuth, u=>{
       pendingItemsRef.current.clear();setPendingItems(new Set());
+      for(const record of completionTimersRef.current.values()){
+        window.clearTimeout(record.holdTimer);
+        if(record.exitTimer!==undefined)window.clearTimeout(record.exitTimer);
+      }
+      completionTimersRef.current.clear();setCompletionPhases({});
       focusBusyRef.current=false;focusRevisionRef.current++;setFocusBusy(false);setFocusPreview(null);setFocusClock(null);
       setFinishReview(false);setQuickFocusOpen(false);
       setUser(u);setAuthReady(true);
@@ -262,13 +317,16 @@ export default function Page() {
   };
   const selectedCourse = data.courses.find(c=>c.id===courseId&&!c.archived);
   const activeCourseIds = useMemo(()=>new Set(data.courses.filter(c=>!c.archived).map(c=>c.id)),[data.courses]);
-  const tasks = useMemo(()=>data.items.filter(i=>isActionable(i)&&(!i.course_id||activeCourseIds.has(i.course_id))),[data.items,activeCourseIds]);
+  // An optimistic write updates canonical data immediately. Only the *list projection*
+  // temporarily treats the animating item as open, so it doesn't vanish mid-checkmark.
+  const presentedItems=useMemo(()=>presentCompletingItems(data.items,completionPhases),[data.items,completionPhases]);
+  const tasks = useMemo(()=>presentedItems.filter(i=>isActionable(i)&&(!i.course_id||activeCourseIds.has(i.course_id))),[presentedItems,activeCourseIds]);
   const today=localToday();
   const openTasks = useMemo(()=>tasks.filter(i=>!i.done),[tasks]);
   const todayWork = useMemo(()=>todayPriorities(openTasks,today),[openTasks,today]);
   const overdue = useMemo(()=>todayWork.filter(i=>isOverdue(i,today)),[todayWork,today]);
   const upcoming = useMemo(()=>upcomingDeadlines(openTasks,today),[openTasks,today]);
-  const studyGroups = useMemo(()=>todayStudyCourses(data.courses,data.items,today),[data.courses,data.items,today]);
+  const studyGroups = useMemo(()=>todayStudyCourses(data.courses,presentedItems,today),[data.courses,presentedItems,today]);
   useEffect(() => {
     // Keep carousel labels accurate across responsive breakpoints and data changes.
     const refresh = () => syncCourseScroll();
@@ -313,7 +371,8 @@ export default function Page() {
   },[data.sessions,data.focus_stats,currentWeekStart]);
   const weekPct=Math.min(100,Math.round((weekSeconds/(weeklyGoal*3600))*100));
   const toggle=(item:Item)=>{
-    if(pendingItemsRef.current.has(item.id))return;
+    if(pendingItemsRef.current.has(item.id)||completingIds.has(item.id))return;
+    if(!item.done)startCompletion(item.id);
     pendingItemsRef.current.add(item.id);
     setPendingItems(new Set(pendingItemsRef.current));
     setError('');
@@ -325,6 +384,8 @@ export default function Page() {
         const saved=await api<Item>(`/api/items/${item.id}`,user,{method:'PATCH',body:{done:!item.done}});
         if(useFirebase&&firebaseAuth?.currentUser?.uid!==activeUid)return;
         setData(previous=>applyMutation(previous,{collection:'items'},saved));
+        if(!item.done&&saved.done)completionSaved(item.id);
+        else if(!item.done)clearCompletion(item.id);
         if(!item.done&&saved.done&&saved.repeat&&saved.repeat!=='none'){
           // Recurring completion creates a successor on the server. Fetch items only.
           // A failed follow-up read must not undo a successfully committed completion.
@@ -339,8 +400,9 @@ export default function Page() {
         }
       }catch(e){
         if(useFirebase&&firebaseAuth?.currentUser?.uid!==activeUid)return;
-        // The user sees the authoritative old state if the write failed.
-        setData(previous=>({...previous,items:previous.items.map(i=>i.id===item.id?item:i)}));
+        // Roll back only the completion bit; don't clobber a concurrent metadata edit.
+        clearCompletion(item.id);
+        setData(previous=>({...previous,items:previous.items.map(i=>i.id===item.id?{...i,done:item.done}:i)}));
         setError(`Could not save “${item.title}”. ${e instanceof Error?e.message:'Please retry.'}`);
       }finally{
         pendingItemsRef.current.delete(item.id);
@@ -716,7 +778,7 @@ export default function Page() {
                           <div className="home-course-heading"><div className="home-course-icon"><BookOpen size={24}/></div><div className="home-course-title"><h3>{group.course.code} · {group.course.title}</h3><span>{weekLabel}</span></div>{group.overdueCount?<span className="home-overdue-pill">{group.overdueCount} overdue</span>:<span className="home-today-pill">Today</span>}</div>
                           <div className="home-course-progress"><span>{group.doneCount} / {group.activityCount} activities</span><div className="home-progress-track" role="progressbar" aria-label={`${group.course.title} selected week activity progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><div style={{width:`${progress}%`}}/></div></div>
                           <div className="home-course-activities">
-                            {group.tasks.slice(0,2).map(i=><div className={'home-course-task'+(isOverdue(i,today)?' late':'')} key={i.id}><input type="checkbox" aria-label={`Complete ${i.title}`} disabled={busy||pendingItems.has(i.id)} checked={i.done} onChange={()=>toggle(i)}/><button className="home-course-task-title" title={`Open ${i.title} in course`} onClick={()=>openCourse(group.course.id,i.week_number||undefined)}>{i.title}{group.weekNumbers.length>1&&i.week_number&&<small>W{i.week_number}</small>}</button>{isOverdue(i,today)&&<span className="home-overdue-pill compact">Overdue</span>}{i.resource_id&&<button className="home-task-resource" disabled={busy} onClick={()=>openTaskResource(i)} aria-label={`Open resource for ${i.title}`} title="Open linked resource"><BookOpen size={15}/></button>}</div>)}
+                            {group.tasks.slice(0,2).map(i=><div className={'home-course-task task-completion-row'+(isOverdue(i,today)?' late':'')+(completingIds.has(i.id)?' is-completing':'')+(exitingIds.has(i.id)?' is-exiting':'')} key={i.id}><input type="checkbox" aria-label={`Complete ${i.title}`} disabled={busy||pendingItems.has(i.id)||completingIds.has(i.id)} className="task-completion-check" checked={i.done||completingIds.has(i.id)} onChange={()=>toggle(i)}/><button className="home-course-task-title" title={`Open ${i.title} in course`} onClick={()=>openCourse(group.course.id,i.week_number||undefined)}>{i.title}{group.weekNumbers.length>1&&i.week_number&&<small>W{i.week_number}</small>}</button>{isOverdue(i,today)&&<span className="home-overdue-pill compact">Overdue</span>}{i.resource_id&&<button className="home-task-resource" disabled={busy} onClick={()=>openTaskResource(i)} aria-label={`Open resource for ${i.title}`} title="Open linked resource"><BookOpen size={15}/></button>}</div>)}
                             {group.tasks.length>2&&<button className="home-extra-items" onClick={()=>navigate('tasks')}>+ {group.tasks.length-2} more tasks <ArrowRight size={13}/></button>}
                           </div>
                           <div className="home-course-actions"><button className="home-open-course" onClick={()=>openCourse(group.course.id,group.tasks[0]?.week_number||undefined)}>Open course <ArrowRight size={16}/></button><button className="home-subtle-button" aria-label={`View tasks for ${group.course.title}`} title="View all tasks" onClick={()=>navigate('tasks')}><MoreHorizontal size={20}/></button></div>
@@ -728,29 +790,29 @@ export default function Page() {
                 </section>
                 <section className="home-panel home-priorities" aria-labelledby="home-priorities-title">
                   <div className="home-panel-heading"><div className="home-heading-icon"><CheckCircle2 size={21}/></div><div><h2 id="home-priorities-title">Today’s priorities</h2></div><div className="home-priority-filters" aria-label="Filter priorities">{(['all','course','personal'] as const).map(filter=><button key={filter} onClick={()=>setPriorityFilter(filter)} className={priorityFilter===filter?'active':''} aria-pressed={priorityFilter===filter}>{filter==='all'?'All':filter==='course'?'Course':'Personal'}</button>)}</div></div>
-                  {filteredPriorities.length?<div className="home-priority-list">{filteredPriorities.slice(0,6).map(i=><div key={i.id} className={'home-priority-row'+(isOverdue(i,today)?' overdue':'')}><input type="checkbox" aria-label={`Complete ${i.title}`} disabled={busy||pendingItems.has(i.id)} checked={i.done} onChange={()=>toggle(i)}/><button type="button" className="home-priority-info" aria-label={`Open ${i.title}`} onClick={()=>openDeadlineDestination(i)}><strong>{i.title}</strong><small>{i.course_id?(data.courses.find(c=>c.id===i.course_id)?.code||'Course'):'Personal'}{i.week_number?` · Week ${i.week_number}`:''}{i.due_date&&i.due_date<today?` · Due ${dateText(i.due_date)}`:i.planned_date&&i.planned_date<today?` · Planned ${dateText(i.planned_date)}`:''}</small></button><span className={'home-priority-tag'+(isOverdue(i,today)?' overdue':'')}>{isOverdue(i,today)?'Overdue':'Today'}</span>{i.resource_id&&<button className="home-row-action" aria-label={`Open resource for ${i.title}`} disabled={busy} onClick={()=>openTaskResource(i)} title="Open linked resource"><BookOpen size={16}/></button>}<button className="home-row-action" aria-label={`Focus on ${i.title}`} disabled={busy} onClick={()=>startFrom(i)} title="Focus on task"><Play size={15}/></button></div>)}</div>:<div className="home-list-empty"><CheckCircle2 size={19}/> {priorityFilter==='all'?'No priorities for today.':`No ${priorityFilter} priorities for today.`}</div>}
+                  {filteredPriorities.length?<div className="home-priority-list">{filteredPriorities.slice(0,6).map(i=><div key={i.id} className={'home-priority-row task-completion-row'+(isOverdue(i,today)?' overdue':'')+(completingIds.has(i.id)?' is-completing':'')+(exitingIds.has(i.id)?' is-exiting':'')}><input type="checkbox" aria-label={`Complete ${i.title}`} disabled={busy||pendingItems.has(i.id)||completingIds.has(i.id)} className="task-completion-check" checked={i.done||completingIds.has(i.id)} onChange={()=>toggle(i)}/><button type="button" className="home-priority-info" aria-label={`Open ${i.title}`} onClick={()=>openDeadlineDestination(i)}><strong>{i.title}</strong><small>{i.course_id?(data.courses.find(c=>c.id===i.course_id)?.code||'Course'):'Personal'}{i.week_number?` · Week ${i.week_number}`:''}{i.due_date&&i.due_date<today?` · Due ${dateText(i.due_date)}`:i.planned_date&&i.planned_date<today?` · Planned ${dateText(i.planned_date)}`:''}</small></button><span className={'home-priority-tag'+(isOverdue(i,today)?' overdue':'')}>{isOverdue(i,today)?'Overdue':'Today'}</span>{i.resource_id&&<button className="home-row-action" aria-label={`Open resource for ${i.title}`} disabled={busy} onClick={()=>openTaskResource(i)} title="Open linked resource"><BookOpen size={16}/></button>}<button className="home-row-action" aria-label={`Focus on ${i.title}`} disabled={busy} onClick={()=>startFrom(i)} title="Focus on task"><Play size={15}/></button></div>)}</div>:<div className="home-list-empty"><CheckCircle2 size={19}/> {priorityFilter==='all'?'No priorities for today.':`No ${priorityFilter} priorities for today.`}</div>}
                   {filteredPriorities.length>6&&<button className="home-panel-link home-list-footer" onClick={()=>navigate('tasks')}>View {filteredPriorities.length-6} more tasks <ArrowRight size={14}/></button>}
                 </section>
               </div>
               <div className="home-side-column">
                 <section className="home-panel home-deadlines" aria-labelledby="home-deadlines-title"><div className="home-widget-heading"><span className="home-heading-icon"><CalendarDays size={20}/></span><h2 id="home-deadlines-title">Upcoming deadlines</h2><button className="home-panel-link" onClick={showUpcomingTasks}>View all <ArrowRight size={14}/></button></div>{upcoming.slice(0,3).map(i=><button className="home-deadline" key={i.id} onClick={()=>openDeadlineDestination(i)}><span className="home-deadline-date"><strong>{i.due_date!.slice(8,10)}</strong>{new Intl.DateTimeFormat('en-GB',{month:'short'}).format(new Date(i.due_date!+'T12:00:00'))}</span><span className="home-deadline-info"><strong>{i.title}</strong><small>{data.courses.find(c=>c.id===i.course_id)?.code||'Personal'}{i.week_number?` · Week ${i.week_number}`:''}</small></span><span className="home-days-away">{nextDeadlineDays(today,i.due_date!)===0?'Today':`${nextDeadlineDays(today,i.due_date!)}d`}</span></button>)}{!upcoming.length&&<p className="home-side-empty">No upcoming deadlines.</p>}</section>
-                <section className="home-panel home-week-strip" aria-labelledby="home-calendar-title"><div className="home-widget-heading"><span className="home-heading-icon"><CalendarDays size={20}/></span><h2 id="home-calendar-title">Next 7 days</h2><button className="home-panel-link" onClick={()=>openCalendarDate(homeSelectedDate||today)}>Full calendar <ArrowRight size={14}/></button></div><div className="home-day-grid">{calendarDays.map((day,index)=><button key={day.date} className={'home-day'+(index===0?' current':'')+(homeSelectedDate===day.date?' selected':'')} aria-label={`Show ${day.weekday} ${day.day} tasks inline${day.count?`, ${day.count} scheduled items`:''}`} aria-pressed={homeSelectedDate===day.date} aria-controls={homeSelectedDate?'home-day-agenda':undefined} title={`${day.count} planned/due items`} onClick={()=>toggleHomeAgenda(day.date)}><span>{day.weekday}</span><strong>{day.day}</strong><span className={'home-day-dot'+(day.count?' has-work':'')}/></button>)}</div>{homeSelectedDate&&<div id="home-day-agenda" className="home-inline-agenda"><div className="home-inline-agenda-header"><div><strong>{new Intl.DateTimeFormat('en-GB',{weekday:'long',day:'numeric',month:'short'}).format(new Date(homeSelectedDate+'T12:00:00'))}</strong><span>{homeAgenda.length} {homeAgenda.length===1?'item':'items'}</span></div><button type="button" aria-label="Close day details" className="home-agenda-close" onClick={()=>setHomeSelectedDate(null)}><X size={16}/></button></div>{homeAgenda.length?<div className="home-inline-agenda-list">{homeAgenda.slice(0,5).map(({item,reason})=><div className="home-inline-agenda-item" key={item.id}><input type="checkbox" checked={item.done} disabled={busy} aria-label={`Complete ${item.title}`} onChange={()=>toggle(item)}/><button type="button" className="home-agenda-item-main" onClick={()=>openDeadlineDestination(item)}><strong>{item.title}</strong><small>{data.courses.find(c=>c.id===item.course_id)?.code||'Personal'}{item.week_number?` · Week ${item.week_number}`:''} · {reason==='planned-and-due'?'Planned & due':reason==='planned'?'Planned':'Due'}</small></button><ArrowRight size={15} aria-hidden="true"/></div>)}{homeAgenda.length>5&&<p className="home-agenda-more">+{homeAgenda.length-5} additional items</p>}</div>:<p className="home-side-empty">No tasks planned or due on this day.</p>}<button type="button" className="home-panel-link home-agenda-full" onClick={()=>openCalendarDate(homeSelectedDate)}>Open full day <ArrowRight size={14}/></button></div>}</section>
+                <section className="home-panel home-week-strip" aria-labelledby="home-calendar-title"><div className="home-widget-heading"><span className="home-heading-icon"><CalendarDays size={20}/></span><h2 id="home-calendar-title">Next 7 days</h2><button className="home-panel-link" onClick={()=>openCalendarDate(homeSelectedDate||today)}>Full calendar <ArrowRight size={14}/></button></div><div className="home-day-grid">{calendarDays.map((day,index)=><button key={day.date} className={'home-day'+(index===0?' current':'')+(homeSelectedDate===day.date?' selected':'')} aria-label={`Show ${day.weekday} ${day.day} tasks inline${day.count?`, ${day.count} scheduled items`:''}`} aria-pressed={homeSelectedDate===day.date} aria-controls={homeSelectedDate?'home-day-agenda':undefined} title={`${day.count} planned/due items`} onClick={()=>toggleHomeAgenda(day.date)}><span>{day.weekday}</span><strong>{day.day}</strong><span className={'home-day-dot'+(day.count?' has-work':'')}/></button>)}</div>{homeSelectedDate&&<div id="home-day-agenda" className="home-inline-agenda"><div className="home-inline-agenda-header"><div><strong>{new Intl.DateTimeFormat('en-GB',{weekday:'long',day:'numeric',month:'short'}).format(new Date(homeSelectedDate+'T12:00:00'))}</strong><span>{homeAgenda.length} {homeAgenda.length===1?'item':'items'}</span></div><button type="button" aria-label="Close day details" className="home-agenda-close" onClick={()=>setHomeSelectedDate(null)}><X size={16}/></button></div>{homeAgenda.length?<div className="home-inline-agenda-list">{homeAgenda.slice(0,5).map(({item,reason})=><div className={'home-inline-agenda-item task-completion-row'+(completingIds.has(item.id)?' is-completing':'')+(exitingIds.has(item.id)?' is-exiting':'')} key={item.id}><input type="checkbox" checked={item.done||completingIds.has(item.id)} disabled={busy||pendingItems.has(item.id)||completingIds.has(item.id)} className="task-completion-check" aria-label={`Complete ${item.title}`} onChange={()=>toggle(item)}/><button type="button" className="home-agenda-item-main" onClick={()=>openDeadlineDestination(item)}><strong>{item.title}</strong><small>{data.courses.find(c=>c.id===item.course_id)?.code||'Personal'}{item.week_number?` · Week ${item.week_number}`:''} · {reason==='planned-and-due'?'Planned & due':reason==='planned'?'Planned':'Due'}</small></button><ArrowRight size={15} aria-hidden="true"/></div>)}{homeAgenda.length>5&&<p className="home-agenda-more">+{homeAgenda.length-5} additional items</p>}</div>:<p className="home-side-empty">No tasks planned or due on this day.</p>}<button type="button" className="home-panel-link home-agenda-full" onClick={()=>openCalendarDate(homeSelectedDate)}>Open full day <ArrowRight size={14}/></button></div>}</section>
               </div>
             </div>
           </div>}
 
-          {tab==='courses'&&<CoursePlanner data={data} user={user} busy={busy} pendingItems={pendingItems}
+          {tab==='courses'&&<CoursePlanner data={data.items===presentedItems?data:{...data,items:presentedItems}} user={user} busy={busy} pendingItems={pendingItems} completingIds={completingIds} exitingIds={exitingIds}
             courseId={courseId} weekNumber={weekNumber} landingItem={courseLandingItem} selectCourse={rememberCourse} selectWeek={rememberWeek}
             run={act} toggleItem={toggle} focusOn={startFrom}
             openResource={r=>{if(r.source==='drive'&&r.drive_file_id)previewPdf(r.drive_file_id,r.title,r.id,r.last_page);else if(r.url)window.open(r.url,'_blank','noopener,noreferrer');}}
             openDrive={(id,week,kind,scope)=>{setLinkCourse(id);setLinkWeek(week);setLinkScope(scope);setLinkKind(kind);setLinkItem('');setTab('library');}}
           />}
 
-          {tab==='tasks'&&<TasksPlanner items={tasks} courses={data.courses} user={user} busy={busy} pendingItems={pendingItems}
+          {tab==='tasks'&&<TasksPlanner items={tasks} courses={data.courses} user={user} busy={busy} pendingItems={pendingItems} completingIds={completingIds} exitingIds={exitingIds}
             run={act} onToggle={toggle} onFocus={startFrom} onOpenResource={openTaskResource} createOpen={taskForm} setCreateOpen={setTaskForm}
             initialTaskMode={taskLandingMode} taskJump={taskJump} onTaskJumpHandled={()=>setTaskJump(null)}/>}
 
-          {tab==='calendar'&&<TasksPlanner items={tasks} courses={data.courses} user={user} busy={busy} pendingItems={pendingItems}
+          {tab==='calendar'&&<TasksPlanner items={tasks} courses={data.courses} user={user} busy={busy} pendingItems={pendingItems} completingIds={completingIds} exitingIds={exitingIds}
             run={act} onToggle={toggle} onFocus={startFrom} onOpenResource={openTaskResource} createOpen={taskForm} setCreateOpen={setTaskForm}
             calendarOnly calendarJump={calendarJump}/>}
 
@@ -808,7 +870,7 @@ export default function Page() {
       {finishReview&&active&&<div className="dialog-backdrop" role="presentation"><div className="dialog" role="dialog" aria-modal="true" aria-label="Review focus session"><button className="dialog-close" onClick={()=>setFinishReview(false)} aria-label="Cancel"><X size={18}/></button><h2>Review session</h2><p>Paused at {duration(reviewLimit)}. Adjust for idle time if needed.</p><FormRow label={`Actual focus seconds (maximum ${reviewLimit})`}><input type="number" min={0} max={reviewLimit} value={finishSeconds} onChange={e=>setFinishSeconds(e.target.value)}/></FormRow><div className="dialog-actions"><button className="btn secondary" onClick={()=>setFinishReview(false)}>Keep paused</button><button className="btn primary" disabled={focusBusy||active.status!=='paused'||!Number.isInteger(Number(finishSeconds))||Number(finishSeconds)<0||Number(finishSeconds)>reviewLimit} onClick={finish}>{focusBusy?'Saving timer…':'Save session'}</button></div></div></div>}
     </div>
     <nav className="mobile-nav" aria-label="Mobile navigation">{tabs.map(t=><button key={t.id} className={tab===t.id?'current':''} onClick={()=>navigate(t.id)}><t.icon size={19}/><span>{t.label}</span></button>)}</nav>
-    {pdf&&<PdfWorkspace pdf={pdf} items={data.items}
+    {pdf&&<PdfWorkspace pdf={pdf} items={presentedItems} pendingItems={pendingItems} completingIds={completingIds}
       related={data.resources.filter(r=>r.course_id===pdf.courseId&&(r.week_number===pdf.weekNumber||r.week_number===null))}
       onClose={closePdf} onPage={changePdfPage} onToggleItem={toggle}
       onFocus={item=>{closePdf();startFrom(item);}}

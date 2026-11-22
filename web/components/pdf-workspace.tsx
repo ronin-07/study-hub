@@ -6,7 +6,7 @@ import { Badge } from './common';
 
 type Pdf = { url: string; title: string; page: number; resourceId?: string; courseId?: string; weekNumber?: number };
 type Props = {
-  pdf: Pdf; items: Item[]; related: Resource[];
+  pdf: Pdf; items: Item[]; related: Resource[]; pendingItems: ReadonlySet<string>; completingIds: ReadonlySet<string>;
   onClose: () => void; onPage: (page: number) => void;
   onOpenResource: (resource: Resource) => void;
   onToggleItem: (item: Item) => void; onFocus: (item?: Item) => void;
@@ -15,7 +15,7 @@ type Props = {
 /** Native browser PDF iframe: searchable when the browser's PDF reader supports it.
  * Page number is an explicit, persistent bookmark, not an automatically tracked scroll position.
  */
-export function PdfWorkspace({ pdf, items, related, onClose, onPage, onOpenResource, onToggleItem, onFocus }: Props) {
+export function PdfWorkspace({ pdf, items, related, pendingItems, completingIds, onClose, onPage, onOpenResource, onToggleItem, onFocus }: Props) {
   const [draft, setDraft] = useState(String(pdf.page));
   const [zoom, setZoom] = useState(100);
   const [expanded, setExpanded] = useState(false);
@@ -52,7 +52,7 @@ export function PdfWorkspace({ pdf, items, related, onClose, onPage, onOpenResou
       </div>
       {!expanded && <aside className="pdf-study-side" aria-label="Study activity sidebar">
         <div className="pdf-side-block"><span className="eyebrow">STUDY MODE</span><h3>Keep your place</h3><p>Read slides or Goodnotes PDFs while checking off your work.</p><button type="button" className="btn primary full" onClick={() => onFocus(sameWeekItems.find(i => !i.done))}><Timer size={16}/> Start focus</button></div>
-        <div className="pdf-side-block"><h3>Week checklist</h3>{sameWeekItems.length ? sameWeekItems.map(i => <label className="pdf-check" key={i.id}><input type="checkbox" checked={i.done} onChange={() => onToggleItem(i)}/><span>{i.title}</span></label>) : <p className="muted">Link this PDF to a course week to see its tasks.</p>}</div>
+        <div className="pdf-side-block"><h3>Week checklist</h3>{sameWeekItems.length ? sameWeekItems.map(i => <label className={"pdf-check task-completion-row"+(completingIds.has(i.id)?" is-completing":"")} key={i.id}><input type="checkbox" className="task-completion-check" checked={i.done||completingIds.has(i.id)} disabled={pendingItems.has(i.id)||completingIds.has(i.id)} onChange={() => onToggleItem(i)}/><span>{i.title}</span></label>) : <p className="muted">Link this PDF to a course week to see its tasks.</p>}</div>
         <div className="pdf-side-block"><h3>Other materials</h3>{related.filter(r => r.id !== pdf.resourceId).map(r => <button type="button" className="pdf-related" key={r.id} onClick={() => onOpenResource(r)}><span>{r.title}</span><Badge>{r.kind}</Badge>{r.source === 'drive' ? <BookOpen size={13}/> : <ExternalLink size={13}/>}</button>)}{related.length < 2 && <p className="muted">Add an original slide PDF or Goodnotes annotated copy to switch between them here.</p>}</div>
       </aside>}
     </div>

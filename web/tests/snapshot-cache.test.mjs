@@ -44,7 +44,7 @@ test('checkboxes update optimistically, use a targeted task PATCH, and rollback 
   assert.match(page,/pendingItemsRef\.current\.has\(item\.id\)/);
   assert.match(page,/items:previous\.items\.map\(i=>i\.id===item\.id\?\{\.\.\.i,done:!item\.done\}/);
   assert.match(page,/method:'PATCH',body:\{done:!item\.done\}/);
-  assert.match(page,/items:previous\.items\.map\(i=>i\.id===item\.id\?item:i\)/);
+  assert.match(page,/items:previous\.items\.map\(i=>i\.id===item\.id\?\{\.\.\.i,done:item\.done\}:i\)/);
 });
 
 test('only repeating completions fetch tasks to reconcile their successor',()=>{

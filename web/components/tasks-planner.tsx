@@ -25,8 +25,8 @@ function monthDays(year:number,month:number){
   return Array.from({length:42},(_,i)=>{const d=new Date(first);d.setDate(first.getDate()+i);return {key:dateKey(d),outside:d.getMonth()!==month,day:d.getDate()};});
 }
 
-export function TasksPlanner({items,courses,user,busy,pendingItems,run,onToggle,onFocus,onOpenResource,createOpen,setCreateOpen,calendarJump,calendarOnly=false,initialTaskMode='today',taskJump,onTaskJumpHandled}:{
-  items:Item[];courses:Course[];user:User|null;busy:boolean;pendingItems:ReadonlySet<string>;
+export function TasksPlanner({items,courses,user,busy,pendingItems,completingIds,exitingIds,run,onToggle,onFocus,onOpenResource,createOpen,setCreateOpen,calendarJump,calendarOnly=false,initialTaskMode='today',taskJump,onTaskJumpHandled}:{
+  items:Item[];courses:Course[];user:User|null;busy:boolean;pendingItems:ReadonlySet<string>;completingIds:ReadonlySet<string>;exitingIds:ReadonlySet<string>;
   run:(fn:()=>Promise<unknown>,mutation?:MutationHint)=>Promise<boolean>;
   onToggle:(item:Item)=>void;onFocus:(item:Item)=>void;onOpenResource:(item:Item)=>void;
   createOpen:boolean;setCreateOpen:(value:boolean)=>void;
@@ -136,13 +136,13 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,run,onToggle,
   const draggedTask=draggedTaskId?items.find(i=>i.id===draggedTaskId):null;
   const formVisible=createOpen||editing!==null;
   const formCourse=availableCourses.find(c=>c.id===draft.course_id);
-  const showRow=(i:Item,drag=false)=>{
+  const showRow=(i:Item,drag=false,removeOnComplete=false)=>{
     const course=availableCourses.find(c=>c.id===i.course_id);
-    return <div className={'planner-v05-task'+(isOverdue(i,today)?' planner-task-overdue':'')+(highlightedTask===i.id?' planner-target-item':'')} ref={highlightedTask===i.id?highlightedRef:undefined} key={i.id} draggable={drag&&!busy&&!i.done&&!pendingItems.has(i.id)} aria-busy={pendingItems.has(i.id)}
+    return <div className={'planner-v05-task task-completion-row'+(isOverdue(i,today)?' planner-task-overdue':'')+(highlightedTask===i.id?' planner-target-item':'')+(completingIds.has(i.id)?' is-completing':'')+(removeOnComplete&&exitingIds.has(i.id)?' is-exiting':'')} ref={highlightedTask===i.id?highlightedRef:undefined} key={i.id} draggable={drag&&!busy&&!i.done&&!pendingItems.has(i.id)&&!completingIds.has(i.id)} aria-busy={pendingItems.has(i.id)}
         onDragStart={e=>{if(drag){e.dataTransfer.setData('text/plain',i.id);e.dataTransfer.effectAllowed='move';setDraggedTaskId(i.id);setDragNotice('');}}}
         onDragEnd={()=>{setDraggedTaskId(null);setHoverDay('');}}>
       {drag&&<GripVertical className="planner-v05-drag" size={15} aria-hidden="true"/>}
-      <input type="checkbox" checked={i.done} disabled={busy||pendingItems.has(i.id)} aria-label={`Complete ${i.title}`} onChange={()=>onToggle(i)}/>
+      <input type="checkbox" className="task-completion-check" checked={i.done||completingIds.has(i.id)} disabled={busy||pendingItems.has(i.id)||completingIds.has(i.id)} aria-label={`Complete ${i.title}`} onChange={()=>onToggle(i)}/>
       <div className="planner-v05-taskbody"><strong className={i.done?'complete':''}>{i.title}</strong>
         <div className="planner-v05-tags"><span>{course?.code||'Personal'}</span>{i.kind==='assignment'&&<span>Assignment</span>}
           {isOverdue(i,today)&&<span className="planner-overdue-tag"><AlertTriangle size={12}/> Overdue</span>}{i.priority==='high'&&<span className="priority">High priority</span>}
@@ -150,9 +150,9 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,run,onToggle,
         </div><DayStatus i={i}/>
       </div>
       <div className="planner-v05-row-actions">
-        <button className="btn secondary small" disabled={busy||pendingItems.has(i.id)} onClick={()=>openEdit(i)}>Edit</button>
+        <button className="btn secondary small" disabled={busy||pendingItems.has(i.id)||completingIds.has(i.id)} onClick={()=>openEdit(i)}>Edit</button>
         {i.resource_id&&<button className="icon-btn" disabled={busy} title="Open linked notes or textbook" aria-label={`Open resource for ${i.title}`} onClick={()=>onOpenResource(i)}><BookOpen size={16}/></button>}
-        <button className="icon-btn" disabled={busy||i.done} title="Focus on this task" aria-label={`Focus on ${i.title}`} onClick={()=>onFocus(i)}><Timer size={16}/></button>
+        <button className="icon-btn" disabled={busy||i.done||completingIds.has(i.id)} title="Focus on this task" aria-label={`Focus on ${i.title}`} onClick={()=>onFocus(i)}><Timer size={16}/></button>
       </div>
     </div>;
   };
@@ -193,9 +193,9 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,run,onToggle,
         <h4>Planned work <span>{scheduled.length}</span></h4>{scheduled.length?scheduled.map(i=>showRow(i,true)):<p className="planner-v05-hint">Nothing planned. Drop a task here or add a new one.</p>}
         <h4>Due on this day <span>{due.length}</span></h4>{due.length?due.map(i=><button type="button" key={i.id} className="planner-v05-due" onClick={()=>openEdit(i)} title={`Open ${i.title}`} aria-label={`Open task ${i.title}`}><Clock3 size={15}/><span>{i.title}</span>{i.done&&<CheckCircle2 size={14}/>}<ArrowRight size={14}/></button>):<p className="planner-v05-hint">No additional deadlines on this date.</p>}
         <button className="planner-v05-inbox-toggle" onClick={()=>setShowInbox(!showInbox)}>{showInbox?'Hide':'Show'} unscheduled tasks ({inbox.length})</button>
-        {showInbox&&<div className="planner-v05-inbox">{inbox.length?inbox.map(i=>showRow(i,true)):<p className="planner-v05-hint">Your inbox is clear.</p>}</div>}
+        {showInbox&&<div className="planner-v05-inbox">{inbox.length?inbox.map(i=>showRow(i,true,true)):<p className="planner-v05-hint">Your inbox is clear.</p>}</div>}
       </div></div>:<div className="planner-v05-list"><div className="planner-v05-list-heading"><h3>{mode==='today'?"Today's priorities":mode==='upcoming'?'Upcoming & unscheduled':'Completed tasks'}</h3><span>{listed.length} tasks</span></div>
-        {listed.length?listed.map(i=>showRow(i)):<EmptyState icon={<ListTodo size={24}/>} title="All caught up" detail={mode==='completed'?'Complete a task to see it here.':'Choose a study assignment or add a personal task to start planning.'}/>}
+        {listed.length?listed.map(i=>showRow(i,false,mode!=='completed')):<EmptyState icon={<ListTodo size={24}/>} title="All caught up" detail={mode==='completed'?'Complete a task to see it here.':'Choose a study assignment or add a personal task to start planning.'}/>}
       </div>}
     </Card>
     {formVisible&&<div className="planner-v05-overlay" role="presentation" onMouseDown={e=>{if(e.target===e.currentTarget&&!busy)closeForm();}}>

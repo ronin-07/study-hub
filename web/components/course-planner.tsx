@@ -40,6 +40,8 @@ interface Props {
   user: User | null;
   busy: boolean;
   pendingItems: ReadonlySet<string>;
+  completingIds: ReadonlySet<string>;
+  exitingIds: ReadonlySet<string>;
   courseId: string;
   weekNumber: number;
   landingItem?: { id: string; weekNumber: number | null } | null;
@@ -53,7 +55,7 @@ interface Props {
 }
 
 /** Single registered semester -> course -> week navigation source of truth. */
-export function CoursePlanner({ data, user, busy, pendingItems, courseId, weekNumber, selectCourse, selectWeek, run, toggleItem, focusOn, openResource, openDrive, landingItem }: Props) {
+export function CoursePlanner({ data, user, busy, pendingItems, completingIds, exitingIds, courseId, weekNumber, selectCourse, selectWeek, run, toggleItem, focusOn, openResource, openDrive, landingItem }: Props) {
   const semesterOptions = useMemo(() => makeSemesters(data), [data]);
   const [semesterKey, setSemesterKey] = useState('');
   const [showArchived, setShowArchived] = useState(false);
@@ -374,14 +376,14 @@ export function CoursePlanner({ data, user, busy, pendingItems, courseId, weekNu
               {filtersOpen&&<div id="study-activity-filters" className="planner-study-filters" aria-label="Filter weekly activities">{(['all','planned','due','completed'] as const).map(filter=><button key={filter} type="button" className={activityFilter===filter?'active':''} aria-pressed={activityFilter===filter} onClick={()=>setActivityFilter(filter)}>{filter[0].toUpperCase()+filter.slice(1)}</button>)}</div>}
               {filteredItems.length?filteredItems.map(i=>{
                 const overdue=isOverdue(i,today);
-                return <div className={'planner-task-row planner-study-task'+(overdue?' overdue':'')+(landingItem?.id===i.id?' planner-target-item':'')} ref={landingItem?.id===i.id?landingRef:undefined} key={i.id}>
-                  <input type="checkbox" disabled={isReadOnly||busy||pendingItems.has(i.id)} checked={i.done} onChange={()=>toggleItem(i)} aria-label={`Complete ${i.title}`}/>
+                return <div className={'planner-task-row planner-study-task task-completion-row'+(overdue?' overdue':'')+(landingItem?.id===i.id?' planner-target-item':'')+(completingIds.has(i.id)?' is-completing':'')+((activityFilter==='planned'||activityFilter==='due')&&exitingIds.has(i.id)?' is-exiting':'')} ref={landingItem?.id===i.id?landingRef:undefined} key={i.id}>
+                  <input type="checkbox" disabled={isReadOnly||busy||pendingItems.has(i.id)||completingIds.has(i.id)} className="task-completion-check" checked={i.done||completingIds.has(i.id)} onChange={()=>toggleItem(i)} aria-label={`Complete ${i.title}`}/>
                   <div><strong className={i.done?'complete':''}>{i.title}</strong><small>{kindLabels[i.kind]}{i.planned_date?` · Planned ${formatDate(i.planned_date)}`:''}{i.due_date?` · Due ${formatDate(i.due_date)}`:''}{i.chapter?` · ${i.chapter}`:''}{i.page_start?` · pp. ${i.page_start}${i.page_end?`–${i.page_end}`:''}`:''}</small>
                     {i.resource_id&&<button className="planner-inline-link" onClick={()=>{const r=shared.find(r=>r.id===i.resource_id)||weekResources.find(r=>r.id===i.resource_id);if(r)openResource(r);}}>Open document <ExternalLink size={12}/></button>}
                   </div>
                   {overdue&&<span className="planner-study-status overdue">Overdue</span>}
                   {!overdue&&i.planned_date===today&&!i.done&&<span className="planner-study-status">Today</span>}
-                  {!isReadOnly&&<button className="icon-btn" disabled={busy||i.done||pendingItems.has(i.id)} onClick={()=>openActivityPlan(i)} title={i.planned_date?`Reschedule ${i.title}`:`Plan ${i.title}`} aria-label={`Plan ${i.title}`}><CalendarDays size={16}/></button>}
+                  {!isReadOnly&&<button className="icon-btn" disabled={busy||i.done||pendingItems.has(i.id)||completingIds.has(i.id)} onClick={()=>openActivityPlan(i)} title={i.planned_date?`Reschedule ${i.title}`:`Plan ${i.title}`} aria-label={`Plan ${i.title}`}><CalendarDays size={16}/></button>}
                   {!isReadOnly&&<button className="icon-btn" disabled={busy} aria-label={`Focus on ${i.title}`} onClick={()=>focusOn(i)}><Timer size={16}/></button>}
                   {!isReadOnly&&<button className="icon-btn danger-hover" disabled={busy} aria-label={`Delete ${i.title}`} onClick={()=>void deleteItem(i)}><X size={15}/></button>}
                 </div>;
@@ -412,12 +414,12 @@ export function CoursePlanner({ data, user, busy, pendingItems, courseId, weekNu
             {!isReadOnly&&<button className="btn secondary full" onClick={()=>openDrive(selected.id,weekNumber,'annotated','week')}><Cloud size={16}/> Browse Goodnotes backups</button>}
           </Card>}
           {workspaceTab==='tasks'&&<Card><SectionTitle title="Course study tasks" aside={!isReadOnly&&<button className="btn primary small" onClick={()=>{setItemDraft({...itemDraftDefaults,kind:'assignment',is_task:true});setDialog('item');}}><Plus size={14}/> Add task</button>}/>
-            {courseItems.filter(i=>isActionable(i)).map(i=><div className={'planner-task-row'+(landingItem?.id===i.id?' planner-target-item':'')} ref={landingItem?.id===i.id?landingRef:undefined} key={i.id}><input type="checkbox" disabled={isReadOnly||busy||pendingItems.has(i.id)} checked={i.done} onChange={()=>toggleItem(i)}/><div><strong className={i.done?'complete':''}>{i.title}</strong><small>{i.week_number?`Week ${i.week_number}`:'Exam prep'} · {kindLabels[i.kind]}{i.due_date?` · Due ${formatDate(i.due_date)}`:''}</small></div>{!isReadOnly&&<button className="icon-btn" onClick={()=>focusOn(i)} title="Start focus"><Timer size={16}/></button>}</div>)}
+            {courseItems.filter(i=>isActionable(i)).map(i=><div className={'planner-task-row task-completion-row'+(landingItem?.id===i.id?' planner-target-item':'')+(completingIds.has(i.id)?' is-completing':'')} ref={landingItem?.id===i.id?landingRef:undefined} key={i.id}><input type="checkbox" className="task-completion-check" disabled={isReadOnly||busy||pendingItems.has(i.id)||completingIds.has(i.id)} checked={i.done||completingIds.has(i.id)} onChange={()=>toggleItem(i)}/><div><strong className={i.done?'complete':''}>{i.title}</strong><small>{i.week_number?`Week ${i.week_number}`:'Exam prep'} · {kindLabels[i.kind]}{i.due_date?` · Due ${formatDate(i.due_date)}`:''}</small></div>{!isReadOnly&&<button className="icon-btn" onClick={()=>focusOn(i)} title="Start focus"><Timer size={16}/></button>}</div>)}
             {!courseItems.some(i=>isActionable(i))&&<EmptyState icon={<CalendarDays size={24}/>} title="No scheduled work" detail="Add assignments or schedule a revision activity."/>}
           </Card>}
           {workspaceTab==='exam'&&<Card><SectionTitle title="Exam preparation" aside={<Badge>{examItems.filter(i=>i.done).length}/{examItems.length} completed</Badge>}/>
             {!isReadOnly&&<form className="exam-task-form" onSubmit={e=>void saveExam(e)}><input aria-label="Exam preparation task" placeholder="Practise old exam papers" value={examTitle} onChange={e=>setExamTitle(e.target.value)} required/><button className="btn primary small" disabled={busy||!examTitle.trim()}>Add task</button></form>}
-            {examItems.map(i=><div className={'planner-task-row'+(landingItem?.id===i.id?' planner-target-item':'')} ref={landingItem?.id===i.id?landingRef:undefined} key={i.id}><input type="checkbox" disabled={isReadOnly||busy||pendingItems.has(i.id)} checked={i.done} onChange={()=>toggleItem(i)}/><div><strong className={i.done?'complete':''}>{i.title}</strong></div>{!isReadOnly&&<button className="icon-btn" onClick={()=>focusOn(i)} title="Start focus"><Timer size={16}/></button>}</div>)}
+            {examItems.map(i=><div className={'planner-task-row task-completion-row'+(landingItem?.id===i.id?' planner-target-item':'')+(completingIds.has(i.id)?' is-completing':'')} ref={landingItem?.id===i.id?landingRef:undefined} key={i.id}><input type="checkbox" className="task-completion-check" disabled={isReadOnly||busy||pendingItems.has(i.id)||completingIds.has(i.id)} checked={i.done||completingIds.has(i.id)} onChange={()=>toggleItem(i)}/><div><strong className={i.done?'complete':''}>{i.title}</strong></div>{!isReadOnly&&<button className="icon-btn" onClick={()=>focusOn(i)} title="Start focus"><Timer size={16}/></button>}</div>)}
             {!examItems.length&&<EmptyState icon={<BookMarked size={23}/>} title="Exam preparation starts here" detail="Add past papers, mock exams and course-wide revision plans."/>}
           </Card>}
         </>}
