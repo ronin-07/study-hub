@@ -1069,41 +1069,52 @@
   .timer-dial.focus-target-celebrating,.timer-dial.focus-target-celebrating::before{animation:none!important}
 }
 
-/* UI4 — editorial photographs only for truly empty sections; populated cards are unchanged. */
-.photo-empty-state{width:100%;min-width:0;max-width:580px;margin:5px auto;overflow:hidden;text-align:center;border:1px solid var(--line);border-radius:17px;background:linear-gradient(145deg,rgba(155,96,139,.11),rgba(44,30,54,.03));color:var(--text)}
-.photo-empty-media{position:relative;height:165px;width:100%;overflow:hidden;background:#3b263c}
-.photo-empty-img{object-fit:cover;object-position:center;filter:saturate(.88) brightness(.94)}
-.photo-empty-media:after{content:"";position:absolute;inset:40% 0 0;background:linear-gradient(transparent,rgba(36,24,43,.45));pointer-events:none}
-.photo-empty-content{padding:13px 18px 19px;display:flex;flex-direction:column;align-items:center;gap:7px}
-.photo-empty-icon{width:34px;height:34px;display:grid;place-items:center;border-radius:12px;background:rgba(175,113,162,.16);color:var(--teal)}
-.photo-empty-state h3{margin:0!important;font-size:1rem;font-weight:800;color:var(--text)}
-.photo-empty-state p{margin:0;max-width:330px;font-size:.75rem;line-height:1.55;color:var(--muted)}
+/* UI4a — direct public photo backgrounds with a legible gradient fallback.
+   Text, icon and actions share the same image surface; populated cards are unchanged. */
+.photo-empty-state{
+  position:relative;isolation:isolate;display:flex;align-items:stretch;justify-content:flex-end;flex-direction:column;
+  width:100%;min-width:0;max-width:580px;min-height:302px;margin:5px auto;overflow:hidden;
+  text-align:center;border:1px solid rgba(177,126,162,.42);border-radius:17px;
+  background:#352638;color:#fff;box-shadow:0 8px 24px rgba(20,11,24,.12)
+}
+/* These direct public URLs avoid /_next/image optimization failures. If a file
+   cannot be fetched, the first gradient layer still fills the card. */
+.photo-empty-backdrop{
+  position:absolute;inset:0;z-index:0;pointer-events:none;background-color:#453046;
+  background-size:cover;background-position:center top;background-repeat:no-repeat
+}
+.photo-empty-home .photo-empty-backdrop{background-image:linear-gradient(180deg,rgba(37,24,40,.03) 0%,rgba(37,24,40,.12) 25%,rgba(37,24,40,.84) 65%,#271a30 100%),url('/empty-states/home.webp')}
+.photo-empty-study .photo-empty-backdrop{background-image:linear-gradient(180deg,rgba(37,24,40,.03) 0%,rgba(37,24,40,.12) 25%,rgba(37,24,40,.84) 65%,#271a30 100%),url('/empty-states/study.webp')}
+.photo-empty-tasks .photo-empty-backdrop{background-image:linear-gradient(180deg,rgba(37,24,40,.03) 0%,rgba(37,24,40,.12) 25%,rgba(37,24,40,.84) 65%,#271a30 100%),url('/empty-states/tasks.webp')}
+.photo-empty-calendar .photo-empty-backdrop{background-image:linear-gradient(180deg,rgba(37,24,40,.03) 0%,rgba(37,24,40,.12) 25%,rgba(37,24,40,.84) 65%,#271a30 100%),url('/empty-states/calendar.webp')}
+.photo-empty-resources .photo-empty-backdrop{background-image:linear-gradient(180deg,rgba(37,24,40,.03) 0%,rgba(37,24,40,.12) 25%,rgba(37,24,40,.84) 65%,#271a30 100%),url('/empty-states/resources.webp')}
+.photo-empty-content{
+  position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;
+  gap:8px;padding:125px 18px 19px;min-width:0
+}
+.photo-empty-icon{width:41px;height:41px;display:grid;place-items:center;border-radius:50%;background:rgba(45,28,50,.85);border:1px solid rgba(226,174,215,.24);color:#e7b4d8;box-shadow:0 5px 16px rgba(19,11,24,.24)}
+.photo-empty-state h3{margin:0!important;font-size:1.03rem;font-weight:800;color:#fff!important;text-shadow:0 2px 8px rgba(15,8,19,.36)}
+.photo-empty-state p{margin:0;max-width:350px;font-size:.76rem;line-height:1.55;color:#f1deeb!important;text-shadow:0 1px 6px rgba(15,8,19,.3)}
 .photo-empty-actions{display:flex;justify-content:center;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px}
 .photo-empty-actions button{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:34px;padding:8px 15px;border-radius:22px;font-size:.72rem;font-weight:750;transition:background .18s,border-color .18s,transform .18s}
-.photo-empty-primary{border:1px solid #d7a0c2;background:linear-gradient(95deg,#b276a4,#f0baaf);color:#281d30}
-.photo-empty-secondary{border:1px solid var(--line);background:transparent;color:var(--text)}
+.photo-empty-primary{border:1px solid #efb6cb;background:linear-gradient(95deg,#d89abb,#f6b9a5);color:#281d30}
+.photo-empty-secondary{border:1px solid rgba(235,185,218,.43);background:rgba(38,25,44,.54);color:#fff}
 .photo-empty-actions button:hover{transform:translateY(-1px)}
-.photo-empty-actions button:focus-visible{outline:2px solid var(--teal);outline-offset:3px}
-.photo-empty-state.compact{max-width:none}
-.photo-empty-state.compact .photo-empty-media{height:116px}
-.photo-empty-state.compact .photo-empty-content{padding:10px 12px 13px;gap:5px}
-.photo-empty-state.compact .photo-empty-icon{width:29px;height:29px}
-.photo-empty-state.compact h3{font-size:.89rem}
-.photo-empty-state.compact p{font-size:.71rem}
+.photo-empty-actions button:focus-visible{outline:2px solid #eeb6ce;outline-offset:3px}
+.photo-empty-state.compact{max-width:none;min-height:242px}
+.photo-empty-state.compact .photo-empty-content{padding:68px 13px 16px;gap:6px}
+.photo-empty-state.compact .photo-empty-icon{width:36px;height:36px}
+.photo-empty-state.compact h3{font-size:.91rem}
+.photo-empty-state.compact p{font-size:.72rem}
 .planner-empty-main:has(.photo-empty-state){padding:20px;min-height:380px}
 .planner-empty-main .photo-empty-state{max-width:465px}
-.home-panel .photo-empty-state{background:linear-gradient(145deg,#34253ce8,#261d32e8);border-color:#8f688b66;color:#fff}
-.home-panel .photo-empty-state h3{color:#fff}
-.home-panel .photo-empty-state p{color:#e0cadb}
-.home-panel .photo-empty-icon{color:#d9a6c9}
-.home-panel .photo-empty-secondary{color:#f9e9f4;border-color:#956e9166}
 .planner-v05-agenda .photo-empty-state{margin:15px auto}
 .home-course-menu{position:fixed;width:210px;z-index:80;padding:6px;border-radius:14px;border:1px solid var(--line);background:var(--paper);box-shadow:0 14px 42px rgba(13,9,23,.38);display:flex;flex-direction:column;gap:2px;color:var(--text)}
 .home-course-menu button{display:flex;align-items:center;gap:10px;width:100%;min-height:38px;padding:9px 10px;text-align:left;font-size:.75rem;font-weight:650;color:inherit;border:0;border-radius:9px;background:transparent}
 .home-course-menu button svg{flex-shrink:0;color:var(--teal)}
 .home-course-menu button:hover,.home-course-menu button:focus-visible{background:var(--soft);outline:none}
 .home-subtle-button[aria-expanded="true"]{background:rgba(196,137,181,.22);border-color:rgba(205,155,193,.7)}
-@media(max-width:650px){.photo-empty-media{height:125px}.photo-empty-state.compact .photo-empty-media{height:105px}.photo-empty-content{padding:12px 12px 15px}.photo-empty-state p{font-size:.73rem}.planner-empty-main:has(.photo-empty-state){padding:12px;min-height:320px}}
+@media(max-width:650px){.photo-empty-state{min-height:267px}.photo-empty-content{padding:95px 12px 16px}.photo-empty-state.compact{min-height:217px}.photo-empty-state.compact .photo-empty-content{padding:56px 12px 14px}.photo-empty-state p{font-size:.72rem}.planner-empty-main:has(.photo-empty-state){padding:12px;min-height:320px}}
 @media(prefers-reduced-motion:reduce){.photo-empty-actions button{transition:none!important;transform:none!important}}
 
 .planner-empty-main .photo-empty-state svg{margin-bottom:0}

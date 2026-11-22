@@ -16,9 +16,10 @@ test('five photographic assets are local optimized webp photographs, not remote 
     assert.equal(image.toString('ascii',0,4),'RIFF');
     assert.equal(image.toString('ascii',8,12),'WEBP');
     assert.ok(statSync(path).size<90000,`${scene} should remain optimized`);
-    assert.match(photos,new RegExp(`/${scene}\\.webp`));
+    assert.ok(css.includes(`url('/empty-states/${scene}.webp')`));
   }
-  assert.match(photos,/<Image src={src} alt="" fill/);
+  assert.match(photos,/<div className="photo-empty-backdrop" aria-hidden="true"\/>/);
+  assert.doesNotMatch(photos, /next\/image|<Image/);
 });
 
 test('Home photos appear only for empty course/day projections, without altering live task rows',()=>{
@@ -66,7 +67,7 @@ test('course actions menu has three contextual actions, escape/outside dismiss, 
 
 test('photography and menu style preserve reduced-motion requirements and mobile sizing',()=>{
   assert.match(css,/\.photo-empty-state\.compact/);
-  assert.match(css,/\.photo-empty-media/);
+  assert.match(css,/\.photo-empty-backdrop/);
   assert.match(css,/\.home-course-menu\{position:fixed/);
   assert.match(css,/@media\(prefers-reduced-motion:reduce\)\{\.photo-empty-actions button/);
 });
