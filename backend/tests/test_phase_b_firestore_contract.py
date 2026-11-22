@@ -25,8 +25,8 @@ class Reference:
     def __init__(self, db, path):
         self.db, self.path = db, path
 
-    def get(self, transaction):
-        if transaction.ops:
+    def get(self, transaction=None):
+        if transaction is not None and transaction.ops:
             raise AssertionError('Firestore does not permit transactional reads after writes')
         return Snapshot(self.db.docs.get(self.path))
 
@@ -37,6 +37,14 @@ class Collection:
 
     def document(self, identifier):
         return Reference(self.db, self.path + '/' + identifier)
+
+    def stream(self, transaction=None):
+        if transaction is not None and transaction.ops:
+            raise AssertionError('Firestore does not permit transactional reads after writes')
+        prefix = self.path + '/'
+        for path, value in sorted(self.db.docs.items()):
+            if path.startswith(prefix) and '/' not in path[len(prefix):]:
+                yield Snapshot(value)
 
 
 class UserReference:
@@ -156,3 +164,46 @@ def test_focus_guard_mismatch_is_rejected_without_writes(firestore_store):
     with pytest.raises(DocumentMissing):
         store.update_focus_atomic('alice', 'absent', lambda e: e)
     assert len(store.db.docs) == 1
+
+
+def test_workspace_transaction_stages_reads_before_writes(firestore_store):
+    store = firestore_store
+    first = {'id': 'one', 'name': 'Spring 2027'}
+    second = {'id': 'two', 'name': 'Autumn 2027'}
+
+    def create_first(tx):
+        assert tx.list('semesters') == []
+        tx.create('semesters', first)
+        # Staged read works without doing a cloud read after the first write.
+        assert tx.get('semesters', 'one') == first
+        tx.create('semesters', second)
+
+    store.workspace_atomic('alice', create_first)
+    assert sorted(row['name'] for row in store.list('alice', 'semesters')) == sorted([
+        'Spring 2027', 'Autumn 2027'])
+    guard = store.col('alice', 'workspace_guard').document('state').path
+    assert store.db.docs[guard]['revision'] == 1
+
+    def rename(tx):
+        sem = tx.get('semesters', 'one')
+        tx.put('semesters', {**sem, 'name': 'New Spring'})
+        assert len(tx.list('semesters')) == 2
+
+    store.workspace_atomic('alice', rename)
+    assert store.get('alice', 'semesters', 'one')['name'] == 'New Spring'
+    assert store.db.docs[guard]['revision'] == 2
+
+
+def test_workspace_transaction_rollback_no_partial_firestore(firestore_store):
+    store = firestore_store
+    store.workspace_atomic('alice', lambda tx: tx.create('semesters', {'id': 'one', 'name': 'Spring'}))
+    prior = deepcopy(store.db.docs)
+
+    def bad_update(tx):
+        tx.put('semesters', {'id': 'one', 'name': 'Changed'})
+        tx.create('courses', {'id': 'x', 'semester_id': 'one'})
+        raise RuntimeError('Stop before commit')
+
+    with pytest.raises(RuntimeError):
+        store.workspace_atomic('alice', bad_update)
+    assert store.db.docs == prior

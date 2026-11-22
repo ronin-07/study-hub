@@ -45,35 +45,13 @@ app.add_middleware(CORSMiddleware,
 
 from .drive import router as drive_router  # noqa: E402
 app.include_router(drive_router)
-from .workspace import router as workspace_router, ensure_course_active, validate_item_reference  # noqa: E402
+from .workspace import router as workspace_router, ensure_course_active, validate_item_reference, normalized_code  # noqa: E402
 app.include_router(workspace_router)
 
 
 def all_docs(uid: str, kind: str) -> list[dict]:
     return app_store.list(uid, kind)
 
-
-def create_doc(uid: str, kind: str, doc: dict):
-    try:
-        app_store.create(uid, kind, doc)
-    except DocumentAlreadyExists:
-        raise HTTPException(409, f'{kind} ID already exists') from None
-
-
-def normalized_code(code: str) -> str:
-    return ' '.join(code.casefold().split())
-
-
-def verify_course_code_available(uid: str, semester_id: str, code: str, except_id: str | None = None):
-    key = normalized_code(code)
-    if any(c.get('id') != except_id and c.get('semester_id') == semester_id
-           and normalized_code(c.get('code', '')) == key for c in all_docs(uid, 'courses')):
-        raise HTTPException(409, 'Course code already exists in this semester')
-
-
-def exists(uid: str, kind: str, identifier: str):
-    if not app_store.get(uid, kind, identifier):
-        raise HTTPException(404, f'{kind} not found')
 
 
 def validate_context(uid: str, course_id: str | None, week_number: int | None):
@@ -113,36 +91,81 @@ async def list_items(user: User = Depends(current_user)):
 async def add_course(value: Course, user: User = Depends(current_user)):
     if not value.semester_id:
         raise HTTPException(422, 'A registered semester_id is required')
-    semester = app_store.get(user.uid, 'semesters', value.semester_id)
-    if not semester:
-        raise HTTPException(422, 'Semester does not exist')
     value.code = value.code.strip()
     if not value.code:
         raise HTTPException(422, 'Course code cannot be blank')
-    value.semester = semester['name']  # response/display cache, never client-authoritative
-    verify_course_code_available(user.uid, value.semester_id, value.code)
-    create_doc(user.uid, 'courses', value.model_dump(mode='json'))
-    return value
+
+    def operation(tx):
+        semester = tx.get('semesters', value.semester_id)
+        if not semester:
+            raise HTTPException(422, 'Semester does not exist')
+        value.semester = semester['name']
+        if any(c.get('semester_id') == value.semester_id
+               and normalized_code(c.get('code', '')) == normalized_code(value.code)
+               for c in tx.list('courses')):
+            raise HTTPException(409, 'Course code already exists in this semester')
+        tx.create('courses', value.model_dump(mode='json'))
+        return value
+
+    try:
+        return app_store.workspace_atomic(user.uid, operation)
+    except DocumentAlreadyExists:
+        raise HTTPException(409, 'Course ID already exists') from None
 
 
 @app.post('/api/weeks', response_model=Week, status_code=201)
 async def add_week(value: Week, user: User = Depends(current_user)):
-    validate_context(user.uid, value.course_id, value.number)
-    for week in all_docs(user.uid, 'weeks'):
-        if week['course_id'] == value.course_id and week['number'] == value.number:
+    def operation(tx):
+        course = tx.get('courses', value.course_id)
+        if not course:
+            raise HTTPException(404, 'courses not found')
+        if course.get('archived', False):
+            raise HTTPException(409, 'Course is archived; restore it before making changes')
+        if value.number > course['week_count']:
+            raise HTTPException(422, 'Week exceeds course length')
+        if any(w.get('course_id') == value.course_id and w['number'] == value.number
+               for w in tx.list('weeks')):
             raise HTTPException(409, 'This course week already exists')
-    create_doc(user.uid, 'weeks', value.model_dump(mode='json'))
-    return value
+        tx.create('weeks', value.model_dump(mode='json'))
+        return value
+
+    try:
+        return app_store.workspace_atomic(user.uid, operation)
+    except DocumentAlreadyExists:
+        raise HTTPException(409, 'Week ID already exists') from None
 
 
 @app.post('/api/items', response_model=Item, status_code=201)
 async def add_item(value: Item, user: User = Depends(current_user)):
     if value.planned_date and value.due_date and value.planned_date > value.due_date:
         raise HTTPException(422, 'Planned work date cannot be after the deadline')
-    validate_context(user.uid, value.course_id, value.week_number)
-    validate_item_reference(user.uid, value.course_id, value.week_number, value.resource_id)
-    create_doc(user.uid, 'items', value.model_dump(mode='json'))
-    return value
+
+    def operation(tx):
+        if value.week_number is not None and not value.course_id:
+            raise HTTPException(422, 'Week requires course')
+        if value.course_id:
+            course = tx.get('courses', value.course_id)
+            if not course:
+                raise HTTPException(404, 'courses not found')
+            if course.get('archived', False):
+                raise HTTPException(409, 'Course is archived; restore it before making changes')
+            if value.week_number is not None and value.week_number > course['week_count']:
+                raise HTTPException(422, 'Week exceeds course length')
+        if value.resource_id:
+            resource = tx.get('resources', value.resource_id)
+            if not resource:
+                raise HTTPException(404, 'resources not found')
+            if not value.course_id or resource['course_id'] != value.course_id:
+                raise HTTPException(422, 'Referenced resource belongs to another course')
+            if resource.get('week_number') is not None and resource['week_number'] != value.week_number:
+                raise HTTPException(422, 'Referenced weekly resource belongs to another week')
+        tx.create('items', value.model_dump(mode='json'))
+        return value
+
+    try:
+        return app_store.workspace_atomic(user.uid, operation)
+    except DocumentAlreadyExists:
+        raise HTTPException(409, 'Item ID already exists') from None
 
 
 @app.patch('/api/items/{identifier}', response_model=Item)
@@ -175,54 +198,87 @@ async def patch_item(identifier: str, updates: ItemPatch, user: User = Depends(c
 
 @app.delete('/api/items/{identifier}', status_code=204)
 async def delete_item(identifier: str, user: User = Depends(current_user)):
-    item = app_store.get(user.uid, 'items', identifier)
-    if not item: raise HTTPException(404, 'Item not found')
-    if item.get('course_id'): ensure_course_active(user.uid, item['course_id'])
-    if any(r.get('item_id') == identifier for r in all_docs(user.uid, 'resources')):
-        raise HTTPException(409, 'Detach linked PDF resources before deleting this study item')
-    app_store.delete(user.uid, 'items', identifier)
+    def operation(tx):
+        item = tx.get('items', identifier)
+        if not item:
+            raise HTTPException(404, 'Item not found')
+        if item.get('course_id'):
+            course = tx.get('courses', item['course_id'])
+            if not course:
+                raise HTTPException(404, 'courses not found')
+            if course.get('archived', False):
+                raise HTTPException(409, 'Course is archived; restore it before making changes')
+        if any(r.get('item_id') == identifier for r in tx.list('resources')):
+            raise HTTPException(409, 'Detach linked PDF resources before deleting this study item')
+        tx.delete('items', identifier)
+
+    app_store.workspace_atomic(user.uid, operation)
 
 
 @app.post('/api/resources', response_model=Resource, status_code=201)
 async def add_resource(value: Resource, user: User = Depends(current_user)):
-    validate_context(user.uid, value.course_id, value.week_number)
-    if value.item_id:
-        linked_item = app_store.get(user.uid, 'items', value.item_id)
-        if not linked_item:
-            raise HTTPException(404, 'Linked study item not found')
-        if linked_item.get('course_id') != value.course_id or linked_item.get('week_number') != value.week_number:
-            raise HTTPException(422, 'Linked study item belongs to a different course/week')
-    if value.source == 'drive':
-        for existing in all_docs(user.uid, 'resources'):
-            if (existing.get('source') == 'drive'
-                    and existing.get('drive_file_id') == value.drive_file_id
-                    and existing.get('course_id') == value.course_id
-                    and (existing.get('week_number') == value.week_number
-                         or existing.get('week_number') is None or value.week_number is None)):
+    def operation(tx):
+        course = tx.get('courses', value.course_id)
+        if not course:
+            raise HTTPException(404, 'courses not found')
+        if course.get('archived', False):
+            raise HTTPException(409, 'Course is archived; restore it before making changes')
+        if value.week_number is not None and value.week_number > course['week_count']:
+            raise HTTPException(422, 'Week exceeds course length')
+        if value.item_id:
+            item = tx.get('items', value.item_id)
+            if not item:
+                raise HTTPException(404, 'Linked study item not found')
+            if item.get('course_id') != value.course_id or item.get('week_number') != value.week_number:
+                raise HTTPException(422, 'Linked study item belongs to a different course/week')
+        if value.source == 'drive':
+            if any(existing.get('source') == 'drive'
+                   and existing.get('drive_file_id') == value.drive_file_id
+                   and existing.get('course_id') == value.course_id
+                   and (existing.get('week_number') == value.week_number
+                        or existing.get('week_number') is None or value.week_number is None)
+                   for existing in tx.list('resources')):
                 raise HTTPException(409, 'This PDF is already linked to that course and week')
-    create_doc(user.uid, 'resources', value.model_dump(mode='json'))
-    return value
+        tx.create('resources', value.model_dump(mode='json'))
+        return value
+
+    try:
+        return app_store.workspace_atomic(user.uid, operation)
+    except DocumentAlreadyExists:
+        raise HTTPException(409, 'Resource ID already exists') from None
 
 
 @app.patch('/api/resources/{identifier}/reading-position', response_model=Resource)
 async def update_reading_position(identifier: str, value: ReadingPosition, user: User = Depends(current_user)):
-    entry = app_store.get(user.uid, 'resources', identifier)
-    if not entry:
-        raise HTTPException(404, 'Resource not found')
-    # Saving a reading bookmark is allowed on archived, read-only courses.
-    entry['last_page'] = value.page
-    app_store.put(user.uid, 'resources', entry)
-    return Resource.model_validate(entry)
+    def operation(tx):
+        entry = tx.get('resources', identifier)
+        if not entry:
+            raise HTTPException(404, 'Resource not found')
+        # Bookmarks remain editable for archived courses. Merge with the latest
+        # persisted resource so a concurrent title/edit is not overwritten.
+        entry['last_page'] = value.page
+        tx.put('resources', entry)
+        return Resource.model_validate(entry)
+
+    return app_store.workspace_atomic(user.uid, operation)
 
 
 @app.delete('/api/resources/{identifier}', status_code=204)
 async def delete_resource(identifier: str, user: User = Depends(current_user)):
-    entry = app_store.get(user.uid, 'resources', identifier)
-    if not entry: raise HTTPException(404, 'Resource not found')
-    ensure_course_active(user.uid, entry['course_id'])
-    if any(i.get('resource_id') == identifier for i in all_docs(user.uid, 'items')):
-        raise HTTPException(409, 'Unlink this resource from study items before removing it')
-    app_store.delete(user.uid, 'resources', identifier)
+    def operation(tx):
+        entry = tx.get('resources', identifier)
+        if not entry:
+            raise HTTPException(404, 'Resource not found')
+        course = tx.get('courses', entry['course_id'])
+        if not course:
+            raise HTTPException(404, 'courses not found')
+        if course.get('archived', False):
+            raise HTTPException(409, 'Course is archived; restore it before making changes')
+        if any(i.get('resource_id') == identifier for i in tx.list('items')):
+            raise HTTPException(409, 'Unlink this resource from study items before removing it')
+        tx.delete('resources', identifier)
+
+    app_store.workspace_atomic(user.uid, operation)
 
 
 def now_s():
@@ -258,6 +314,8 @@ async def start_session(value: StartFocus, user: User = Depends(current_user)):
         app_store.start_focus_atomic(user.uid, session.model_dump(mode='json'))
     except ActiveSessionExists:
         raise HTTPException(409, 'A focus session is already active; resume or finish it first') from None
+    except SessionStateConflict:
+        raise HTTPException(409, 'Course is no longer available for Focus; refresh and retry') from None
     return session
 
 
