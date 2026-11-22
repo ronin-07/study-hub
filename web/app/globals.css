@@ -617,3 +617,17 @@
 :focus-visible{outline-color:#ffbc9e!important}
 .login-shell{background:linear-gradient(90deg,#f8eeebf2,#f3e3e8dc),url('/studyhub-twilight.webp') center / cover no-repeat}
 @media(max-width:650px){.home-inline-agenda-item{padding:8px 7px}.home-inline-agenda-header>div{align-items:flex-start;flex-direction:column}.home-day-grid{gap:3px}}
+
+/* v0.5 release blocker: calm, actionable recovery when the authenticated API fails. */
+.load-error{max-width:570px;margin:clamp(35px,8vh,110px) auto 30px;padding:clamp(25px,4vw,42px);background:var(--paper);border:1px solid var(--line);border-radius:24px;box-shadow:0 24px 85px #0003;backdrop-filter:blur(20px)}
+.load-error-icon{display:grid;place-items:center;width:52px;height:52px;border-radius:16px;background:#ed846426;color:#f2a48b;margin-bottom:20px}
+.load-error .eyebrow{letter-spacing:.14em;color:var(--muted)}
+.load-error h2{font-size:clamp(1.3rem,2.5vw,1.75rem);line-height:1.26;letter-spacing:-.03em;margin:3px 0 11px}
+.load-error .muted{font-size:.88rem;line-height:1.7;max-width:46ch}
+.load-error-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:23px}
+.load-diagnostics{margin-top:25px;border-top:1px solid var(--line);padding-top:16px;color:var(--muted);font-size:.73rem;line-height:1.7}
+.load-diagnostics summary{cursor:pointer;font-weight:750;color:var(--text)}
+.load-diagnostics code{display:block;word-break:break-word;background:var(--soft);border-radius:9px;border:1px solid var(--line);padding:9px 11px;margin:12px 0}
+.load-diagnostics p{margin:9px 0 0}
+.loading-state{min-height:280px}
+@media(max-width:540px){.load-error{margin:25px auto;padding:24px 20px}.load-error-actions .btn{flex:1;justify-content:center}}

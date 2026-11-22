@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { User } from 'firebase/auth';
 import {
   ArrowLeft, ArrowRight, BookOpen, CalendarDays, Check, CheckCircle2, ChevronDown, Clock3,
@@ -8,6 +8,7 @@ import {
   Pause, Play, Plus, RotateCcw, Search, Square, Timer, Trash2, X, Sparkles, Sun, Moon, Zap, Target, Layers3, AlertTriangle, MoreHorizontal, BarChart3
 } from 'lucide-react';
 import { api, pdfBlob } from '@/lib/api';
+import { describeSnapshotFailure, fetchSnapshotWithRetry, type SnapshotLoadProblem } from '@/lib/snapshot-loading';
 import { Badge, Card, EmptyState, FormRow, SectionTitle } from '@/components/common';
 import { PdfWorkspace } from '@/components/pdf-workspace';
 import { CoursePlanner } from '@/components/course-planner';
@@ -37,6 +38,10 @@ export default function Page() {
   const [data,setData] = useState<Snapshot>(empty);
   const [loading,setLoading] = useState(true);
   const [snapshotReady,setSnapshotReady] = useState(false);
+  const [refreshing,setRefreshing] = useState(false);
+  const [snapshotIssue,setSnapshotIssue] = useState<SnapshotLoadProblem|null>(null);
+  const loadedUserRef=useRef<string|null>(null);
+  const loadRequestRef=useRef(0);
   const [busy,setBusy] = useState(false);
   const [error,setError] = useState('');
   const [courseId,setCourseId] = useState('');
@@ -91,11 +96,29 @@ export default function Page() {
   },[]);
 
   const load = useCallback(async():Promise<boolean>=>{
-    if (!authReady || (useFirebase && !user)) {setLoading(false);return false;}
+    // Do not finish the initial loading state while Firebase is still restoring
+    // authentication: otherwise the error screen flashes before the first request.
+    if (!authReady) return false;
+    if (useFirebase && !user) {
+      loadRequestRef.current++;
+      loadedUserRef.current=null;
+      setData(empty);setSnapshotReady(false);setSnapshotIssue(null);setLoading(false);
+      return false;
+    }
+    const uid=user?.uid||'local';
+    const hadSnapshot=loadedUserRef.current===uid;
+    const requestNumber=++loadRequestRef.current;
+    if (!hadSnapshot) {
+      // Never show data from a previously signed-in account.
+      setData(empty);setSnapshotReady(false);setSnapshotIssue(null);setLoading(true);
+    } else setRefreshing(true);
     try {
-      const snap=await api<Snapshot>('/api/snapshot',user);
+      const snap=await fetchSnapshotWithRetry(()=>api<Snapshot>('/api/snapshot',user,{timeoutMs:15000}));
+      if (requestNumber!==loadRequestRef.current) return false;
       setData(snap);
+      loadedUserRef.current=uid;
       setSnapshotReady(true);
+      setSnapshotIssue(null);
       setCourseId(previous=>{
         const saved=window.localStorage.getItem('studyhub-last-course')||'';
         const preferred=previous||saved;
@@ -104,8 +127,16 @@ export default function Page() {
       setLinkCourse(previous=>snap.courses.some(c=>c.id===previous&&!c.archived)?previous:(snap.courses.find(c=>!c.archived)?.id||''));
       setError('');
       return true;
-    } catch(e) {setError(e instanceof Error ? e.message : 'Cannot connect to the API');return false;}
-    finally {setLoading(false);}
+    } catch(e) {
+      if (requestNumber!==loadRequestRef.current) return false;
+      const issue=describeSnapshotFailure(e);
+      setSnapshotIssue(issue);
+      if (hadSnapshot) setError(`Refresh failed: ${issue.title}. Your last loaded data is still displayed.`);
+      else setError('');
+      return false;
+    } finally {
+      if (requestNumber===loadRequestRef.current) {setLoading(false);setRefreshing(false);}
+    }
   },[authReady,user]);
   useEffect(()=>{void load();},[load]);
   // Refresh after returning to the tab so changes from another device become visible.
@@ -303,13 +334,20 @@ export default function Page() {
       <div className="nav-label">MY WORKSPACE</div>
       <nav className="side-nav" aria-label="Main navigation">{tabs.map(t=><button key={t.id} type="button" onClick={()=>navigate(t.id)} className={'nav-btn '+(tab===t.id?'current':'')} aria-current={tab===t.id?"page":undefined}><t.icon size={18}/>{t.label}{t.id==='tasks'&&openTasks.length>0&&<span className="nav-count">{openTasks.length}</span>}</button>)}</nav>
       {data.courses.some(c=>!c.archived)&&<div className="sidebar-courses"><div className="sidebar-courses-heading">COURSES</div>{data.courses.filter(c=>!c.archived).slice(0,6).map((c,index)=><button className={'sidebar-course-link'+(c.id===courseId&&tab==='courses'?' active':'')} key={c.id} onClick={()=>openCourse(c.id)}><span className={'sidebar-course-dot tone-'+(index%4)}/><span>{c.code} · {c.title}</span></button>)}</div>}<div className="sidebar-spacer"/>
-      <div className="sidebar-bottom">{tab==='today'?<div className="sidebar-profile"><span className="sidebar-profile-avatar">{(firstName||'S')[0].toUpperCase()}</span><div><strong>{user?.displayName||'Study Hub'}</strong><small>DTU student</small></div></div>:<><div className="privacy"><span className="live-dot"/><span>{useFirebase?'Private Firebase account':'Local private development'}</span></div><p>RepLap stays in its own project.</p></>}<button className="theme-toggle" onClick={toggleTheme}>{theme==='light'?<Moon size={15}/>:<Sun size={15}/>} {theme==='light'?'Switch to dark theme':'Switch to light theme'}</button>{useFirebase&&<button className="link-btn" onClick={()=>void signOutUser()}>Sign out</button>}</div>
+      <div className="sidebar-bottom">{tab==='today'?<div className="sidebar-profile"><span className="sidebar-profile-avatar">{(firstName||'S')[0].toUpperCase()}</span><div><strong>{user?.displayName||'Study Hub'}</strong><small>DTU student</small></div></div>:<><div className="privacy"><span className="live-dot"/><span>{useFirebase?'Private Firebase account':'Local private development'}</span></div><p>RepLap stays in its own project.</p></>}{useFirebase&&<button className="link-btn" onClick={()=>void signOutUser()}>Sign out</button>}</div>
     </aside>
     <div className="main-area">
-      <header className={'topbar'+(tab==='today'?' dashboard-topbar':'')}><div className="breadcrumb"><Sparkles size={16}/> PERSONAL HUB <span>/</span> <strong>{pageNames[tab]}</strong></div><div className="topbar-right"><span className="topbar-date">{dateLabel}</span><button className="topbar-theme" disabled={loading||busy} aria-label="Refresh study data" title="Refresh study data" onClick={()=>{setLoading(true);void load();}}>{loading?<LoaderCircle size={17} className="spin"/>:<RotateCcw size={17}/>}</button><button className="topbar-theme" aria-label={theme==='light'?'Switch to dark theme':'Switch to light theme'} title={theme==='light'?'Dark theme':'Light theme'} onClick={toggleTheme}>{theme==='light'?<Moon size={17}/>:<Sun size={17}/>}</button><button className="topbar-focus" onClick={()=>setTab('focus')}><Zap size={15}/> Quick focus</button><span className="avatar">SH</span></div></header>
+      <header className={'topbar'+(tab==='today'?' dashboard-topbar':'')}><div className="breadcrumb"><Sparkles size={16}/> PERSONAL HUB <span>/</span> <strong>{pageNames[tab]}</strong></div><div className="topbar-right"><span className="topbar-date">{dateLabel}</span><button className="topbar-theme" disabled={loading||refreshing||busy} aria-label="Refresh study data" title="Refresh study data" onClick={()=>void load()}>{loading||refreshing?<LoaderCircle size={17} className="spin"/>:<RotateCcw size={17}/>}</button><button className="topbar-theme" aria-label={theme==='light'?'Switch to dark theme':'Switch to light theme'} title={theme==='light'?'Dark theme':'Light theme'} onClick={toggleTheme}>{theme==='light'?<Moon size={17}/>:<Sun size={17}/>}</button>{tab!=='today'&&<button className="topbar-focus" onClick={()=>setTab('focus')}><Zap size={15}/> Quick focus</button>}<span className="avatar">SH</span></div></header>
       <main className={'page-content'+(tab==='today'?' dashboard-page':'')}>
         {error&&<div className="alert" role="alert"><span>{error}</span><button onClick={()=>setError('')} aria-label="Dismiss error"><X size={17}/></button></div>}
-        {loading?<div className="loading-state"><LoaderCircle className="spin"/> Loading your workspace…</div>:!snapshotReady?<Card className="load-error"><SectionTitle title="Could not load your Study Hub"/><p className="muted">Your data has not been loaded. Check your connection and retry; an empty dashboard here would be misleading.</p><button className="btn primary" onClick={()=>{setLoading(true);void load();}}><RotateCcw size={16}/> Retry loading</button></Card>:<>
+        {(loading||(!snapshotIssue&&(!snapshotReady||loadedUserRef.current!==(user?.uid||'local'))))?<div className="loading-state" role="status"><LoaderCircle className="spin"/> Securely loading your workspace…</div>:!snapshotReady?<Card className="load-error" >
+          <div className="load-error-icon"><AlertTriangle size={24}/></div>
+          <span className="eyebrow">WORKSPACE UNAVAILABLE</span>
+          <h2>{snapshotIssue?.title||'Could not load your Study Hub'}</h2>
+          <p className="muted">{snapshotIssue?.description||'Your data has not loaded. Retrying is safe; your existing records will not be deleted.'}</p>
+          <div className="load-error-actions"><button className="btn primary" onClick={()=>void load()}><RotateCcw size={16}/> Retry loading</button>{useFirebase&&<button className="btn secondary" onClick={()=>void signOutUser()}>Sign out</button>}</div>
+          {snapshotIssue&&<details className="load-diagnostics"><summary>Technical details for troubleshooting</summary><code>{snapshotIssue.diagnostics}</code><p>For HTTP 500/503, check the Vercel Preview API function logs and Firebase environment variables; do not switch Preview to the Production Firebase project.</p></details>}
+        </Card>:<>
           {tab==='today'&&<div className="dashboard-home">
             <div className="dashboard-intro">
               <span className="eyebrow"><Sparkles size={14}/> YOUR STUDY HUB</span>
