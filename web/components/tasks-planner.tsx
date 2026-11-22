@@ -157,7 +157,7 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,run,onToggle,
     </div>;
   };
   return <>
-    <div className="page-heading"><div><span className="eyebrow"><CalendarDays size={13}/> {calendarOnly?'YOUR STUDY CALENDAR':'YOUR TASKS & PLANS'}</span><h1>{calendarOnly?'Your time, mapped out.':'Make room for what matters.'}</h1><p>{calendarOnly?'Explore planned work and deadlines by day. Select a date to see and edit its tasks.':'Plan your workdays, see deadlines, and keep course assignments in sync.'}</p></div>
+    <div className="page-heading"><div><span className="eyebrow"><CalendarDays size={13}/> {calendarOnly?'YOUR STUDY CALENDAR':'YOUR TASKS & PLANS'}</span><h1>{calendarOnly?'Calendar':'Tasks'}</h1></div>
       <button className="btn primary" onClick={()=>startCreate(mode==='calendar'?selectedDay:today)}><Plus size={16}/> New task</button></div>
     <div className="planner-v05-summary">
       <div><span>Planned today</span><strong>{plannedToday.length}</strong></div>
@@ -186,7 +186,7 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,run,onToggle,
             <div className="planner-v05-day-markers">{!!counts?.planned&&<span className="planned">{counts.planned} plan</span>}{!!counts?.due&&<span className="due">{counts.due} due</span>}</div>
           </button>;
         })}</div>
-        <p className="planner-v05-hint">Drag an open task onto a date to plan it. Dates after its deadline are blocked. On mobile, choose Edit to change its planned date.</p>
+        <p className="planner-v05-hint">Drag tasks to schedule. Use Edit on mobile.</p>
         {draggedTask&&hoverDay&&!canPlanOnDate(draggedTask,hoverDay)&&<p role="status" className="planner-v05-drop-notice"><AlertTriangle size={15} aria-hidden="true"/> Cannot plan after {formatDate(draggedTask.due_date!)}. Choose an earlier day.</p>}
         {dragNotice&&<p role="alert" className="planner-v05-drop-notice"><AlertTriangle size={15} aria-hidden="true"/> {dragNotice}</p>}
       </div><div className="planner-v05-agenda"><div className="planner-v05-agenda-title"><div><span>SELECTED DAY</span><h3>{fullLabel(selectedDay)}</h3></div><button className="icon-btn" onClick={()=>startCreate(selectedDay)} aria-label="Add task for this day"><Plus size={18}/></button></div>
@@ -200,7 +200,7 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,run,onToggle,
     </Card>
     {formVisible&&<div className="planner-v05-overlay" role="presentation" onMouseDown={e=>{if(e.target===e.currentTarget&&!busy)closeForm();}}>
       <div className="planner-v05-dialog" role="dialog" aria-modal="true" aria-label={editing?'Edit task':'Create task'}>
-        <div className="planner-v05-dialoghead"><div><span className="eyebrow">{editing?'EDIT YOUR PLAN':'NEW TASK'}</span><h2>{editing?'Update task':'Add something to your plan'}</h2></div><button className="icon-btn" disabled={busy} onClick={closeForm} aria-label="Close"><X size={18}/></button></div>
+        <div className="planner-v05-dialoghead"><div><span className="eyebrow">{editing?'EDIT YOUR PLAN':'NEW TASK'}</span><h2>{editing?'Edit task':'New task'}</h2></div><button className="icon-btn" disabled={busy} onClick={closeForm} aria-label="Close"><X size={18}/></button></div>
         <form onSubmit={e=>void save(e)} className="planner-v05-form"><FormRow label="Task title"><input required autoFocus value={draft.title} onChange={e=>setDraft(p=>({...p,title:e.target.value}))} placeholder="What needs to be done?"/></FormRow>
           {!editing&&<FormRow label="Belongs to"><select value={draft.course_id} onChange={e=>setDraft(p=>({...p,course_id:e.target.value,kind:e.target.value?'revision':'personal',week_number:'',repeat:'none'}))}><option value="">Personal task</option>{availableCourses.map(c=><option key={c.id} value={c.id}>{c.code} · {c.title}</option>)}</select></FormRow>}
           {!editing&&draft.course_id&&<div className="planner-v05-form-columns"><FormRow label="Study activity"><select value={draft.kind} onChange={e=>setDraft(p=>({...p,kind:e.target.value,repeat:e.target.value==='assignment'?'none':p.repeat}))}>{['revision','reading','notes','assignment'].map(k=><option key={k} value={k}>{kindLabels[k as keyof typeof kindLabels]}</option>)}</select></FormRow><FormRow label="Teaching week (optional)"><select value={draft.week_number} onChange={e=>setDraft(p=>({...p,week_number:e.target.value}))}><option value="">Whole course</option>{Array.from({length:formCourse?.week_count||0},(_,i)=><option key={i+1} value={i+1}>Week {i+1}</option>)}</select></FormRow></div>}
