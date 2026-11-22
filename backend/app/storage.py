@@ -125,6 +125,24 @@ class SQLiteStore:
             db.commit()
 
 
+    def sync_index(self, uid: str, desired: dict[str, dict[str, Any]]) -> dict[str, int]:
+        """Apply a full Drive index diff in one SQLite transaction."""
+        with self.lock, self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            rows = db.execute('SELECT id,payload FROM documents WHERE uid=? AND kind=?',
+                              (uid, 'drive-index')).fetchall()
+            before = {row['id']: json.loads(row['payload']) for row in rows}
+            removed = set(before) - set(desired)
+            changed = {k: v for k, v in desired.items() if before.get(k) != v}
+            for identifier in removed:
+                db.execute('DELETE FROM documents WHERE uid=? AND kind=? AND id=?',
+                           (uid, 'drive-index', identifier))
+            for identifier, doc in changed.items():
+                db.execute('INSERT OR REPLACE INTO documents VALUES (?,?,?,?)',
+                           (uid, 'drive-index', identifier, json.dumps(doc)))
+        return {'added': len(set(changed) - set(before)),
+                'updated': len(set(changed) & set(before)), 'removed': len(removed)}
+
     def workspace_atomic(self, uid: str, mutate: WorkspaceMutation) -> Any:
         """Serialize workspace constraints across processes and commit all edits together."""
         with self.lock, self.connect() as db:
@@ -191,6 +209,45 @@ class SQLiteStore:
                        (uid, 'focus_guard', 'active', json.dumps({'id': 'active', 'session_id': doc['id']})))
         return doc
 
+    @staticmethod
+    def _focus_totals(db, uid: str) -> dict[str, Any]:
+        """Read or initialize a private aggregate inside the existing SQLite transaction."""
+        row = db.execute('SELECT payload FROM documents WHERE uid=? AND kind=? AND id=?',
+                         (uid, 'focus_summary', 'state')).fetchone()
+        if row:
+            return json.loads(row['payload'])
+        entries = db.execute('SELECT payload FROM documents WHERE uid=? AND kind=?',
+                             (uid, 'sessions')).fetchall()
+        completed = [json.loads(r['payload']) for r in entries]
+        completed = [s for s in completed if s.get('status') == 'finished']
+        return {'id': 'state', 'total_seconds': sum(max(0, int(s.get('focus_seconds') or 0)) for s in completed),
+                'completed_sessions': len(completed)}
+
+    @staticmethod
+    def _write_focus_totals(db, uid: str, stats: dict[str, Any]) -> None:
+        db.execute('INSERT OR REPLACE INTO documents VALUES (?,?,?,?)',
+                   (uid, 'focus_summary', 'state', json.dumps(stats)))
+
+    def focus_overview(self, uid: str, week_start: int) -> dict[str, Any]:
+        """One compact view; SQLite scans remain local and do not cost cloud reads."""
+        with self.lock, self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            stats = self._focus_totals(db, uid)
+            self._write_focus_totals(db, uid, stats)
+            rows = db.execute('SELECT payload FROM documents WHERE uid=? AND kind=?',
+                              (uid, 'sessions')).fetchall()
+            sessions = [json.loads(r['payload']) for r in rows]
+        finished = sorted((s for s in sessions if s.get('status') == 'finished'),
+                          key=lambda s: s.get('ended_at') or 0, reverse=True)
+        chosen = {s['id']: s for s in finished[:5]}
+        for s in finished:
+            if (s.get('ended_at') or 0) >= week_start:
+                chosen[s['id']] = s
+        for s in sessions:
+            if s.get('status') in ('running', 'paused'):
+                chosen[s['id']] = s
+        return {'sessions': list(chosen.values()), 'focus_stats': stats}
+
     def update_focus_atomic(self, uid: str, identifier: str, mutate: FocusMutation) -> dict[str, Any]:
         with self.lock, self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
@@ -205,7 +262,13 @@ class SQLiteStore:
                 not guard or json.loads(guard['payload']).get('session_id') != identifier
             ):
                 raise SessionStateConflict
+            previous_status = entry['status']
             updated = mutate(entry)
+            if previous_status != 'finished' and updated['status'] == 'finished':
+                stats = self._focus_totals(db, uid)
+                stats['total_seconds'] += max(0, int(updated.get('focus_seconds') or 0))
+                stats['completed_sessions'] += 1
+                self._write_focus_totals(db, uid, stats)
             db.execute('UPDATE documents SET payload=? WHERE uid=? AND kind=? AND id=?',
                        (json.dumps(updated), uid, 'sessions', identifier))
             if updated['status'] == 'finished':
@@ -228,6 +291,11 @@ class SQLiteStore:
                     raise SessionStateConflict
                 db.execute('DELETE FROM documents WHERE uid=? AND kind=? AND id=?',
                            (uid, 'focus_guard', 'active'))
+            if entry['status'] == 'finished':
+                stats = self._focus_totals(db, uid)
+                stats['total_seconds'] = max(0, stats['total_seconds'] - max(0, int(entry.get('focus_seconds') or 0)))
+                stats['completed_sessions'] = max(0, stats['completed_sessions'] - 1)
+                self._write_focus_totals(db, uid, stats)
             db.execute('DELETE FROM documents WHERE uid=? AND kind=? AND id=?',
                        (uid, 'sessions', identifier))
 
@@ -263,6 +331,26 @@ class FirestoreStore:
 
     def guard_ref(self, uid):
         return self.db.collection('users').document(uid).collection('studyhub_focus_guard').document('active')
+
+    def sync_index(self, uid: str, desired: dict[str, dict[str, Any]]) -> dict[str, int]:
+        """Write only changed Drive metadata, batching up to 400 writes per RPC."""
+        previous = {doc['id']: doc for doc in self.list(uid, 'drive-index')}
+        removed = set(previous) - set(desired)
+        changed = {k: v for k, v in desired.items() if previous.get(k) != v}
+        writes = [('delete', key, None) for key in removed]
+        writes += [('set', key, doc) for key, doc in changed.items()]
+        collection = self.col(uid, 'drive-index')
+        for offset in range(0, len(writes), 400):
+            batch = self.db.batch()
+            for method, key, doc in writes[offset:offset+400]:
+                ref = collection.document(key)
+                if method == 'delete':
+                    batch.delete(ref)
+                else:
+                    batch.set(ref, doc)
+            batch.commit()
+        return {'added': len(set(changed) - set(previous)),
+                'updated': len(set(changed) & set(previous)), 'removed': len(removed)}
 
     def workspace_atomic(self, uid: str, mutate: WorkspaceMutation) -> Any:
         """All structural checks and writes share one Firestore transaction.
@@ -350,10 +438,61 @@ class FirestoreStore:
 
         return operation(transaction)
 
+    def _focus_stats_in_tx(self, tx, uid: str, stats_ref) -> dict[str, Any]:
+        """Migrate legacy session history once, with a transactional read barrier."""
+        stats_snap = stats_ref.get(transaction=tx)
+        if stats_snap.exists:
+            return stats_snap.to_dict()
+        completed = [snap.to_dict() for snap in self.col(uid, 'sessions').stream(transaction=tx)]
+        completed = [s for s in completed if s.get('status') == 'finished']
+        return {'id': 'state', 'total_seconds': sum(max(0, int(s.get('focus_seconds') or 0)) for s in completed),
+                'completed_sessions': len(completed)}
+
+    def focus_overview(self, uid: str, week_start: int) -> dict[str, Any]:
+        """Only read active, this week's, and five newest sessions from Firestore."""
+        from google.cloud import firestore
+        stats_ref = self.col(uid, 'focus_summary').document('state')
+        transaction = self.db.transaction()
+
+        @firestore.transactional
+        def initialize(tx):
+            stats = stats_ref.get(transaction=tx)
+            if stats.exists:
+                return stats.to_dict()
+            initial = self._focus_stats_in_tx(tx, uid, stats_ref)
+            tx.create(stats_ref, initial)
+            return initial
+
+        # Existing accounts are initialized once; later requests read one document.
+        stats = initialize(transaction)
+        sessions = self.col(uid, 'sessions')
+        recent = sessions.order_by('ended_at', direction=firestore.Query.DESCENDING).limit(5).stream()
+        weekly = sessions.where('ended_at', '>=', week_start).stream()
+        picked: dict[str, dict[str, Any]] = {}
+        for snap in recent:
+            s = snap.to_dict()
+            if s and s.get('status') == 'finished':
+                picked[s['id']] = s
+        for snap in weekly:
+            s = snap.to_dict()
+            if s and s.get('status') == 'finished':
+                picked[s['id']] = s
+        guard = self.guard_ref(uid).get()
+        if guard.exists:
+            identifier = (guard.to_dict() or {}).get('session_id')
+            if identifier:
+                active = sessions.document(identifier).get()
+                if active.exists:
+                    s = active.to_dict()
+                    if s.get('status') in ('running', 'paused'):
+                        picked[s['id']] = s
+        return {'sessions': list(picked.values()), 'focus_stats': stats}
+
     def update_focus_atomic(self, uid: str, identifier: str, mutate: FocusMutation) -> dict[str, Any]:
         from google.cloud import firestore
         session_ref = self.col(uid, 'sessions').document(identifier)
         active_ref = self.guard_ref(uid)
+        stats_ref = self.col(uid, 'focus_summary').document('state')
         transaction = self.db.transaction()
 
         @firestore.transactional
@@ -367,7 +506,12 @@ class FirestoreStore:
                 not active.exists or active.to_dict().get('session_id') != identifier
             ):
                 raise SessionStateConflict
-            updated = mutate(entry)
+            updated = mutate(dict(entry))
+            if entry['status'] != 'finished' and updated['status'] == 'finished':
+                stats = self._focus_stats_in_tx(tx, uid, stats_ref)
+                stats['total_seconds'] += max(0, int(updated.get('focus_seconds') or 0))
+                stats['completed_sessions'] += 1
+                tx.set(stats_ref, stats)
             tx.set(session_ref, updated)
             if updated['status'] == 'finished':
                 tx.delete(active_ref)
@@ -379,6 +523,7 @@ class FirestoreStore:
         from google.cloud import firestore
         session_ref = self.col(uid, 'sessions').document(identifier)
         active_ref = self.guard_ref(uid)
+        stats_ref = self.col(uid, 'focus_summary').document('state')
         transaction = self.db.transaction()
 
         @firestore.transactional
@@ -392,6 +537,11 @@ class FirestoreStore:
                 if not active.exists or active.to_dict().get('session_id') != identifier:
                     raise SessionStateConflict
                 tx.delete(active_ref)
+            if entry['status'] == 'finished':
+                stats = self._focus_stats_in_tx(tx, uid, stats_ref)
+                stats['total_seconds'] = max(0, stats['total_seconds'] - max(0, int(entry.get('focus_seconds') or 0)))
+                stats['completed_sessions'] = max(0, stats['completed_sessions'] - 1)
+                tx.set(stats_ref, stats)
             tx.delete(session_ref)
 
         operation(transaction)

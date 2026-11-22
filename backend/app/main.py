@@ -7,7 +7,7 @@ import asyncio
 from datetime import date
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import ValidationError
@@ -71,15 +71,29 @@ async def health():
 
 
 @app.get('/api/snapshot')
-async def snapshot(user: User = Depends(current_user)):
-    kinds = ('courses', 'weeks', 'items', 'resources', 'sessions', 'semesters')
-    # Firestore's blocking stream() calls would otherwise run six times in series.
-    # SQLite remains sequential to avoid unnecessary threads/local lock contention.
+async def snapshot(user: User = Depends(current_user), compact: bool = False,
+                   week_start: int | None = Query(default=None, ge=0)):
+    # Old clients retain the complete-session response. New clients opt into a
+    # compact view with persistent totals and only relevant session history.
+    kinds = ('courses', 'weeks', 'items', 'resources', 'semesters') if compact else (
+        'courses', 'weeks', 'items', 'resources', 'sessions', 'semesters')
+    if compact:
+        now = int(time.time())
+        if week_start is None or week_start < now - 8 * 86400 or week_start > now + 86400:
+            raise HTTPException(422, 'week_start must be the start of the current local week')
     if os.getenv('STORAGE_BACKEND') == 'firestore':
-        rows = await asyncio.gather(*(asyncio.to_thread(all_docs, user.uid, kind) for kind in kinds))
+        tasks = [asyncio.to_thread(all_docs, user.uid, kind) for kind in kinds]
+        if compact:
+            tasks.append(asyncio.to_thread(app_store.focus_overview, user.uid, week_start))
+        rows = await asyncio.gather(*tasks)
     else:
         rows = [all_docs(user.uid, kind) for kind in kinds]
-    return dict(zip(kinds, rows))
+        if compact:
+            rows.append(app_store.focus_overview(user.uid, week_start))
+    result = dict(zip(kinds, rows))
+    if compact:
+        result.update(rows[-1])
+    return result
 
 
 @app.get('/api/items', response_model=list[Item])

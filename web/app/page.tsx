@@ -166,7 +166,13 @@ export default function Page() {
       setData(empty);setSnapshotReady(false);setSnapshotIssue(null);setLoading(true);
     } else setRefreshing(true);
     try {
-      const snap=await fetchSnapshotWithRetry(()=>api<Snapshot>('/api/snapshot',user,{timeoutMs:15000}));
+      // Compact response preserves all-time totals while loading only this
+      // week's sessions, five recent completions, and the active session.
+      const localDay = new Date();
+      localDay.setHours(0,0,0,0);
+      localDay.setDate(localDay.getDate() - (localDay.getDay()+6)%7);
+      const weekStart = Math.floor(localDay.getTime()/1000);
+      const snap=await fetchSnapshotWithRetry(()=>api<Snapshot>(`/api/snapshot?compact=true&week_start=${weekStart}`,user,{timeoutMs:15000}));
       if (requestNumber!==loadRequestRef.current) return false;
       // Keep pending checkbox changes visible if a manual refresh finishes mid-save.
       setData(previous=>{
@@ -174,8 +180,11 @@ export default function Page() {
           pendingItemsRef.current.has(item.id)?previous.items.find(old=>old.id===item.id)||item:item
         ) : snap.items;
         // An older snapshot must not undo a Focus mutation that committed while it was loading.
-        const sessions=focusRevisionAtStart===focusRevisionRef.current?snap.sessions:previous.sessions;
-        return {...snap,items,sessions};
+        const focusUnchanged = focusRevisionAtStart===focusRevisionRef.current;
+        const sessions = focusUnchanged ? snap.sessions : previous.sessions;
+        // A snapshot launched before Finish must not roll back its new totals.
+        const focus_stats = focusUnchanged ? snap.focus_stats : previous.focus_stats;
+        return {...snap,items,sessions,focus_stats};
       });
       lastLoadedAtRef.current=Date.now();
       loadedUserRef.current=uid;
@@ -307,8 +316,8 @@ export default function Page() {
       all+=seconds;
       if(session.ended_at&&session.ended_at>=currentWeekStart)weekly+=seconds;
     }
-    return {weekSeconds:weekly,totalSeconds:all};
-  },[data.sessions,currentWeekStart]);
+    return {weekSeconds:weekly,totalSeconds:data.focus_stats?.total_seconds ?? all};
+  },[data.sessions,data.focus_stats,currentWeekStart]);
   const weekPct=Math.min(100,Math.round((weekSeconds/(weeklyGoal*3600))*100));
   const toggle=(item:Item)=>{
     if(pendingItemsRef.current.has(item.id))return;
@@ -406,7 +415,15 @@ export default function Page() {
     try {
       const saved=await api<FocusSession>(route,user,{method:'POST',...(body!==undefined?{body}:{})});
       if(!sameUser())return false;
-      setData(previous=>applyMutation(previous,{collection:'sessions'},saved));
+      setData(previous=>{
+        const original = previous.sessions.find(s=>s.id===saved.id);
+        const changedToFinished = saved.status==='finished' && original?.status!=='finished';
+        const next = applyMutation(previous,{collection:'sessions'},saved);
+        if (!changedToFinished || !previous.focus_stats) return next;
+        return {...next,focus_stats:{...previous.focus_stats,
+          total_seconds:previous.focus_stats.total_seconds + Math.max(0,saved.focus_seconds||0),
+          completed_sessions:previous.focus_stats.completed_sessions+1}};
+      });
       onSuccess?.(saved);
       return true;
     }catch(e){
@@ -754,7 +771,7 @@ export default function Page() {
               {active?<FocusDial session={active} anchor={focusClock}/>:<div className="timer-dial"><span className="dial-label">{focusMode==='free'?'STOPWATCH':'FOCUS TARGET'}</span><strong>{focusMode==='free'?'00:00:00':duration(Number(focusMode)*60)}</strong><span className="dial-sub">Ready when you are</span></div>}
               {active? <div className="focus-buttons"><button className="btn secondary" onClick={()=>sessionAction(active.status==='running'?'pause':'resume')} disabled={focusBusy}>{active.status==='running'?<Pause size={17}/>:<Play size={17}/>} {active.status==='running'?'Pause':'Resume'}</button><button className="btn primary" disabled={focusBusy} onClick={reviewFinish}><Square size={15}/> Finish & review</button></div>:<button className="btn primary focus-start" disabled={busy||focusBusy} onClick={beginFocus}><Play size={18}/> Start focusing</button>}
               <p className="focus-tip">Sessions persist after closing the tab. End immediately pauses the clock before review; canceling the review keeps it paused. Timed modes are goals, not automatic stops.</p>
-            </Card><div className="stack"><Card><SectionTitle title="Your focus statistics"/><div className="focus-stat"><span>This week</span><strong>{(weekSeconds/3600).toFixed(1)} hours</strong></div><div className="focus-stat"><span>All time</span><strong>{(totalSeconds/3600).toFixed(1)} hours</strong></div><div className="focus-stat"><span>Completed sessions</span><strong>{data.sessions.filter(s=>s.status==='finished').length}</strong></div></Card>
+            </Card><div className="stack"><Card><SectionTitle title="Your focus statistics"/><div className="focus-stat"><span>This week</span><strong>{(weekSeconds/3600).toFixed(1)} hours</strong></div><div className="focus-stat"><span>All time</span><strong>{(totalSeconds/3600).toFixed(1)} hours</strong></div><div className="focus-stat"><span>Completed sessions</span><strong>{data.focus_stats?.completed_sessions ?? data.sessions.filter(s=>s.status==='finished').length}</strong></div></Card>
               <Card className="focus-week-goal"><SectionTitle title="Weekly focus goal" aside={<Badge>{(weekSeconds/3600).toFixed(1)} / {weeklyGoal} h</Badge>}/>
                 <div className="home-progress-track" role="progressbar" aria-label="Weekly focus goal progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={weekPct}><div style={{width:`${weekPct}%`}}/></div>
                 <div className="focus-week-goal-footer"><span>{weekPct}% of your weekly goal</span><label>Target <input type="number" min={1} max={80} aria-label="Weekly focus target in hours" value={weeklyGoal} onChange={e=>{const n=Math.max(1,Math.min(80,Number(e.target.value)||1));setWeeklyGoal(n);localStorage.setItem('studyhub-focus-goal',String(n));}}/> h/week</label></div>
