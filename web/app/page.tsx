@@ -599,10 +599,37 @@ export default function Page() {
         },()=>{setFocusClock(existing);setFinishReview(false);});
     }
   };
+  const discardEmptyFocus=async(identifier:string)=>{
+    if(focusBusyRef.current)return;
+    focusBusyRef.current=true;
+    focusRevisionRef.current++;
+    setFocusBusy(true);
+    const uid=user?.uid||'local';
+    const sameUser=()=>!useFirebase||firebaseAuth?.currentUser?.uid===uid;
+    try{
+      // Zero-second sessions have no study time to record. Deleting also releases
+      // the active-session guard atomically, without changing focus statistics.
+      await api<void>(`/api/sessions/${identifier}`,user,{method:'DELETE'});
+      if(!sameUser())return;
+      setData(previous=>({...previous,sessions:previous.sessions.filter(s=>s.id!==identifier)}));
+      setFocusPreview(null);
+      setFocusClock(null);
+      setFinishReview(false);
+      notify({kind:'info',title:'Empty session discarded',detail:'No study time was recorded.'});
+    }catch(e){
+      if(sameUser())notify({kind:'error',title:'Could not discard session',detail:e instanceof Error?e.message:'Please try again.'});
+    }finally{
+      if(sameUser()){
+        focusBusyRef.current=false;
+        setFocusBusy(false);
+      }
+    }
+  };
   const finish=()=>{
     if(!active||focusBusyRef.current||active.status!=='paused')return;
     const confirmed=Number(finishSeconds);
     if(!Number.isInteger(confirmed)||confirmed<0||confirmed>reviewLimit)return;
+    if(confirmed===0){void discardEmptyFocus(active.id);return;}
     void focusRequest(null,`/api/sessions/${active.id}/finish`,{confirmed_seconds:confirmed},
       ()=>{setFinishReview(false);setFocusClock(null);notify({kind:'success',title:'Focus session saved',detail:`${duration(confirmed)} recorded.`});});
   };
@@ -865,12 +892,12 @@ export default function Page() {
               {active?<FocusDial session={active} anchor={focusClock}/>:<div className="timer-dial"><span className="dial-label">{focusMode==='free'?'STOPWATCH':'FOCUS TARGET'}</span><strong>{focusMode==='free'?'00:00:00':duration(Number(focusMode)*60)}</strong><span className="dial-sub">Ready when you are</span></div>}
               {active? <div className="focus-buttons"><button className="btn secondary" onClick={()=>sessionAction(active.status==='running'?'pause':'resume')} disabled={focusBusy}>{active.status==='running'?<Pause size={17}/>:<Play size={17}/>} {active.status==='running'?'Pause':'Resume'}</button><button className="btn primary" disabled={focusBusy} onClick={reviewFinish}><Square size={15}/> Finish & review</button></div>:<button className="btn primary focus-start" disabled={busy||focusBusy} onClick={beginFocus}><Play size={18}/> Start focusing</button>}
               <p className="focus-tip">Timed sessions end manually. Your timer continues if you close this tab.</p>
-            </Card><div className="stack"><Card><SectionTitle title="Your focus statistics"/><div className="focus-stat"><span>This week</span><strong><ProgressValue value={weekSeconds/3600} decimals={1} suffix=" hours"/></strong></div><div className="focus-stat"><span>All time</span><strong><ProgressValue value={totalSeconds/3600} decimals={1} suffix=" hours"/></strong></div><div className="focus-stat"><span>Completed sessions</span><strong>{data.focus_stats?.completed_sessions ?? data.sessions.filter(s=>s.status==='finished').length}</strong></div></Card>
+            </Card><div className="stack"><Card><SectionTitle title="Your focus statistics"/><div className="focus-stat"><span>This week</span><strong><ProgressValue value={weekSeconds/3600} decimals={1} suffix=" hours"/></strong></div><div className="focus-stat"><span>All time</span><strong><ProgressValue value={totalSeconds/3600} decimals={1} suffix=" hours"/></strong></div><div className="focus-stat"><span>Completed sessions</span><strong>{data.focus_stats?.completed_sessions ?? data.sessions.filter(s=>s.status==='finished'&&(s.focus_seconds||0)>0).length}</strong></div></Card>
               <Card className="focus-week-goal"><SectionTitle title="Weekly focus goal" aside={<Badge>{(weekSeconds/3600).toFixed(1)} / {weeklyGoal} h</Badge>}/>
                 <ProgressTrack className="home-progress-track" label="Weekly focus goal progress" value={weekPct} identity="focus-weekly-goal"/>
                 <div className="focus-week-goal-footer"><span><ProgressValue value={weekPct}/> of your weekly goal</span><label>Target <input type="number" min={1} max={80} aria-label="Weekly focus target in hours" value={weeklyGoal} onChange={e=>{const n=Math.max(1,Math.min(80,Number(e.target.value)||1));setWeeklyGoal(n);localStorage.setItem('studyhub-focus-goal',String(n));}}/> h/week</label></div>
                 <small>Target preference is stored on this device.</small>
-              </Card><Card><SectionTitle title="Recent sessions"/>{data.sessions.filter(s=>s.status==='finished').sort((a,b)=>(b.ended_at||0)-(a.ended_at||0)).slice(0,5).map(s=><div className="session-row" key={s.id}><span><Check size={15}/></span><div><strong>{data.items.find(i=>i.id===s.item_id)?.title||'Focus session'}</strong><small>{new Date(s.started_at*1000).toLocaleDateString()} · {Math.round((s.focus_seconds||0)/60)} min</small></div></div>)}{!data.sessions.some(s=>s.status==='finished')&&<p className="muted">Your finished sessions will appear here.</p>}</Card></div></div>
+              </Card><Card><SectionTitle title="Recent sessions"/>{data.sessions.filter(s=>s.status==='finished'&&(s.focus_seconds||0)>0).sort((a,b)=>(b.ended_at||0)-(a.ended_at||0)).slice(0,5).map(s=><div className="session-row" key={s.id}><span><Check size={15}/></span><div><strong>{data.items.find(i=>i.id===s.item_id)?.title||'Focus session'}</strong><small>{new Date(s.started_at*1000).toLocaleDateString()} · {(s.focus_seconds||0)<60?`${s.focus_seconds} sec`:`${Math.round((s.focus_seconds||0)/60)} min`}</small></div></div>)}{!data.sessions.some(s=>s.status==='finished'&&(s.focus_seconds||0)>0)&&<p className="muted">Your finished sessions will appear here.</p>}</Card></div></div>
 
           </>}
 
@@ -908,7 +935,7 @@ export default function Page() {
           </>}
         </>}
       </main>
-      {finishReview&&active&&<div className="dialog-backdrop" role="presentation"><div className="dialog" role="dialog" aria-modal="true" aria-label="Review focus session"><button className="dialog-close" onClick={()=>setFinishReview(false)} aria-label="Cancel"><X size={18}/></button><h2>Review session</h2><p>Paused at {duration(reviewLimit)}. Adjust for idle time if needed.</p><FormRow label={`Actual focus seconds (maximum ${reviewLimit})`}><input type="number" min={0} max={reviewLimit} value={finishSeconds} onChange={e=>setFinishSeconds(e.target.value)}/></FormRow><div className="dialog-actions"><button className="btn secondary" onClick={()=>setFinishReview(false)}>Keep paused</button><button className="btn primary" disabled={focusBusy||active.status!=='paused'||!Number.isInteger(Number(finishSeconds))||Number(finishSeconds)<0||Number(finishSeconds)>reviewLimit} onClick={finish}>{focusBusy?'Saving timer…':'Save session'}</button></div></div></div>}
+      {finishReview&&active&&<div className="dialog-backdrop" role="presentation"><div className="dialog" role="dialog" aria-modal="true" aria-label="Review focus session"><button className="dialog-close" onClick={()=>setFinishReview(false)} aria-label="Cancel"><X size={18}/></button><h2>Review session</h2><p>Paused at {duration(reviewLimit)}. Adjust for idle time if needed.</p><FormRow label={`Actual focus seconds (maximum ${reviewLimit})`}><input type="number" min={0} max={reviewLimit} value={finishSeconds} onChange={e=>setFinishSeconds(e.target.value)}/></FormRow><div className="dialog-actions"><button className="btn secondary" onClick={()=>setFinishReview(false)}>Keep paused</button><button className="btn primary" disabled={focusBusy||active.status!=='paused'||!Number.isInteger(Number(finishSeconds))||Number(finishSeconds)<0||Number(finishSeconds)>reviewLimit} onClick={finish}>{focusBusy?(Number(finishSeconds)===0?'Discarding…':'Saving timer…'):(Number(finishSeconds)===0?'Discard empty session':'Save session')}</button></div></div></div>}
     </div>
     <nav className="mobile-nav" aria-label="Mobile navigation">{tabs.map(t=><button key={t.id} className={tab===t.id?'current':''} onClick={()=>navigate(t.id)}><t.icon size={19}/><span>{t.label}</span></button>)}</nav>
     {pdf&&<PdfWorkspace pdf={pdf} items={presentedItems} pendingItems={pendingItems} completingIds={completingIds}

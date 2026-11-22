@@ -396,7 +396,10 @@ def finish_session(identifier: str, value: FinishFocus, user: User = Depends(cur
         calculated = focus_seconds(entry, timestamp)
         if value.confirmed_seconds is not None and value.confirmed_seconds > calculated:
             raise HTTPException(422, 'Confirmed focus time cannot exceed unpaused time')
-        entry['focus_seconds'] = calculated if value.confirmed_seconds is None else value.confirmed_seconds
+        confirmed = calculated if value.confirmed_seconds is None else value.confirmed_seconds
+        if confirmed == 0:
+            raise HTTPException(422, 'A zero-duration session cannot be saved; discard it instead')
+        entry['focus_seconds'] = confirmed
         entry['ended_at'] = timestamp
         entry['status'] = 'finished'
         entry['pause_started_at'] = None

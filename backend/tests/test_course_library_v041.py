@@ -45,10 +45,14 @@ def test_archive_preserves_history_and_restore(client):
     assert client.patch(f"/api/items/{i['id']}",json={'done':True}).status_code == 200
 
 
-def test_archive_active_session_requires_finishing_first(client):
+def test_archive_active_session_requires_finishing_first(client, monkeypatch):
+    import app.main as main
+    clock = [1000]
+    monkeypatch.setattr(main, 'now_s', lambda: clock[0])
     c=course(client)
     session=client.post('/api/sessions/start',json={'course_id':c['id']}).json()
     assert client.post(f"/api/courses/{c['id']}/archive").status_code==409
+    clock[0] += 5  # Completed Focus sessions require positive study time.
     assert client.post(f"/api/sessions/{session['id']}/finish",json={}).status_code==200
     assert client.post(f"/api/courses/{c['id']}/archive").status_code==200
     snap=client.get('/api/snapshot').json()
@@ -125,9 +129,13 @@ def test_registered_semester_rename_keeps_course_label_in_sync(client):
     assert after['semester_id']==sem['id']
 
 
-def test_archived_focus_history_cannot_be_deleted_until_restored(client):
+def test_archived_focus_history_cannot_be_deleted_until_restored(client, monkeypatch):
+    import app.main as main
+    clock = [1000]
+    monkeypatch.setattr(main, 'now_s', lambda: clock[0])
     c=course(client)
     session=client.post('/api/sessions/start',json={'course_id':c['id']}).json()
+    clock[0] += 5  # Test real completed history, not an empty session.
     assert client.post('/api/sessions/'+session['id']+'/finish',json={}).status_code==200
     assert client.post('/api/courses/'+c['id']+'/archive').status_code==200
     assert client.delete('/api/sessions/'+session['id']).status_code==409

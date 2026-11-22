@@ -27,6 +27,13 @@ ItemMutation = Callable[[dict[str, Any]], tuple[dict[str, Any], dict[str, Any] |
 FocusMutation = Callable[[dict[str, Any]], dict[str, Any]]
 
 
+def recorded_focus_seconds(session: dict[str, Any]) -> int:
+    """Only positive-duration finished sessions count toward study statistics."""
+    if session.get('status') != 'finished':
+        return 0
+    return max(0, int(session.get('focus_seconds') or 0))
+
+
 class WorkspaceView:
     """Read latest workspace state and stage writes within one database transaction.
 
@@ -219,8 +226,8 @@ class SQLiteStore:
         entries = db.execute('SELECT payload FROM documents WHERE uid=? AND kind=?',
                              (uid, 'sessions')).fetchall()
         completed = [json.loads(r['payload']) for r in entries]
-        completed = [s for s in completed if s.get('status') == 'finished']
-        return {'id': 'state', 'total_seconds': sum(max(0, int(s.get('focus_seconds') or 0)) for s in completed),
+        completed = [s for s in completed if recorded_focus_seconds(s) > 0]
+        return {'id': 'state', 'total_seconds': sum(recorded_focus_seconds(s) for s in completed),
                 'completed_sessions': len(completed)}
 
     @staticmethod
@@ -237,7 +244,7 @@ class SQLiteStore:
             rows = db.execute('SELECT payload FROM documents WHERE uid=? AND kind=?',
                               (uid, 'sessions')).fetchall()
             sessions = [json.loads(r['payload']) for r in rows]
-        finished = sorted((s for s in sessions if s.get('status') == 'finished'),
+        finished = sorted((s for s in sessions if recorded_focus_seconds(s) > 0),
                           key=lambda s: s.get('ended_at') or 0, reverse=True)
         chosen = {s['id']: s for s in finished[:5]}
         for s in finished:
@@ -264,9 +271,9 @@ class SQLiteStore:
                 raise SessionStateConflict
             previous_status = entry['status']
             updated = mutate(entry)
-            if previous_status != 'finished' and updated['status'] == 'finished':
+            if previous_status != 'finished' and recorded_focus_seconds(updated) > 0:
                 stats = self._focus_totals(db, uid)
-                stats['total_seconds'] += max(0, int(updated.get('focus_seconds') or 0))
+                stats['total_seconds'] += recorded_focus_seconds(updated)
                 stats['completed_sessions'] += 1
                 self._write_focus_totals(db, uid, stats)
             db.execute('UPDATE documents SET payload=? WHERE uid=? AND kind=? AND id=?',
@@ -291,9 +298,9 @@ class SQLiteStore:
                     raise SessionStateConflict
                 db.execute('DELETE FROM documents WHERE uid=? AND kind=? AND id=?',
                            (uid, 'focus_guard', 'active'))
-            if entry['status'] == 'finished':
+            if recorded_focus_seconds(entry) > 0:
                 stats = self._focus_totals(db, uid)
-                stats['total_seconds'] = max(0, stats['total_seconds'] - max(0, int(entry.get('focus_seconds') or 0)))
+                stats['total_seconds'] = max(0, stats['total_seconds'] - recorded_focus_seconds(entry))
                 stats['completed_sessions'] = max(0, stats['completed_sessions'] - 1)
                 self._write_focus_totals(db, uid, stats)
             db.execute('DELETE FROM documents WHERE uid=? AND kind=? AND id=?',
@@ -444,8 +451,8 @@ class FirestoreStore:
         if stats_snap.exists:
             return stats_snap.to_dict()
         completed = [snap.to_dict() for snap in self.col(uid, 'sessions').stream(transaction=tx)]
-        completed = [s for s in completed if s.get('status') == 'finished']
-        return {'id': 'state', 'total_seconds': sum(max(0, int(s.get('focus_seconds') or 0)) for s in completed),
+        completed = [s for s in completed if recorded_focus_seconds(s) > 0]
+        return {'id': 'state', 'total_seconds': sum(recorded_focus_seconds(s) for s in completed),
                 'completed_sessions': len(completed)}
 
     def focus_overview(self, uid: str, week_start: int) -> dict[str, Any]:
@@ -471,11 +478,11 @@ class FirestoreStore:
         picked: dict[str, dict[str, Any]] = {}
         for snap in recent:
             s = snap.to_dict()
-            if s and s.get('status') == 'finished':
+            if s and recorded_focus_seconds(s) > 0:
                 picked[s['id']] = s
         for snap in weekly:
             s = snap.to_dict()
-            if s and s.get('status') == 'finished':
+            if s and recorded_focus_seconds(s) > 0:
                 picked[s['id']] = s
         guard = self.guard_ref(uid).get()
         if guard.exists:
@@ -507,9 +514,9 @@ class FirestoreStore:
             ):
                 raise SessionStateConflict
             updated = mutate(dict(entry))
-            if entry['status'] != 'finished' and updated['status'] == 'finished':
+            if entry['status'] != 'finished' and recorded_focus_seconds(updated) > 0:
                 stats = self._focus_stats_in_tx(tx, uid, stats_ref)
-                stats['total_seconds'] += max(0, int(updated.get('focus_seconds') or 0))
+                stats['total_seconds'] += recorded_focus_seconds(updated)
                 stats['completed_sessions'] += 1
                 tx.set(stats_ref, stats)
             tx.set(session_ref, updated)
@@ -537,9 +544,9 @@ class FirestoreStore:
                 if not active.exists or active.to_dict().get('session_id') != identifier:
                     raise SessionStateConflict
                 tx.delete(active_ref)
-            if entry['status'] == 'finished':
+            if recorded_focus_seconds(entry) > 0:
                 stats = self._focus_stats_in_tx(tx, uid, stats_ref)
-                stats['total_seconds'] = max(0, stats['total_seconds'] - max(0, int(entry.get('focus_seconds') or 0)))
+                stats['total_seconds'] = max(0, stats['total_seconds'] - recorded_focus_seconds(entry))
                 stats['completed_sessions'] = max(0, stats['completed_sessions'] - 1)
                 tx.set(stats_ref, stats)
             tx.delete(session_ref)
