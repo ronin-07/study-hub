@@ -14,7 +14,7 @@ type FocusTick = {wallMs:number; monoMs:number};
 const serverTick: FocusTick = {wallMs:0, monoMs:0};
 let tick: FocusTick = {wallMs:Date.now(), monoMs:monotonicNow()};
 const listeners = new Set<() => void>();
-let interval: ReturnType<typeof setInterval> | null = null;
+let interval: number | null = null;
 
 function publishTick() {
   tick = {wallMs:Date.now(), monoMs:monotonicNow()};
