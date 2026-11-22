@@ -487,7 +487,7 @@ export default function Page() {
       <div className="brand"><span className="brand-mark"><BookOpen size={21}/></span><div><strong>Study Hub</strong><small>DTU</small></div></div>
       <div className="nav-label">MY WORKSPACE</div>
       <nav className="side-nav" aria-label="Main navigation">{tabs.map(t=><button key={t.id} type="button" onClick={()=>navigate(t.id)} className={'nav-btn '+(tab===t.id?'current':'')} aria-current={tab===t.id?"page":undefined}><t.icon size={18}/>{t.label}{t.id==='tasks'&&openTasks.length>0&&<span className="nav-count">{openTasks.length}</span>}</button>)}</nav>
-      {tab!=='courses'&&data.courses.some(c=>!c.archived)&&<div className="sidebar-courses"><div className="sidebar-courses-heading">COURSES</div>{data.courses.filter(c=>!c.archived).slice(0,6).map(c=><button className="sidebar-course-link" key={c.id} onClick={()=>openCourse(c.id)}><strong className="sidebar-course-code">{c.code}</strong><span>{c.title}</span></button>)}</div>}<div className="sidebar-spacer"/>
+      <div className="sidebar-spacer"/>
       <div className="sidebar-bottom">
         <div className="sidebar-profile">
           <span className="sidebar-profile-avatar" aria-hidden="true">{profileInitials}</span>
@@ -503,15 +503,19 @@ export default function Page() {
       <header className={'topbar'+(tab==='today'?' dashboard-topbar':'')}><div className="breadcrumb"><Sparkles size={16}/> PERSONAL HUB <span>/</span> <strong>{pageNames[tab]}</strong></div><div className="topbar-right">
           <span className="topbar-datetime"><span className="topbar-date-section"><CalendarDays size={15} aria-hidden="true"/>{dateLabel}</span><span className="topbar-datetime-divider" aria-hidden="true"/><span title="Your local time (24-hour clock)" aria-label={`Local time ${timeLabel}`}><Clock3 size={15} aria-hidden="true"/><time dateTime={clockReady?new Date(now*1000).toISOString():undefined}>{timeLabel}</time></span></span>
           <div className="topbar-focus-wrap" ref={quickFocusRef}>
-            {active?<div className="topbar-focus-active">
-              <button type="button" className="topbar-focus-session" onClick={()=>navigate('focus')} title="Open your focus session" aria-label={`${active.status==='paused'?'Paused':'Focus'} session, ${duration(elapsedFocus(active,now))}; open Focus`}>
+            {active?<>
+              <button type="button" className="topbar-focus-session" aria-expanded={quickFocusOpen} aria-controls="active-focus-menu" onClick={()=>setQuickFocusOpen(value=>!value)} title="Manage focus session" aria-label={`${active.status==='paused'?'Paused':'Running'} focus session, ${duration(elapsedFocus(active,now))}; manage session`}>
                 <span className={'topbar-focus-dot'+(active.status==='paused'?' paused':'')}/>
                 <span>{active.status==='paused'?'Paused':'Focus'} · {duration(elapsedFocus(active,now))}</span>
+                <ChevronDown size={15} aria-hidden="true"/>
               </button>
-              <button type="button" className="topbar-focus-control" onClick={()=>sessionAction(active.status==='running'?'pause':'resume')} disabled={busy} aria-label={active.status==='running'?'Pause focus':'Resume focus'} title={active.status==='running'?'Pause focus':'Resume focus'}>
-                {active.status==='running'?<Pause size={15}/>:<Play size={15}/>}
-              </button>
-            </div>:<>
+              {quickFocusOpen&&<div id="active-focus-menu" className="active-focus-menu" role="group" aria-label="Focus session controls">
+                <button type="button" disabled={busy} onClick={()=>{setQuickFocusOpen(false);sessionAction(active.status==='running'?'pause':'resume');}}>
+                  {active.status==='running'?<Pause size={16}/>:<Play size={16}/>} {active.status==='running'?'Pause session':'Resume session'}
+                </button>
+                <button type="button" disabled={busy} onClick={()=>{setQuickFocusOpen(false);reviewFinish();}}><Square size={15}/> End session</button>
+              </div>}
+            </>:<>
               <button type="button" className="topbar-quick-focus" aria-expanded={quickFocusOpen} aria-controls="quick-focus-menu" onClick={()=>setQuickFocusOpen(value=>!value)} disabled={busy||!snapshotReady}>
                 <Timer size={16}/> Quick focus <ChevronDown size={14}/>
               </button>
@@ -630,7 +634,7 @@ export default function Page() {
                 <div className="focus-week-goal-footer"><span>{weekPct}% of your weekly goal</span><label>Target <input type="number" min={1} max={80} aria-label="Weekly focus target in hours" value={weeklyGoal} onChange={e=>{const n=Math.max(1,Math.min(80,Number(e.target.value)||1));setWeeklyGoal(n);localStorage.setItem('studyhub-focus-goal',String(n));}}/> h/week</label></div>
                 <small>Target preference is stored on this device.</small>
               </Card><Card><SectionTitle title="Recent sessions"/>{data.sessions.filter(s=>s.status==='finished').sort((a,b)=>(b.ended_at||0)-(a.ended_at||0)).slice(0,5).map(s=><div className="session-row" key={s.id}><span><Check size={15}/></span><div><strong>{data.items.find(i=>i.id===s.item_id)?.title||'Focus session'}</strong><small>{new Date(s.started_at*1000).toLocaleDateString()} · {Math.round((s.focus_seconds||0)/60)} min</small></div></div>)}{!data.sessions.some(s=>s.status==='finished')&&<p className="muted">Your finished sessions will appear here.</p>}</Card></div></div>
-            {finishReview&&active&&<div className="dialog-backdrop" role="presentation"><div className="dialog" role="dialog" aria-modal="true" aria-label="Review focus session"><button className="dialog-close" onClick={()=>setFinishReview(false)} aria-label="Cancel"><X size={18}/></button><h2>Review session</h2><p>Confirm your actual focus time. If you left the browser open, reduce the time to exclude inactivity.</p><FormRow label={`Actual focus seconds (maximum ${Math.min(86400,elapsedFocus(active,now))})`}><input type="number" min={0} max={Math.min(86400,elapsedFocus(active,now))} value={finishSeconds} onChange={e=>setFinishSeconds(e.target.value)}/></FormRow><div className="dialog-actions"><button className="btn secondary" onClick={()=>setFinishReview(false)}>Keep running</button><button className="btn primary" disabled={busy||!Number.isInteger(Number(finishSeconds))||Number(finishSeconds)<0||Number(finishSeconds)>Math.min(86400,elapsedFocus(active,now))} onClick={finish}>Save session</button></div></div></div>}
+
           </>}
 
           {tab==='library'&&<>
@@ -667,6 +671,7 @@ export default function Page() {
           </>}
         </>}
       </main>
+      {finishReview&&active&&<div className="dialog-backdrop" role="presentation"><div className="dialog" role="dialog" aria-modal="true" aria-label="Review focus session"><button className="dialog-close" onClick={()=>setFinishReview(false)} aria-label="Cancel"><X size={18}/></button><h2>Review session</h2><p>Confirm your actual focus time. If you left the browser open, reduce the time to exclude inactivity.</p><FormRow label={`Actual focus seconds (maximum ${Math.min(86400,elapsedFocus(active,now))})`}><input type="number" min={0} max={Math.min(86400,elapsedFocus(active,now))} value={finishSeconds} onChange={e=>setFinishSeconds(e.target.value)}/></FormRow><div className="dialog-actions"><button className="btn secondary" onClick={()=>setFinishReview(false)}>Keep session</button><button className="btn primary" disabled={busy||!Number.isInteger(Number(finishSeconds))||Number(finishSeconds)<0||Number(finishSeconds)>Math.min(86400,elapsedFocus(active,now))} onClick={finish}>Save session</button></div></div></div>}
     </div>
     <nav className="mobile-nav" aria-label="Mobile navigation">{tabs.map(t=><button key={t.id} className={tab===t.id?'current':''} onClick={()=>setTab(t.id)}><t.icon size={19}/><span>{t.label}</span></button>)}</nav>
     {pdf&&<PdfWorkspace pdf={pdf} items={data.items}

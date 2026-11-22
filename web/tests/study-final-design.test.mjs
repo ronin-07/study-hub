@@ -11,7 +11,7 @@ test('semester and course hierarchy use course numbers rather than arbitrary col
   assert.match(course,/className="planner-semester-code">\{c\.code\}/);
   assert.match(course,/className="planner-semester-course-name">\{c\.title\}/);
   assert.doesNotMatch(course,/planner-semester-dot/);
-  assert.match(home,/className="sidebar-course-code">\{c\.code\}/);
+  assert.doesNotMatch(home,/sidebar-course-code|sidebar-course-link/);
   assert.doesNotMatch(home,/className=\{'sidebar-course-dot/);
 });
 
@@ -23,13 +23,13 @@ test('clicking a selected semester again collapses it, while selecting another c
 });
 
 test('creation and editing live in their appropriate workspaces',()=>{
-  assert.match(course,/id="study-create-menu"/);
-  assert.match(course,/New semester/);
-  assert.match(course,/New course/);
+  assert.match(course,/className="planner-study-add-semester"/);
+  assert.match(course,/> Semester<\/button>/);
+  assert.match(course,/> Course<\/button>/);
   assert.match(course,/Edit semester/);
-  assert.match(course,/Edit course/);
-  assert.match(course,/More course actions/);
+  assert.match(course,/setDialog\('archive'\)/);
   assert.match(course,/Archive course/);
+  assert.doesNotMatch(course,/id="study-create-menu"|More course actions/);
   assert.doesNotMatch(course,/planner-course-actions-section/);
 });
 

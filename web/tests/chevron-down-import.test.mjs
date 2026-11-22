@@ -9,5 +9,5 @@ test('semester and course toggles import their ChevronDown icon', () => {
   assert.ok(iconsImport, 'lucide-react import must exist');
   const names = iconsImport[1].split(',').map(name => name.trim());
   assert.ok(names.includes('ChevronDown'), 'ChevronDown must be imported');
-  assert.equal((source.match(/<ChevronDown\b/g) || []).length, 2);
+  assert.equal((source.match(/<ChevronDown\b/g) || []).length, 1); // Semester disclosure only; Create is now direct.
 });

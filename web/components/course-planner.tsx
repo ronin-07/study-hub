@@ -5,7 +5,7 @@ import type { User } from 'firebase/auth';
 import {
   Archive, ArrowLeft, ArrowRight, BookMarked, BookOpen, CalendarDays, CheckCircle2,
   ChevronDown, ChevronLeft, ChevronRight, Cloud, ExternalLink, FileText, FolderOpen, GraduationCap,
-  Library, ListChecks, LoaderCircle, MoreHorizontal, NotebookPen, Pencil, Plus, RotateCcw, Timer, X
+  Library, ListChecks, ListFilter, LoaderCircle, NotebookPen, Pencil, Plus, RotateCcw, Timer, X
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { MutationHint } from '@/lib/snapshot-cache';
@@ -71,24 +71,7 @@ export function CoursePlanner({ data, user, busy, pendingItems, courseId, weekNu
   const [openSemesterKeys, setOpenSemesterKeys] = useState<string[]>([]);
   const [activityFilter, setActivityFilter] = useState<'all'|'planned'|'due'|'completed'>('all');
   const [noteDraft, setNoteDraft] = useState({ id:'', title:'', notes:'' });
-  const [createOpen, setCreateOpen] = useState(false);
-  const [courseActionsOpen, setCourseActionsOpen] = useState(false);
-  const createMenuRef=useRef<HTMLDivElement|null>(null);
-  const courseMenuRef=useRef<HTMLDivElement|null>(null);
-  useEffect(()=>{
-    if(!createOpen&&!courseActionsOpen)return;
-    const closeOnEscape=(event:KeyboardEvent)=>{
-      if(event.key==='Escape'){setCreateOpen(false);setCourseActionsOpen(false);}
-    };
-    const closeOnOutside=(event:PointerEvent)=>{
-      const target=event.target as Node;
-      if(createOpen&&!createMenuRef.current?.contains(target))setCreateOpen(false);
-      if(courseActionsOpen&&!courseMenuRef.current?.contains(target))setCourseActionsOpen(false);
-    };
-    document.addEventListener('keydown',closeOnEscape);
-    document.addEventListener('pointerdown',closeOnOutside);
-    return()=>{document.removeEventListener('keydown',closeOnEscape);document.removeEventListener('pointerdown',closeOnOutside);};
-  },[createOpen,courseActionsOpen]);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [semesterTreeReady, setSemesterTreeReady] = useState(false);
   const lastCourseNavigationRef = useRef(courseId);
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>(()=>landingItem && landingItem.weekNumber===null?'tasks':'overview');
@@ -156,7 +139,7 @@ export function CoursePlanner({ data, user, busy, pendingItems, courseId, weekNu
   const filteredItems=items.filter(i=>activityFilter==='all'||(activityFilter==='completed'?i.done:!i.done&&(activityFilter==='planned'?Boolean(i.planned_date):Boolean(i.due_date))));
   const isReadOnly = Boolean(selected?.archived);
   // Never carry a previous course or week's activity filter into a new workspace.
-  useEffect(()=>{setActivityFilter('all');setCourseActionsOpen(false);},[selectedId,weekNumber]);
+  useEffect(()=>{setActivityFilter('all');setFiltersOpen(false);},[selectedId,weekNumber]);
 
   useEffect(() => {
     if (selected && weekNumber > selected.week_count) selectWeek(selected.week_count);
@@ -323,10 +306,10 @@ export function CoursePlanner({ data, user, busy, pendingItems, courseId, weekNu
   } : {items:0,documents:0,sessions:0};
 
   const weekPicker=<div className="planner-week-picker">
+    <span className="planner-week-label">Teaching week</span>
     <button className="btn secondary small" aria-label="Previous week" disabled={weekNumber<=1} onClick={()=>selectWeek(weekNumber-1)}><ChevronLeft size={17}/></button>
-    <div className="planner-week-caption"><strong>Week {weekNumber}</strong><span>{week?.title||`${weekNumber} of ${selected?.week_count||1} teaching weeks`}</span></div>
+    <select aria-label="Teaching week" title="Jump to a teaching week" value={weekNumber} onChange={e=>selectWeek(Number(e.target.value))}>{Array.from({length:selected?.week_count||1},(_,idx)=><option key={idx+1} value={idx+1}>Week {idx+1}</option>)}</select>
     <button className="btn secondary small" aria-label="Next week" disabled={!selected||weekNumber>=selected.week_count} onClick={()=>selectWeek(weekNumber+1)}><ChevronRight size={17}/></button>
-    <select aria-label="Teaching week" value={weekNumber} onChange={e=>selectWeek(Number(e.target.value))}>{Array.from({length:selected?.week_count||1},(_,idx)=><option key={idx+1} value={idx+1}>Week {idx+1}</option>)}</select>
   </div>;
   const weekEditButton=!isReadOnly&&selected&&<button className="btn secondary small" onClick={()=>{setWeekDraft({title:week?.title||'',objectives:week?.objectives||''});setDialog('week');}}><Pencil size={14}/>{week?'Edit week':'Set up week'}</button>;
 
@@ -335,12 +318,7 @@ export function CoursePlanner({ data, user, busy, pendingItems, courseId, weekNu
       <div><span className="eyebrow"><GraduationCap size={13}/> STUDY WORKSPACE</span><h1>{semester?.name||'Your semesters'}</h1><p>{semester?`${activeCount} ${activeCount===1?'course':'courses'} · Choose a course to continue your week`:'Organize courses by semester, then continue your weekly study work.'}</p></div>
       <div className="planner-heading-actions">
         {activeSemester&&<button className="btn secondary" onClick={()=>editSemester(activeSemester)} disabled={busy}><Pencil size={15}/> Edit semester</button>}
-        <div className="planner-popover-wrap" ref={createMenuRef}><button type="button" className="btn primary" aria-expanded={createOpen} aria-controls="study-create-menu" onClick={()=>setCreateOpen(value=>!value)} disabled={busy}><Plus size={16}/> Create <ChevronDown size={14}/></button>
-          {createOpen&&<div id="study-create-menu" className="planner-popover-menu">
-            <button className="planner-popover-action" onClick={()=>{setCreateOpen(false);editSemester();}}><Plus size={15}/> New semester</button>
-            <button className="planner-popover-action" disabled={!semesterOptions.length} onClick={()=>{setCreateOpen(false);openCourseForm();}}><BookOpen size={15}/> New course</button>
-          </div>}
-        </div>
+        <button type="button" className="btn primary" onClick={()=>openCourseForm()} disabled={busy||!semesterOptions.length}><Plus size={16}/> Course</button>
       </div>
     </div>
     <div className="planner-shell planner-study-shell">
@@ -372,6 +350,7 @@ export function CoursePlanner({ data, user, busy, pendingItems, courseId, weekNu
             const replacement=matching.find(c=>Boolean(c.archived)===next);
             selectCourse(replacement?.id||'');selectWeek(1);setWorkspaceTab('overview');
           }}><Archive size={15}/>{showArchived?'Back to active courses':`Archived courses (${archivedCount})`}</button>
+          <div className="planner-study-add-semester"><button type="button" className="btn primary" disabled={busy} onClick={()=>editSemester()}><Plus size={17}/> Semester</button></div>
         </div>}
       </aside>
       <div className="planner-workspace">
@@ -382,25 +361,28 @@ export function CoursePlanner({ data, user, busy, pendingItems, courseId, weekNu
             <div><span className="eyebrow">{selected.code} · COURSE WORKSPACE</span><h2>{selected.title}</h2><p>{semester.name} · {selected.week_count} teaching weeks{selected.exam_date?` · Exam ${formatDate(selected.exam_date)}`:''}</p>{selected.goals&&<p className="planner-goal">{selected.goals}</p>}</div>
             <div className="planner-course-actions">
               {isReadOnly?<><Badge>Archived · read only</Badge><button className="btn primary small" onClick={()=>void restore(selected)}><RotateCcw size={14}/> Restore</button></>:<>
-                <button className="btn secondary small" onClick={()=>openCourseForm(selected)}><Pencil size={15}/> Edit course</button>
-                <div className="planner-popover-wrap" ref={courseMenuRef}><button type="button" className="btn secondary small planner-icon-menu" aria-label="More course actions" aria-expanded={courseActionsOpen} aria-controls="study-course-actions-menu" onClick={()=>setCourseActionsOpen(value=>!value)}><MoreHorizontal size={17}/></button>
-                {courseActionsOpen&&<div className="planner-popover-menu planner-popover-menu-right" id="study-course-actions-menu"><button className="planner-popover-action" onClick={()=>{setCourseActionsOpen(false);setDialog('archive');}}><Archive size={15}/> Archive course</button></div>}</div>
+                <button className="btn secondary small" onClick={()=>openCourseForm(selected)}><Pencil size={15}/> Edit</button>
+                <button className="btn secondary small" onClick={()=>setDialog('archive')} disabled={busy}><Archive size={15}/> Archive</button>
               </>}
             </div>
           </div>
+          <div className="planner-hero planner-study-hero">
+            <div><span>WEEK {weekNumber} · CONTINUE LEARNING</span><h3>{week?.title||`Continue with Week ${weekNumber}`}</h3><p>{week?.objectives||'Your resources, lecture notes, and next study actions are right here.'}</p></div>
+            <div className="planner-hero-progress"><strong>{courseCompletion}%</strong><small>{courseDoneCount}/{courseItems.length} complete</small><div className="progress-track" role="progressbar" aria-valuenow={courseCompletion} aria-valuemin={0} aria-valuemax={100} aria-label="Course completion"><div style={{width:`${courseCompletion}%`}}/></div></div>
+          </div>
+          <div className="planner-week-toolbar planner-study-week-toolbar">{weekPicker}{weekEditButton}</div>
           <nav className="planner-tabbar planner-study-tabs" aria-label="Course workspace sections">{([
             ['overview','Overview',BookOpen],['course-library','Course library',Library],
             ['week-resources','Week resources',FolderOpen],['tasks','Study tasks',ListChecks],
             ['exam','Exam prep',GraduationCap]
           ] as const).map(([key,label,Icon])=><button key={key} className={workspaceTab===key?'active':''} aria-current={workspaceTab===key?'page':undefined} onClick={()=>setWorkspaceTab(key)}><Icon size={16}/>{label}</button>)}</nav>
-          {workspaceTab!=='overview'&&<div className="planner-week-toolbar planner-aux-week-toolbar">{weekPicker}{(workspaceTab==='week-resources'||workspaceTab==='tasks')&&weekEditButton}</div>}
-          {workspaceTab==='overview'&&<div className="planner-main-grid planner-study-overview">
-            <Card className="planner-study-week-card">
-              <div className="planner-week-toolbar planner-inline-week-toolbar">{weekPicker}{weekEditButton}</div>
-              {week?.objectives&&<p className="planner-week-objectives">{week.objectives}</p>}
-              <div className="planner-study-listhead"><div className="planner-study-listtitle"><CheckCircle2 size={19}/><div><h3>Week activities <span>({items.length})</span></h3><p>{doneCount} completed · {items.length-doneCount} remaining</p></div></div>
-                <div className="planner-study-filters" aria-label="Filter weekly activities">{(['all','planned','due','completed'] as const).map(filter=><button key={filter} type="button" className={activityFilter===filter?'active':''} aria-pressed={activityFilter===filter} onClick={()=>setActivityFilter(filter)}>{filter[0].toUpperCase()+filter.slice(1)}</button>)}</div>
-              </div>
+          {workspaceTab==='overview'&&<div className="planner-main-grid planner-study-overview planner-classic-overview">
+            <Card className="planner-study-week-card planner-learning-checklist">
+              <div className="planner-classic-card-title"><h3>Weekly learning checklist</h3><div className="planner-classic-heading-actions">
+                <button type="button" className="btn secondary small planner-filter-toggle" aria-expanded={filtersOpen} aria-controls="study-activity-filters" title="Filter weekly activities" onClick={()=>setFiltersOpen(value=>!value)}><ListFilter size={15}/>{activityFilter==='all'?'Filter':activityFilter[0].toUpperCase()+activityFilter.slice(1)}</button>
+                {!isReadOnly&&<button className="btn secondary small" onClick={()=>{setItemDraft(itemDraftDefaults);setDialog('item');}}><Plus size={15}/> Add activity</button>}
+              </div></div>
+              {filtersOpen&&<div id="study-activity-filters" className="planner-study-filters" aria-label="Filter weekly activities">{(['all','planned','due','completed'] as const).map(filter=><button key={filter} type="button" className={activityFilter===filter?'active':''} aria-pressed={activityFilter===filter} onClick={()=>setActivityFilter(filter)}>{filter[0].toUpperCase()+filter.slice(1)}</button>)}</div>}
               {filteredItems.length?filteredItems.map(i=>{
                 const overdue=isOverdue(i,today);
                 return <div className={'planner-task-row planner-study-task'+(overdue?' overdue':'')+(landingItem?.id===i.id?' planner-target-item':'')} ref={landingItem?.id===i.id?landingRef:undefined} key={i.id}>
@@ -412,20 +394,20 @@ export function CoursePlanner({ data, user, busy, pendingItems, courseId, weekNu
                   {!overdue&&i.planned_date===today&&!i.done&&<span className="planner-study-status">Today</span>}
                   {!isReadOnly&&<button className="icon-btn" disabled={busy||i.done||pendingItems.has(i.id)} onClick={()=>openActivityPlan(i)} title={i.planned_date?`Reschedule ${i.title}`:`Plan ${i.title}`} aria-label={`Plan ${i.title}`}><CalendarDays size={16}/></button>}
                   {!isReadOnly&&<button className="icon-btn" disabled={busy} aria-label={`Focus on ${i.title}`} onClick={()=>focusOn(i)}><Timer size={16}/></button>}
-                  {!isReadOnly&&<button className="icon-btn danger-hover planner-study-remove" disabled={busy} aria-label={`Delete ${i.title}`} onClick={()=>void deleteItem(i)}><X size={15}/></button>}
+                  {!isReadOnly&&<button className="icon-btn danger-hover" disabled={busy} aria-label={`Delete ${i.title}`} onClick={()=>void deleteItem(i)}><X size={15}/></button>}
                 </div>;
               }):<EmptyState icon={<CheckCircle2 size={23}/>} title={items.length?'No activities in this filter':'A fresh week'} detail={items.length?'Choose All to see every weekly activity.':'Add a lecture, reading, note, or revision task to begin.'}/>}
-              {!isReadOnly&&<button className="btn secondary small planner-study-add-activity" onClick={()=>{setItemDraft(itemDraftDefaults);setDialog('item');}}><Plus size={15}/> Add activity</button>}
             </Card>
             <div className="stack planner-study-side-cards">
-              <Card className="planner-study-progress-card"><SectionTitle title="Course progress" aside={<span className="planner-study-figure">{courseDoneCount} / {courseItems.length} activities</span>}/>
-                <div className="progress-track" role="progressbar" aria-valuenow={courseCompletion} aria-valuemin={0} aria-valuemax={100} aria-label="Course completion"><div style={{width:`${courseCompletion}%`}}/></div>
-                <p className="planner-study-hint">{courseCompletion}% complete · Week {weekNumber}: {doneCount}/{items.length} finished</p>
+              <Card className="planner-study-week-resources-card"><div className="planner-classic-card-title"><h3>Week resources</h3><button className="planner-inline-link" onClick={()=>setWorkspaceTab('week-resources')}>View all <ArrowRight size={15}/></button></div>
+                {weekResources.slice(0,2).map(resourceRow)}
+                {!weekResources.length&&<p className="planner-study-hint">No slides linked for this week yet.</p>}
+                {!isReadOnly&&<button className="btn secondary full planner-resource-footer" onClick={()=>openResourceForm('week')}><Plus size={15}/> Link lecture slides</button>}
               </Card>
-              <Card className="planner-study-resource-card"><SectionTitle title="Course resources" aside={!isReadOnly&&<button className="btn secondary small" onClick={()=>openResourceForm('week')}><Plus size={14}/> Add link</button>}/>
-                {weekResources.slice(0,2).map(resourceRow)}{shared.slice(0,2).map(resourceRow)}
-                {!weekResources.length&&!shared.length&&<p className="planner-study-hint">No resources linked yet. Add lecture slides for this week or use Course Library for shared textbooks and Goodnotes notebooks.</p>}
-                <div className="planner-study-resource-links"><button className="planner-inline-link" onClick={()=>setWorkspaceTab('week-resources')}>Week resources <ArrowRight size={14}/></button><button className="planner-inline-link" onClick={()=>setWorkspaceTab('course-library')}>Course Library <ArrowRight size={14}/></button></div>
+              <Card className="planner-study-shared-library-card"><div className="planner-classic-card-title"><h3>Shared course library</h3><Badge>{shared.length} {shared.length===1?'file':'files'}</Badge></div>
+                {shared.slice(0,3).map(resourceRow)}
+                {!shared.length&&<p className="planner-study-hint">No shared textbooks or Goodnotes notebooks linked yet.</p>}
+                <button className="btn secondary full planner-resource-footer" onClick={()=>setWorkspaceTab('course-library')}><Library size={15}/> Open Course Library</button>
               </Card>
               <Card className="planner-study-notes-card"><SectionTitle title="Quick notes" aside={!isReadOnly&&<button className="planner-inline-link" onClick={startNote}><Plus size={15}/> Add note</button>}/>
                 {weekNotes.length?weekNotes.slice(0,3).map(note=><div className="planner-study-note" key={note.id}><div><strong>{note.title}</strong><p>{note.notes||'No text added yet.'}</p></div>{!isReadOnly&&<button className="icon-btn" aria-label={`Edit note ${note.title}`} onClick={()=>editNote(note)}><Pencil size={15}/></button>}</div>):<p className="planner-study-note-empty">No notes yet. Add a note for Week {weekNumber}.</p>}

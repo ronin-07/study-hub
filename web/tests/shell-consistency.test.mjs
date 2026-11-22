@@ -32,7 +32,11 @@ test('Quick Focus is in the shared top bar and never duplicated as a Home widget
   assert.match(page,/className="topbar-focus-session"/);
   assert.match(page,/Start a focus session/);
   assert.match(page,/onClick=\{\(\)=>void startQuickFocus\(\)\}/);
-  assert.match(page,/onClick=\{\(\)=>sessionAction\(active\.status==='running'\?'pause':'resume'\)\}/);
+  assert.match(page,/id="active-focus-menu"/);
+  assert.match(page,/Pause session/);
+  assert.match(page,/Resume session/);
+  assert.match(page,/End session/);
+  assert.doesNotMatch(page,/className="topbar-focus-control"/);
   assert.doesNotMatch(page,/home-focus-widget|home-week-goal/);
   assert.match(page,/<\/div><\/header>/);
 });

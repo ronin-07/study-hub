@@ -30,7 +30,8 @@ test('Quick Focus supports task-linking, selection, active timer and pause contr
   assert.match(home,/focusTasksForContext\(data\.items,quickFocusCourse\)/);
   assert.match(home,/mode:quickFocusMode/);
   assert.match(home,/duration\(elapsedFocus\(active,now\)\)/);
-  assert.match(home,/Pause focus/);
+  assert.match(home,/Pause session/);
+  assert.match(home,/Resume session/);
   assert.match(home,/document\.addEventListener\(\x27pointerdown\x27,onOutside\)/);
 });
 
