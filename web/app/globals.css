@@ -1007,6 +1007,20 @@
   .task-completion-row.is-exiting{animation:none!important}
 }
 
+/* Keep the tick and the highlight's mint edge comfortably inside task cards.
+   Apply the spacing in both idle and completing states, so checking does not shift the row. */
+.app-shell .planner-v05-task.task-completion-row{
+  padding-inline:16px;
+  margin-inline:4px;
+  border-radius:12px;
+}
+.app-shell .planner-v05-task.planner-task-overdue.task-completion-row{padding-inline:16px}
+.app-shell .planner-v05-agenda .planner-v05-task.task-completion-row{padding-inline:12px}
+@media(max-width:540px){
+  .app-shell .planner-v05-task.task-completion-row{padding-inline:12px;margin-inline:3px}
+  .app-shell .planner-v05-task.planner-task-overdue.task-completion-row{padding-inline:12px}
+}
+
 /* Week/PDF checklists retain completed rows; only active filtered lists exit. */
 .pdf-check .task-completion-check:checked + span{text-decoration:line-through;color:var(--muted)}
 .app-shell .task-completion-row.is-completing{background:rgba(127,196,149,.09);box-shadow:inset 3px 0 0 rgba(127,196,149,.55)}

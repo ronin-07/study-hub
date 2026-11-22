@@ -66,3 +66,15 @@ test('persistent weekly, calendar, and PDF rows do not fade out then reappear',(
   assert.match(tasks,/listed\.map\(i=>showRow\(i,false,mode!==\'completed\'\)\)/);
   assert.match(css,/\.pdf-check \.task-completion-check:checked \+ span/);
 });
+
+
+test('task completion tick and highlight have stable, responsive inset spacing',()=>{
+  const taskRow=css.match(/\.app-shell \.planner-v05-task\.task-completion-row\{([^}]+)\}/)?.[1];
+  assert.ok(taskRow, 'task rows need an inset shared by idle and completing states');
+  assert.match(taskRow,/padding-inline:16px/);
+  assert.match(taskRow,/margin-inline:4px/);
+  assert.match(taskRow,/border-radius:12px/);
+  assert.match(css,/\.app-shell \.planner-v05-task\.planner-task-overdue\.task-completion-row\{padding-inline:16px\}/);
+  assert.match(css,/\.app-shell \.planner-v05-agenda \.planner-v05-task\.task-completion-row\{padding-inline:12px\}/);
+  assert.match(css,/@media\(max-width:540px\)\{\s*\.app-shell \.planner-v05-task\.task-completion-row\{padding-inline:12px;margin-inline:3px\}/);
+});
