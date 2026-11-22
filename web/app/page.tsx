@@ -857,7 +857,7 @@ export default function Page() {
             calendarOnly calendarJump={calendarJump}/>}
 
           {tab==='focus'&&<>
-            <div className="page-heading"><div><span className="eyebrow"><Target size={13}/> DEEP WORK</span><h1>Find your flow.</h1><p>Settle into a distraction-free session. Every minute counts.</p></div><Badge tone={active?active.status==='running'?'good':'warning':'muted'}>{active?active.status:'Ready'}</Badge></div>
+            <div className="page-heading"><div><span className="eyebrow"><Target size={13}/> DEEP WORK</span><h1>Find your flow.</h1><p>Settle into a distraction-free session. Every minute counts.</p></div></div>
             <div className="focus-layout"><Card className="focus-card">
               {!active&&<div className="focus-settings"><FormRow label="Course (optional)"><select value={focusCourse} onChange={e=>{setFocusCourse(e.target.value);setFocusItem('');}}><option value="">General / personal</option>{data.courses.filter(c=>!c.archived).map(c=><option key={c.id} value={c.id}>{c.code} · {c.title}</option>)}</select></FormRow><FormRow label="Focus task (optional)"><select value={focusItem} onChange={e=>setFocusItem(e.target.value)}><option value="">No linked task</option>{focusTasksForContext(data.items,focusCourse).map(i=><option key={i.id} value={i.id}>{i.title}</option>)}</select></FormRow></div>}
               {active&&<div className="focus-context"><Badge tone="good">Active session</Badge><strong>{data.items.find(i=>i.id===active.item_id)?.title||data.courses.find(c=>c.id===active.course_id)?.title||'General focus'}</strong></div>}
