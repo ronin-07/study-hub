@@ -5,9 +5,10 @@ import type { User } from 'firebase/auth';
 import {
   ArrowLeft, ArrowRight, BookOpen, CalendarDays, Check, CheckCircle2, ChevronDown, Clock3,
   Cloud, ExternalLink, FileText, Folder, GraduationCap, Home, Link2, ListTodo, LoaderCircle, FolderCheck, ScanSearch,
-  Pause, Play, Plus, RotateCcw, Search, Square, Timer, Trash2, X, Sparkles, Sun, Moon, Zap, Target, Layers3, AlertTriangle, MoreHorizontal, BarChart3
+  Pause, Play, Plus, RotateCcw, Search, Square, Timer, Trash2, X, Sparkles, Sun, Moon, Target, Layers3, AlertTriangle, MoreHorizontal, BarChart3
 } from 'lucide-react';
 import { api, pdfBlob } from '@/lib/api';
+import { formatLocalClock, formatLocalDate } from '@/lib/clock';
 import { describeSnapshotFailure, fetchSnapshotWithRetry, type SnapshotLoadProblem } from '@/lib/snapshot-loading';
 import { Badge, Card, EmptyState, FormRow, SectionTitle } from '@/components/common';
 import { PdfWorkspace } from '@/components/pdf-workspace';
@@ -47,6 +48,7 @@ export default function Page() {
   const [courseId,setCourseId] = useState('');
   const [weekNumber,setWeekNumber] = useState(1);
   const [now,setNow] = useState(Math.floor(Date.now()/1000));
+  const [clockReady,setClockReady] = useState(false);
   const [pdf,setPdf] = useState<{url:string;title:string;page:number;resourceId?:string;courseId?:string;weekNumber?:number}|null>(null);
 
   const [taskForm,setTaskForm] = useState(false);
@@ -84,7 +86,13 @@ export default function Page() {
     if (!firebaseAuth) return;
     return onAuthStateChanged(firebaseAuth, u=>{setUser(u);setAuthReady(true);});
   },[]);
-  useEffect(()=>{ const id=window.setInterval(()=>setNow(Math.floor(Date.now()/1000)),1000);return ()=>clearInterval(id);},[]);
+  useEffect(()=>{
+    // Render the clock only after hydration to avoid server/client time mismatches.
+    setNow(Math.floor(Date.now()/1000));
+    setClockReady(true);
+    const id=window.setInterval(()=>setNow(Math.floor(Date.now()/1000)),1000);
+    return ()=>clearInterval(id);
+  },[]);
   useEffect(()=>{
     const preference=window.localStorage.getItem('studyhub-theme');
     if(preference==='dark'||preference==='light')setTheme(preference);
@@ -173,12 +181,15 @@ export default function Page() {
   const hour=new Date(now*1000).getHours();
   const hello=hour<12?'Good morning':hour<17?'Good afternoon':'Good evening';
   const firstName=user?.displayName?.trim().split(/\s+/)[0]||'';
+  const profileName=user?.displayName?.trim()||'Study Hub';
+  const profileInitials=profileName.split(/\s+/).slice(0,2).map(part=>part[0]?.toUpperCase()||'').join('');
   const greeting=overdue.length ? `${overdue.length} ${overdue.length===1?'task needs':'tasks need'} your attention.` :
     todayWork.length ? `${todayWork.length} ${todayWork.length===1?'priority':'priorities'} for today.` : 'Your day is yours to plan.';
   const greetingDetail=overdue.length ? 'Overdue work comes first. Clear or reschedule what matters, then return to studying.' :
     todayWork.length ? 'Your plan is ready. Make a little progress, one task at a time.' :
     'No work is due or planned for today. Pick up a course or plan something new.';
-  const dateLabel=new Intl.DateTimeFormat('en-DK',{month:'short',day:'numeric',year:'numeric'}).format(new Date(now*1000));
+  const dateLabel=clockReady?formatLocalDate(now*1000):'—';
+  const timeLabel=clockReady?formatLocalClock(now*1000):'--:--';
   const active=data.sessions.find(s=>s.status==='running'||s.status==='paused');
   const currentWeekStart=useMemo(()=>{const d=new Date();d.setHours(0,0,0,0);const weekday=(d.getDay()+6)%7;d.setDate(d.getDate()-weekday);return Math.floor(d.getTime()/1000);},[today]);
   const weekSeconds=data.sessions.filter(s=>s.status==='finished'&&s.ended_at && s.ended_at>=currentWeekStart).reduce((n,s)=>n+(s.focus_seconds||0),0);
@@ -329,15 +340,30 @@ export default function Page() {
   if (useFirebase&&!user) return <main className="login-shell"><Card className="login-card"><span className="brand-mark"><GraduationCap/></span><h1>Your private Study Hub</h1><p>Courses, notes, deadlines and focus time in one workspace. Only your authorized account can access the deployed app.</p><button className="btn primary" onClick={()=>void signIn()}>Sign in with Google</button></Card></main>;
 
   return <div className={`app-shell ${theme==='dark'?'theme-dark':''}`}>
-    <aside className={'sidebar'+(tab==='today'?' sidebar-home':'')}>
-      <div className="brand"><span className="brand-mark">{tab==='today'?<BookOpen size={21}/>:<GraduationCap size={21}/>}</span><div><strong>Study Hub</strong><small>{tab==='today'?'DTU':'Personal workspace'}</small></div></div>
+    <aside className="sidebar">
+      <div className="brand"><span className="brand-mark"><BookOpen size={21}/></span><div><strong>Study Hub</strong><small>DTU</small></div></div>
       <div className="nav-label">MY WORKSPACE</div>
       <nav className="side-nav" aria-label="Main navigation">{tabs.map(t=><button key={t.id} type="button" onClick={()=>navigate(t.id)} className={'nav-btn '+(tab===t.id?'current':'')} aria-current={tab===t.id?"page":undefined}><t.icon size={18}/>{t.label}{t.id==='tasks'&&openTasks.length>0&&<span className="nav-count">{openTasks.length}</span>}</button>)}</nav>
       {data.courses.some(c=>!c.archived)&&<div className="sidebar-courses"><div className="sidebar-courses-heading">COURSES</div>{data.courses.filter(c=>!c.archived).slice(0,6).map((c,index)=><button className={'sidebar-course-link'+(c.id===courseId&&tab==='courses'?' active':'')} key={c.id} onClick={()=>openCourse(c.id)}><span className={'sidebar-course-dot tone-'+(index%4)}/><span>{c.code} · {c.title}</span></button>)}</div>}<div className="sidebar-spacer"/>
-      <div className="sidebar-bottom">{tab==='today'?<div className="sidebar-profile"><span className="sidebar-profile-avatar">{(firstName||'S')[0].toUpperCase()}</span><div><strong>{user?.displayName||'Study Hub'}</strong><small>DTU student</small></div></div>:<><div className="privacy"><span className="live-dot"/><span>{useFirebase?'Private Firebase account':'Local private development'}</span></div><p>RepLap stays in its own project.</p></>}{useFirebase&&<button className="link-btn" onClick={()=>void signOutUser()}>Sign out</button>}</div>
+      <div className="sidebar-bottom">
+        <div className="sidebar-profile">
+          <span className="sidebar-profile-avatar" aria-hidden="true">{profileInitials}</span>
+          <div><strong title={profileName}>{profileName}</strong><small>DTU student</small></div>
+        </div>
+        <div className="sidebar-footer-row">
+          <span className="sidebar-account"><span className="live-dot" aria-hidden="true"/>{useFirebase?'Private workspace':'Local development'}</span>
+          {useFirebase&&<button className="link-btn sidebar-signout" aria-label="Sign out of Study Hub" onClick={()=>void signOutUser()}>Sign out</button>}
+        </div>
+      </div>
     </aside>
     <div className="main-area">
-      <header className={'topbar'+(tab==='today'?' dashboard-topbar':'')}><div className="breadcrumb"><Sparkles size={16}/> PERSONAL HUB <span>/</span> <strong>{pageNames[tab]}</strong></div><div className="topbar-right"><span className="topbar-date">{dateLabel}</span><button className="topbar-theme" disabled={loading||refreshing||busy} aria-label="Refresh study data" title="Refresh study data" onClick={()=>void load()}>{loading||refreshing?<LoaderCircle size={17} className="spin"/>:<RotateCcw size={17}/>}</button><button className="topbar-theme" aria-label={theme==='light'?'Switch to dark theme':'Switch to light theme'} title={theme==='light'?'Dark theme':'Light theme'} onClick={toggleTheme}>{theme==='light'?<Moon size={17}/>:<Sun size={17}/>}</button>{tab!=='today'&&<button className="topbar-focus" onClick={()=>setTab('focus')}><Zap size={15}/> Quick focus</button>}<span className="avatar">SH</span></div></header>
+      <header className={'topbar'+(tab==='today'?' dashboard-topbar':'')}><div className="breadcrumb"><Sparkles size={16}/> PERSONAL HUB <span>/</span> <strong>{pageNames[tab]}</strong></div><div className="topbar-right">
+          <span className="topbar-date">{dateLabel}</span>
+          <span className="topbar-clock" title="Your local time (24-hour clock)" aria-label={`Local time ${timeLabel}`}><Clock3 size={14} aria-hidden="true"/><time dateTime={clockReady?new Date(now*1000).toISOString():undefined}>{timeLabel}</time></span>
+          <button className="topbar-theme" disabled={loading||refreshing||busy} aria-label="Refresh study data" title="Refresh study data" onClick={()=>void load()}>{loading||refreshing?<LoaderCircle size={17} className="spin"/>:<RotateCcw size={17}/>}</button>
+          <button className="topbar-theme" aria-label={theme==='light'?'Switch to dark theme':'Switch to light theme'} title={theme==='light'?'Dark theme':'Light theme'} onClick={toggleTheme}>{theme==='light'?<Moon size={17}/>:<Sun size={17}/>}</button>
+          <span className="avatar" title={profileName} aria-label={`Signed in as ${profileName}`}>{profileInitials}</span>
+        </div></header>
       <main className={'page-content'+(tab==='today'?' dashboard-page':'')}>
         {error&&<div className="alert" role="alert"><span>{error}</span><button onClick={()=>setError('')} aria-label="Dismiss error"><X size={17}/></button></div>}
         {(loading||(!snapshotIssue&&(!snapshotReady||loadedUserRef.current!==(user?.uid||'local'))))?<div className="loading-state" role="status"><LoaderCircle className="spin"/> Securely loading your workspace…</div>:!snapshotReady?<Card className="load-error" >
