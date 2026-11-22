@@ -7,6 +7,10 @@ from threading import RLock
 from typing import Any
 
 
+class DocumentAlreadyExists(Exception):
+    """Create-only operation rejected a document ID that already exists."""
+
+
 class SQLiteStore:
     def __init__(self, path: str):
         self.path = path
@@ -37,6 +41,15 @@ class SQLiteStore:
             db.execute('INSERT OR REPLACE INTO documents VALUES (?,?,?,?)', (uid, kind, doc['id'], json.dumps(doc)))
             db.commit()
 
+    def create(self, uid: str, kind: str, doc: dict[str, Any]):
+        with self.lock, self.connect() as db:
+            try:
+                db.execute('INSERT INTO documents VALUES (?,?,?,?)',
+                           (uid, kind, doc['id'], json.dumps(doc)))
+                db.commit()
+            except sqlite3.IntegrityError as exc:
+                raise DocumentAlreadyExists from exc
+
     def delete(self, uid: str, kind: str, identifier: str):
         with self.lock, self.connect() as db:
             db.execute('DELETE FROM documents WHERE uid=? AND kind=? AND id=?', (uid, kind, identifier))
@@ -60,6 +73,13 @@ class FirestoreStore:
 
     def put(self, uid, kind, doc):
         self.col(uid, kind).document(doc['id']).set(doc)
+
+    def create(self, uid, kind, doc):
+        from google.api_core.exceptions import AlreadyExists, Conflict
+        try:
+            self.col(uid, kind).document(doc['id']).create(doc)
+        except (AlreadyExists, Conflict) as exc:
+            raise DocumentAlreadyExists from exc
 
     def delete(self, uid, kind, identifier):
         self.col(uid, kind).document(identifier).delete()

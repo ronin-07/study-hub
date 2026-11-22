@@ -27,19 +27,11 @@ const resourceDraftDefaults: ResourceDraft = { title: '', kind: 'slides', source
 const itemDraftDefaults: ItemDraft = { title: '', notes: '', kind: 'lecture', is_task: false, planned_date: '', due_date: '', chapter: '', page_start: '', page_end: '', resource_id: '' };
 
 function makeSemesters(data: Snapshot): SemesterOption[] {
-  const registered: SemesterOption[] = (data.semesters || []).map(s => ({ key: `id:${s.id}`, name: s.name, id: s.id, registered: true }));
-  const names = new Set(registered.map(s => s.name.toLocaleLowerCase()));
-  for (const c of data.courses) {
-    if (!names.has(c.semester.toLocaleLowerCase())) {
-      registered.push({ key: `legacy:${c.semester}`, name: c.semester, id: null, registered: false });
-      names.add(c.semester.toLocaleLowerCase());
-    }
-  }
-  return registered;
+  return (data.semesters || []).map(s => ({ key: `id:${s.id}`, name: s.name, id: s.id, registered: true }));
 }
 function courseSemester(course: Course, semesters: SemesterOption[]): string {
   const byId = semesters.find(s => s.id && s.id === course.semester_id);
-  return (byId || semesters.find(s => s.name.toLocaleLowerCase() === course.semester.toLocaleLowerCase()))?.key || `legacy:${course.semester}`;
+  return byId?.key || '';
 }
 function numberOrNull(value: string) { return value.trim() ? Number(value) : null; }
 
@@ -60,9 +52,7 @@ interface Props {
   openDrive: (courseId: string, weekNumber: number, kind: ResourceKind, scope: 'course' | 'week') => void;
 }
 
-/** v0.4.1: a single semester -> course -> week navigation source of truth.
- * Existing legacy courses remain grouped by semester name without a Firestore migration.
- */
+/** Single registered semester -> course -> week navigation source of truth. */
 export function CoursePlanner({ data, user, busy, pendingItems, courseId, weekNumber, selectCourse, selectWeek, run, toggleItem, focusOn, openResource, openDrive, landingItem }: Props) {
   const semesterOptions = useMemo(() => makeSemesters(data), [data]);
   const [semesterKey, setSemesterKey] = useState('');
@@ -308,7 +298,7 @@ export function CoursePlanner({ data, user, busy, pendingItems, courseId, weekNu
   const weekPicker=<div className="planner-week-picker">
     <span className="planner-week-label">Teaching week</span>
     <button className="btn secondary small" aria-label="Previous week" disabled={weekNumber<=1} onClick={()=>selectWeek(weekNumber-1)}><ChevronLeft size={17}/></button>
-    <select aria-label="Teaching week" title="Jump to a teaching week" value={weekNumber} onChange={e=>selectWeek(Number(e.target.value))}>{Array.from({length:selected?.week_count||1},(_,idx)=><option key={idx+1} value={idx+1}>Week {idx+1}</option>)}</select>
+    <span className="planner-week-select-wrap"><select aria-label="Teaching week" title="Jump to a teaching week" value={weekNumber} onChange={e=>selectWeek(Number(e.target.value))}>{Array.from({length:selected?.week_count||1},(_,idx)=><option key={idx+1} value={idx+1}>Week {idx+1}</option>)}</select><ChevronDown size={16} strokeWidth={2} aria-hidden="true" className="planner-week-select-chevron"/></span>
     <button className="btn secondary small" aria-label="Next week" disabled={!selected||weekNumber>=selected.week_count} onClick={()=>selectWeek(weekNumber+1)}><ChevronRight size={17}/></button>
   </div>;
   const weekEditButton=!isReadOnly&&selected&&<button className="btn secondary small" onClick={()=>{setWeekDraft({title:week?.title||'',objectives:week?.objectives||''});setDialog('week');}}><Pencil size={14}/>{week?'Edit week':'Set up week'}</button>;

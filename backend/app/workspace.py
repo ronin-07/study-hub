@@ -46,15 +46,13 @@ def validate(model, values):
 
 @router.post('/semesters', response_model=Semester, status_code=201)
 async def create_semester(value: Semester, user: User = Depends(current_user)):
+    value.name = value.name.strip()
+    if not value.name:
+        raise HTTPException(422, 'Semester name cannot be blank')
     if any(s['name'].casefold() == value.name.casefold() for s in store().list(user.uid, 'semesters')):
         raise HTTPException(409, 'Semester already exists')
-    store().put(user.uid, 'semesters', value.model_dump(mode='json'))
-    # Adopt pre-v0.4 courses that previously had only a semester name.
-    for course in store().list(user.uid, 'courses'):
-        if not course.get('semester_id') and course.get('semester', '').casefold() == value.name.casefold():
-            course['semester_id'] = value.id
-            course['semester'] = value.name
-            store().put(user.uid, 'courses', course)
+    from .main import create_doc
+    create_doc(user.uid, 'semesters', value.model_dump(mode='json'))
     return value
 
 
@@ -62,13 +60,16 @@ async def create_semester(value: Semester, user: User = Depends(current_user)):
 async def edit_semester(identifier: str, patch: SemesterPatch, user: User = Depends(current_user)):
     old = require(user.uid, 'semesters', identifier)
     value = validate(Semester, {**old, **patch.model_dump(mode='json', exclude_unset=True)})
+    value.name = value.name.strip()
+    if not value.name:
+        raise HTTPException(422, 'Semester name cannot be blank')
     for other in store().list(user.uid, 'semesters'):
         if other['id'] != identifier and other['name'].casefold() == value.name.casefold():
             raise HTTPException(409, 'Semester already exists')
     store().put(user.uid, 'semesters', value.model_dump(mode='json'))
     # Keep legacy semester label in sync for existing linked course documents.
     for course in store().list(user.uid, 'courses'):
-        if course.get('semester_id') == identifier or (not course.get('semester_id') and course.get('semester', '').casefold() == old['name'].casefold()):
+        if course.get('semester_id') == identifier:
             course['semester_id'] = identifier
             course['semester'] = value.name
             store().put(user.uid, 'courses', course)
@@ -78,7 +79,7 @@ async def edit_semester(identifier: str, patch: SemesterPatch, user: User = Depe
 @router.delete('/semesters/{identifier}', status_code=204)
 async def remove_semester(identifier: str, user: User = Depends(current_user)):
     record = require(user.uid, 'semesters', identifier)
-    if any(c.get('semester_id') == identifier or (not c.get('semester_id') and c.get('semester') == record['name']) for c in store().list(user.uid, 'courses')):
+    if any(c.get('semester_id') == identifier for c in store().list(user.uid, 'courses')):
         raise HTTPException(409, 'Move or archive courses elsewhere before removing this semester')
     store().delete(user.uid, 'semesters', identifier)
 
@@ -87,15 +88,21 @@ async def remove_semester(identifier: str, user: User = Depends(current_user)):
 async def edit_course(identifier: str, patch: CoursePatch, user: User = Depends(current_user)):
     original = ensure_course_active(user.uid, identifier)
     fields = patch.model_dump(mode='json', exclude_unset=True)
-    if fields.get('semester_id'):
-        semester = require(user.uid, 'semesters', fields['semester_id'])
-        fields['semester'] = semester['name']
-    elif 'semester' in fields and original.get('semester_id') and original.get('semester') != fields['semester']:
-        fields['semester_id'] = None  # prevent contradictory names and IDs
+    # Names supplied by the browser are display hints only, not a way to
+    # detach a course from its registered semester.
+    fields.pop('semester', None)
+    if 'semester_id' in fields and not fields['semester_id']:
+        raise HTTPException(422, 'A registered semester_id is required')
     value = validate(Course, {**original, **fields})
-    if value.semester_id:
-        semester = require(user.uid, 'semesters', value.semester_id)
-        value.semester = semester['name']
+    if not value.semester_id:
+        raise HTTPException(422, 'A registered semester_id is required')
+    semester = require(user.uid, 'semesters', value.semester_id)
+    value.semester = semester['name']
+    value.code = value.code.strip()
+    if not value.code:
+        raise HTTPException(422, 'Course code cannot be blank')
+    from .main import verify_course_code_available
+    verify_course_code_available(user.uid, value.semester_id, value.code, except_id=identifier)
     # Only scan linked collections when the week count is actually being shortened.
     # Ordinary title/semester edits should not trigger three unnecessary Firestore streams.
     if value.week_count < original['week_count']:

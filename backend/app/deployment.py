@@ -19,14 +19,20 @@ def validate_deployment_environment():
         project_id = json.loads(raw)['project_id']
     except (ValueError, KeyError, TypeError) as exc:
         raise RuntimeError('Invalid Firebase service-account configuration') from exc
-    if os.getenv('VERCEL_ENV') == 'preview':
-        preview = os.getenv('STUDY_HUB_PREVIEW_FIREBASE_PROJECT_ID')
-        production = os.getenv('STUDY_HUB_PRODUCTION_FIREBASE_PROJECT_ID')
-        if not preview or not production or preview == production or project_id != preview:
-            raise RuntimeError('Preview must use a distinct, explicitly identified Firebase project')
-        if os.getenv('STUDY_HUB_ALLOW_PREVIEW_DRIVE_OAUTH') != 'true':
-            # No preview OAuth tokens from production: endpoints guard independently.
-            return
+    environment = os.getenv('VERCEL_ENV')
+    if environment not in ('preview', 'production'):
+        raise RuntimeError('Unknown hosted environment; refusing to initialize Firebase')
+    preview = os.getenv('STUDY_HUB_PREVIEW_FIREBASE_PROJECT_ID', '').strip()
+    production = os.getenv('STUDY_HUB_PRODUCTION_FIREBASE_PROJECT_ID', '').strip()
+    if not preview or not production or preview == production:
+        raise RuntimeError('Preview and Production require distinct, explicitly configured Firebase projects')
+    expected = preview if environment == 'preview' else production
+    if project_id != expected:
+        raise RuntimeError('Service account does not match expected Firebase project for this environment')
+    web_project = os.getenv('NEXT_PUBLIC_FIREBASE_PROJECT_ID', '').strip()
+    if not web_project or web_project != expected:
+        raise RuntimeError('Web Firebase project ID does not match this deployment environment')
+
 
 
 def require_drive_available():

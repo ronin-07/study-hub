@@ -1,4 +1,5 @@
 """v0.5 regression tests for shared task state, recurrence and scheduling."""
+from tests.helpers import create_course
 from datetime import date
 import importlib
 import pytest
@@ -51,7 +52,7 @@ def test_monthly_recurrence_from_last_day_of_month(client):
 
 
 def test_editing_plan_preserves_due_date_and_course_context(client):
-    course=client.post('/api/courses', json={'code':'02516','title':'CV'}).json()
+    course=create_course(client, {'code':'02516','title':'CV'}).json()
     task=client.post('/api/items',json={'title':'Revise','kind':'revision','course_id':course['id'],
         'week_number':4,'planned_date':'2026-11-23','due_date':'2026-11-30'}).json()
     result=client.patch('/api/items/'+task['id'],json={'planned_date':'2026-11-25'}).json()
@@ -62,7 +63,7 @@ def test_editing_plan_preserves_due_date_and_course_context(client):
 
 
 def test_undated_weekly_notes_can_be_planned_and_completed_without_duplicate(client):
-    course = client.post('/api/courses', json={'code':'02516','title':'CV'}).json()
+    course = create_course(client, {'code':'02516','title':'CV'}).json()
     pdf = client.post('/api/resources', json={
         'course_id':course['id'], 'week_number':None, 'title':'Course notebook',
         'kind':'handwritten', 'source':'link', 'url':'https://example.com/notes.pdf',
@@ -91,7 +92,7 @@ def test_undated_weekly_notes_can_be_planned_and_completed_without_duplicate(cli
 
 
 def test_weekly_activity_due_date_makes_it_actionable_without_planned_date(client):
-    course = client.post('/api/courses', json={'code':'02450','title':'ML'}).json()
+    course = create_course(client, {'code':'02450','title':'ML'}).json()
     reading = client.post('/api/items', json={
         'title':'Chapter reading', 'kind':'reading', 'course_id':course['id'],
         'week_number':2, 'is_task':False, 'due_date':'2026-11-22'

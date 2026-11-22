@@ -1,3 +1,4 @@
+from tests.helpers import create_course
 import importlib
 from fastapi.testclient import TestClient
 import pytest
@@ -17,7 +18,7 @@ def client(tmp_path, monkeypatch):
 
 
 def test_course_week_linked_item_and_task_completion(client):
-    course = client.post('/api/courses', json={'code': '02516', 'title': 'Image Analysis'}).json()
+    course = create_course(client, {'code': '02516', 'title': 'Image Analysis'}).json()
     assert course['code'] == '02516'
     week = client.post('/api/weeks', json={'course_id': course['id'], 'number': 10, 'title': 'Multiclass segmentation'})
     assert week.status_code == 201
@@ -70,7 +71,7 @@ def test_private_drive_endpoints_unconfigured(client):
 
 
 def test_scheduled_reading_automatically_appears_in_tasks(client):
-    course = client.post('/api/courses', json={'code': '02450', 'title': 'ML'}).json()
+    course = create_course(client, {'code': '02450', 'title': 'ML'}).json()
     planned = client.post('/api/items', json={
         'course_id': course['id'], 'week_number': 2, 'title': 'Read chapter 3',
         'kind': 'reading', 'planned_date': '2026-11-30', 'is_task': False
@@ -79,8 +80,8 @@ def test_scheduled_reading_automatically_appears_in_tasks(client):
 
 
 def test_cross_course_resource_association_rejected(client):
-    a = client.post('/api/courses', json={'code': '02516', 'title': 'CV'}).json()
-    b = client.post('/api/courses', json={'code': '02450', 'title': 'ML'}).json()
+    a = create_course(client, {'code': '02516', 'title': 'CV'}).json()
+    b = create_course(client, {'code': '02450', 'title': 'ML'}).json()
     item = client.post('/api/items', json={'course_id': a['id'], 'week_number': 1, 'title': 'Slides', 'kind': 'lecture'}).json()
     resource = client.post('/api/resources', json={'course_id': b['id'], 'week_number': 1, 'title': 'Lecture', 'kind': 'slides', 'source': 'link', 'url': 'https://example.com/s.pdf', 'item_id': item['id']})
     assert resource.status_code == 422
@@ -137,7 +138,7 @@ def test_items_only_refresh_and_server_timing_header(client):
 
 def test_course_name_edit_does_not_read_unrelated_collections(client, monkeypatch):
     import app.main as main
-    course = client.post('/api/courses', json={'code': '02516', 'title': 'Original title'}).json()
+    course = create_course(client, {'code': '02516', 'title': 'Original title'}).json()
     store = main.app_store
     old_list = store.list
     scanned = []

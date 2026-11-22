@@ -16,7 +16,7 @@ from .workspace_models import Semester
 from .models import Course, FocusSession, FinishFocus, Item, ItemPatch, ReadingPosition, Resource, StartFocus, Week
 from .security import User, current_user, firebase_app
 from .deployment import validate_deployment_environment
-from .storage import get_store
+from .storage import DocumentAlreadyExists, get_store
 
 validate_deployment_environment()
 
@@ -32,6 +32,8 @@ async def api_server_timing(request: Request, call_next):
     response = await call_next(request)
     if request.url.path.startswith('/api/'):
         response.headers['Server-Timing'] = f'api;dur={(time.perf_counter()-started)*1000:.1f}'
+        response.headers['Cache-Control'] = 'private, no-store'
+        response.headers['X-Content-Type-Options'] = 'nosniff'
     return response
 if os.getenv('STUDY_HUB_AUTH_MODE', 'local') == 'local':
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=['127.0.0.1', 'localhost', 'testserver'])
@@ -48,6 +50,24 @@ app.include_router(workspace_router)
 
 def all_docs(uid: str, kind: str) -> list[dict]:
     return app_store.list(uid, kind)
+
+
+def create_doc(uid: str, kind: str, doc: dict):
+    try:
+        app_store.create(uid, kind, doc)
+    except DocumentAlreadyExists:
+        raise HTTPException(409, f'{kind} ID already exists') from None
+
+
+def normalized_code(code: str) -> str:
+    return ' '.join(code.casefold().split())
+
+
+def verify_course_code_available(uid: str, semester_id: str, code: str, except_id: str | None = None):
+    key = normalized_code(code)
+    if any(c.get('id') != except_id and c.get('semester_id') == semester_id
+           and normalized_code(c.get('code', '')) == key for c in all_docs(uid, 'courses')):
+        raise HTTPException(409, 'Course code already exists in this semester')
 
 
 def exists(uid: str, kind: str, identifier: str):
@@ -90,12 +110,17 @@ async def list_items(user: User = Depends(current_user)):
 
 @app.post('/api/courses', response_model=Course, status_code=201)
 async def add_course(value: Course, user: User = Depends(current_user)):
-    if value.semester_id:
-        semester = app_store.get(user.uid, 'semesters', value.semester_id)
-        if not semester:
-            raise HTTPException(404, 'Semester not found')
-        value.semester = semester['name']
-    app_store.put(user.uid, 'courses', value.model_dump(mode='json'))
+    if not value.semester_id:
+        raise HTTPException(422, 'A registered semester_id is required')
+    semester = app_store.get(user.uid, 'semesters', value.semester_id)
+    if not semester:
+        raise HTTPException(422, 'Semester does not exist')
+    value.code = value.code.strip()
+    if not value.code:
+        raise HTTPException(422, 'Course code cannot be blank')
+    value.semester = semester['name']  # response/display cache, never client-authoritative
+    verify_course_code_available(user.uid, value.semester_id, value.code)
+    create_doc(user.uid, 'courses', value.model_dump(mode='json'))
     return value
 
 
@@ -105,7 +130,7 @@ async def add_week(value: Week, user: User = Depends(current_user)):
     for week in all_docs(user.uid, 'weeks'):
         if week['course_id'] == value.course_id and week['number'] == value.number:
             raise HTTPException(409, 'This course week already exists')
-    app_store.put(user.uid, 'weeks', value.model_dump(mode='json'))
+    create_doc(user.uid, 'weeks', value.model_dump(mode='json'))
     return value
 
 
@@ -115,7 +140,7 @@ async def add_item(value: Item, user: User = Depends(current_user)):
         raise HTTPException(422, 'Planned work date cannot be after the deadline')
     validate_context(user.uid, value.course_id, value.week_number)
     validate_item_reference(user.uid, value.course_id, value.week_number, value.resource_id)
-    app_store.put(user.uid, 'items', value.model_dump(mode='json'))
+    create_doc(user.uid, 'items', value.model_dump(mode='json'))
     return value
 
 
@@ -174,7 +199,7 @@ async def add_resource(value: Resource, user: User = Depends(current_user)):
                     and (existing.get('week_number') == value.week_number
                          or existing.get('week_number') is None or value.week_number is None)):
                 raise HTTPException(409, 'This PDF is already linked to that course and week')
-    app_store.put(user.uid, 'resources', value.model_dump(mode='json'))
+    create_doc(user.uid, 'resources', value.model_dump(mode='json'))
     return value
 
 

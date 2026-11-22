@@ -1,4 +1,5 @@
 """v0.4 compatibility and safety regressions. Does not access production Firestore."""
+from tests.helpers import create_course
 import importlib
 import json
 import os
@@ -25,17 +26,18 @@ def client(tmp_path, monkeypatch):
 
 
 def course(client, weeks=13):
-    res = client.post('/api/courses', json={'code': '02516', 'title': 'Image Analysis', 'week_count': weeks})
+    res = create_course(client, {'code': '02516', 'title': 'Image Analysis', 'week_count': weeks})
     assert res.status_code == 201, res.text
     return res.json()
 
 
-def test_legacy_course_is_compatible_and_snapshot_has_semesters(client):
+def test_course_requires_real_semester_and_snapshot_has_registered_semester(client):
+    assert client.post('/api/courses', json={'code':'02516','title':'No semester'}).status_code == 422
     c = course(client)
     snap = client.get('/api/snapshot').json()
-    assert snap['semesters'] == []
+    assert len(snap['semesters']) == 1
     assert c['semester'] == 'Autumn 2026'
-    assert c['semester_id'] is None
+    assert c['semester_id'] == snap['semesters'][0]['id']
     assert c['exam_date'] is None
     assert c['goals'] == ''
 
@@ -109,7 +111,8 @@ def test_preview_deployment_must_be_isolated(monkeypatch):
     monkeypatch.setenv('FIREBASE_SERVICE_ACCOUNT_JSON', json.dumps({'project_id':'prod-project'}))
     monkeypatch.setenv('STUDY_HUB_PREVIEW_FIREBASE_PROJECT_ID','preview-project')
     monkeypatch.setenv('STUDY_HUB_PRODUCTION_FIREBASE_PROJECT_ID','prod-project')
-    with pytest.raises(RuntimeError, match='distinct'):
+    monkeypatch.setenv('NEXT_PUBLIC_FIREBASE_PROJECT_ID', 'preview-project')
+    with pytest.raises(RuntimeError, match='does not match'):
         validate_deployment_environment()
     monkeypatch.setenv('FIREBASE_SERVICE_ACCOUNT_JSON', json.dumps({'project_id':'preview-project'}))
     validate_deployment_environment()
@@ -150,7 +153,7 @@ def test_oauth_state_is_single_use(client, monkeypatch):
 
 def test_renaming_semester_updates_linked_course(client):
     sem=client.post('/api/semesters',json={'name':'Spring 2027'}).json()
-    c=client.post('/api/courses',json={'code':'02501','title':'Studies','semester_id':sem['id']}).json()
+    c=create_course(client, {'code':'02501','title':'Studies','semester_id':sem['id']}).json()
     assert c['semester']=='Spring 2027'
     assert client.patch('/api/semesters/'+sem['id'],json={'name':'Spring term 2027'}).status_code==200
     course_from_snapshot=next(row for row in client.get('/api/snapshot').json()['courses'] if row['id']==c['id'])

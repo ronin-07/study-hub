@@ -1,4 +1,5 @@
 """v0.4.1: archive/restore and shared Course Library (SQLite only)."""
+from tests.helpers import create_course
 import importlib
 import pytest
 from fastapi.testclient import TestClient
@@ -19,7 +20,7 @@ def client(tmp_path, monkeypatch):
 def course(client, semester=None):
     payload = {'code': '02516', 'title': 'Image analysis', 'semester': 'Autumn 2026'}
     if semester: payload['semester_id'] = semester
-    resp = client.post('/api/courses', json=payload)
+    resp = create_course(client, payload)
     assert resp.status_code == 201, resp.text
     return resp.json()
 
@@ -112,9 +113,10 @@ def test_semester_names_and_archive_course_are_user_scoped(client):
         client.app.dependency_overrides.clear()
 
 
-def test_creating_semester_adopts_legacy_courses_and_renaming_keeps_them_together(client):
+def test_registered_semester_rename_keeps_course_label_in_sync(client):
     c=course(client)
-    sem=client.post('/api/semesters', json={'name':'Autumn 2026'}).json()
+    sem=client.get('/api/snapshot').json()['semesters'][0]
+    assert client.post('/api/semesters', json={'name':'Autumn 2026'}).status_code == 409
     linked=next(x for x in client.get('/api/snapshot').json()['courses'] if x['id']==c['id'])
     assert linked['semester_id']==sem['id']
     assert client.patch('/api/semesters/'+sem['id'],json={'name':'Fall 2026'}).status_code==200
