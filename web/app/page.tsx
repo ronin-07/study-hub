@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { User } from 'firebase/auth';
 import {
   ArrowLeft, ArrowRight, BookOpen, CalendarDays, Check, CheckCircle2, ChevronDown, Clock3,
@@ -8,9 +8,10 @@ import {
   Pause, Play, Plus, RotateCcw, Search, Square, Timer, Trash2, X, Sparkles, Sun, Moon, Zap, Target, Layers3
 } from 'lucide-react';
 import { api, pdfBlob } from '@/lib/api';
-import { Badge, Card, DayStatus, EmptyState, FormRow, SectionTitle } from '@/components/common';
+import { Badge, Card, EmptyState, FormRow, SectionTitle } from '@/components/common';
 import { PdfWorkspace } from '@/components/pdf-workspace';
 import { CoursePlanner } from '@/components/course-planner';
+import { TasksPlanner } from '@/components/tasks-planner';
 import { firebaseAuth, onAuthStateChanged, signIn, signOutUser, useFirebase } from '@/lib/auth';
 import { type DriveEntry, type DriveList, type FocusSession, type Item,
   type Resource, type Snapshot, type Tab, type DriveIndexed, type DriveSource, type DriveIndexResponse, type DriveScanResponse, duration,
@@ -41,11 +42,6 @@ export default function Page() {
   const [pdf,setPdf] = useState<{url:string;title:string;page:number;resourceId?:string;courseId?:string;weekNumber?:number}|null>(null);
 
   const [taskForm,setTaskForm] = useState(false);
-  const [taskEditId,setTaskEditId] = useState('');
-  const [taskEditDraft,setTaskEditDraft] = useState({title:'',planned_date:'',due_date:'',priority:'medium',notes:'',chapter:'',page_start:'',page_end:'',submitted:false});
-  const [taskFilter,setTaskFilter] = useState<'today'|'upcoming'|'completed'>('today');
-  const [taskDraft,setTaskDraft] = useState({title:'', planned_date:localToday(), due_date:'',priority:'medium'});
-
   const [focusCourse,setFocusCourse] = useState('');
   const [focusItem,setFocusItem] = useState('');
   const [focusMode,setFocusMode] = useState<'25'|'50'|'90'|'free'>('50');
@@ -117,18 +113,6 @@ export default function Page() {
   const weekSeconds=data.sessions.filter(s=>s.status==='finished'&&s.ended_at && s.ended_at>=currentWeekStart).reduce((n,s)=>n+(s.focus_seconds||0),0);
   const totalSeconds=data.sessions.filter(s=>s.status==='finished').reduce((n,s)=>n+(s.focus_seconds||0),0);
   const weekPct=Math.min(100,Math.round((weekSeconds/(weeklyGoal*3600))*100));
-  const listForTasks = taskFilter==='today' ? tasks.filter(i=>i.planned_date===today || (!i.done&&!!i.due_date&&i.due_date<today)) : taskFilter==='completed' ? tasks.filter(i=>i.done) : tasks.filter(i=>!i.done);
-  const sortedTasks=[...listForTasks].sort((a,b)=>(a.due_date||a.planned_date||'9999').localeCompare(b.due_date||b.planned_date||'9999'));
-
-  const startTaskEdit=(i:Item)=>{setTaskEditId(i.id);setTaskEditDraft({title:i.title,planned_date:i.planned_date||'',due_date:i.due_date||'',priority:i.priority,notes:i.notes||'',chapter:i.chapter||'',page_start:i.page_start?String(i.page_start):'',page_end:i.page_end?String(i.page_end):'',submitted:i.submitted});};
-  const saveTask=(e:FormEvent)=>{e.preventDefault();void act(async()=>{
-    await api(`/api/items/${taskEditId}`,user,{method:'PATCH',body:{...taskEditDraft,planned_date:taskEditDraft.planned_date||null,due_date:taskEditDraft.due_date||null,page_start:taskEditDraft.page_start?Number(taskEditDraft.page_start):null,page_end:taskEditDraft.page_end?Number(taskEditDraft.page_end):null}});
-    setTaskEditId('');
-  });};
-  const newTask=(e:FormEvent)=>{e.preventDefault();void act(async()=>{
-    await api('/api/items',user,{method:'POST',body:{...taskDraft,kind:'personal',planned_date:taskDraft.planned_date||null,due_date:taskDraft.due_date||null}});
-    setTaskForm(false);setTaskDraft({title:'',planned_date:today,due_date:'',priority:'medium'});
-  });};
   const toggle=(i:Item)=>void act(async()=>{await api(`/api/items/${i.id}`,user,{method:'PATCH',body:{done:!i.done}});});
   const startFrom=(i?:Item)=>{
     setFocusItem(i?.id||'');setFocusCourse(i?.course_id||'');
@@ -260,15 +244,8 @@ export default function Page() {
             openDrive={(id,week,kind,scope)=>{setLinkCourse(id);setLinkWeek(week);setLinkScope(scope);setLinkKind(kind);setLinkItem('');setTab('library');}}
           />}
 
-          {tab==='tasks'&&<>
-            <div className="page-heading"><div><span className="eyebrow"><CheckCircle2 size={13}/> YOUR ACTION LIST</span><h1>Clear mind. Clear tasks.</h1><p>Everything on your plate, without the overwhelm.</p></div><button className="btn primary" onClick={()=>setTaskForm(!taskForm)}><Plus size={17}/> New task</button></div>
-            {taskForm&&<Card className="form-card"><h3>New personal task</h3><form className="form-grid" onSubmit={newTask}><FormRow label="What do you need to do?"><input required value={taskDraft.title} onChange={e=>setTaskDraft(p=>({...p,title:e.target.value}))} placeholder="Buy groceries"/></FormRow><FormRow label="Priority"><select value={taskDraft.priority} onChange={e=>setTaskDraft(p=>({...p,priority:e.target.value}))}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></FormRow><FormRow label="Planned date"><input type="date" value={taskDraft.planned_date} onChange={e=>setTaskDraft(p=>({...p,planned_date:e.target.value}))}/></FormRow><FormRow label="Due date"><input type="date" value={taskDraft.due_date} onChange={e=>setTaskDraft(p=>({...p,due_date:e.target.value}))}/></FormRow><div className="form-actions"><button type="button" className="btn secondary" onClick={()=>setTaskForm(false)}>Cancel</button><button className="btn primary" disabled={busy}>Create task</button></div></form></Card>}
-            <Card><div className="filterbar"><div className="segmented">{(['today','upcoming','completed'] as const).map(k=><button key={k} className={taskFilter===k?'selected':''} onClick={()=>setTaskFilter(k)}>{k==='today'?'Today':k==='upcoming'?'Upcoming':'Completed'}</button>)}</div><span className="muted">{sortedTasks.length} tasks</span></div>
-              {sortedTasks.length?sortedTasks.map(i=><div className="task-list-row" key={i.id}><input type="checkbox" checked={i.done} aria-label={`Complete ${i.title}`} onChange={()=>toggle(i)}/><div className="task-content"><strong className={i.done?'complete':''}>{i.title}</strong><div className="inline-meta"><Badge>{i.course_id?(data.courses.find(c=>c.id===i.course_id)?.code||'Study'):'Personal'}</Badge><Badge tone={i.priority==='high'?'warning':'muted'}>{i.priority} priority</Badge>{i.kind==='assignment'&&<Badge tone="good">Assignment</Badge>}</div><DayStatus i={i}/></div>{i.course_id&&<button className="icon-btn" title="Start focus" onClick={()=>startFrom(i)}><Timer size={17}/></button>}<button className="btn secondary small" onClick={()=>startTaskEdit(i)}>Edit</button></div>):<EmptyState icon={<ListTodo size={24}/>} title="Nothing in this view" detail="New personal tasks appear here, along with scheduled revision and course assignments."/>}
-            </Card>
-            {taskEditId&&<Card className="form-card"><h3>Edit study task</h3><form className="mini-form" onSubmit={saveTask}><FormRow label="Title"><input required value={taskEditDraft.title} onChange={e=>setTaskEditDraft(p=>({...p,title:e.target.value}))}/></FormRow><div className="form-grid"><FormRow label="Planned date"><input type="date" value={taskEditDraft.planned_date} onChange={e=>setTaskEditDraft(p=>({...p,planned_date:e.target.value}))}/></FormRow><FormRow label="Due date"><input type="date" value={taskEditDraft.due_date} onChange={e=>setTaskEditDraft(p=>({...p,due_date:e.target.value}))}/></FormRow><FormRow label="Priority"><select value={taskEditDraft.priority} onChange={e=>setTaskEditDraft(p=>({...p,priority:e.target.value}))}><option>low</option><option>medium</option><option>high</option></select></FormRow><FormRow label="Chapter"><input value={taskEditDraft.chapter} onChange={e=>setTaskEditDraft(p=>({...p,chapter:e.target.value}))}/></FormRow><FormRow label="Page start"><input type="number" min={1} value={taskEditDraft.page_start} onChange={e=>setTaskEditDraft(p=>({...p,page_start:e.target.value}))}/></FormRow><FormRow label="Page end"><input type="number" min={1} value={taskEditDraft.page_end} onChange={e=>setTaskEditDraft(p=>({...p,page_end:e.target.value}))}/></FormRow></div><FormRow label="Instructions"><textarea rows={2} value={taskEditDraft.notes} onChange={e=>setTaskEditDraft(p=>({...p,notes:e.target.value}))}/></FormRow>{data.items.find(i=>i.id===taskEditId)?.kind==='assignment'&&<label className="inline-check"><input type="checkbox" checked={taskEditDraft.submitted} onChange={e=>setTaskEditDraft(p=>({...p,submitted:e.target.checked}))}/> Officially submitted</label>}<div className="form-actions"><button type="button" className="btn secondary" onClick={()=>setTaskEditId('')}>Cancel</button><button className="btn primary" disabled={busy}>Save task</button></div></form></Card>}
-            <div className="help-note">Planned date = when you intend to work. Due date = deadline. Editing one never changes the other.</div>
-          </>}
+          {tab==='tasks'&&<TasksPlanner items={tasks} courses={data.courses} user={user} busy={busy}
+            run={act} onToggle={toggle} onFocus={startFrom} createOpen={taskForm} setCreateOpen={setTaskForm}/>}
 
           {tab==='focus'&&<>
             <div className="page-heading"><div><span className="eyebrow"><Target size={13}/> DEEP WORK</span><h1>Find your flow.</h1><p>Settle into a distraction-free session. Every minute counts.</p></div><Badge tone={active?active.status==='running'?'good':'warning':'muted'}>{active?active.status:'Ready'}</Badge></div>

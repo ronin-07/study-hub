@@ -133,3 +133,7 @@ docs/firestore.rules  Backend-only access example for a NEW Firebase project
 ## Important deployment limitation
 
 The frontend is designed for Next.js and the backend is a separately started FastAPI service. This ZIP does not configure a Vercel deployment, cron worker or file storage. A serverless deployment requires proper environment variables and token persistence (Firestore encrypted token records work for that); do not assume local SQLite persists across serverless requests.
+
+### v0.5 Tasks & Calendar development
+
+The Tasks screen includes a month planner, separate planned and due dates, course-linked tasks and after-completion recurring tasks. See [`docs/v0.5-implementation.md`](docs/v0.5-implementation.md) for Preview testing and limitations. Keep v0.5 iterations on `feature/v0.5-tasks-calendar` until approved for release.

@@ -23,7 +23,7 @@ if os.getenv('STUDY_HUB_AUTH_MODE', 'local') == 'firebase' or os.getenv('STORAGE
     firebase_app()
 
 app_store = get_store()
-app = FastAPI(title='Study Hub API', version='0.4.1')
+app = FastAPI(title='Study Hub API', version='0.5.0')
 if os.getenv('STUDY_HUB_AUTH_MODE', 'local') == 'local':
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=['127.0.0.1', 'localhost', 'testserver'])
 app.add_middleware(CORSMiddleware,
@@ -109,6 +109,13 @@ async def patch_item(identifier: str, updates: ItemPatch, user: User = Depends(c
         value = Item.model_validate(merged)
     except ValidationError as exc:
         raise HTTPException(422, str(exc)) from None
+    # Completing a recurring item creates exactly one next dated occurrence.
+    # The child has a deterministic ID so retries and re-completion never fork the series.
+    if not original.get('done', False) and value.done and value.repeat != 'none':
+        from .recurrence import next_occurrence
+        successor = next_occurrence(value)
+        if not app_store.get(user.uid, 'items', successor.id):
+            app_store.put(user.uid, 'items', successor.model_dump(mode='json'))
     app_store.put(user.uid, 'items', value.model_dump(mode='json'))
     return value
 

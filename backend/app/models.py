@@ -48,6 +48,8 @@ class Item(BaseDocument):
     planned_date: date | None = None
     due_date: date | None = None
     priority: Literal['low', 'medium', 'high'] = 'medium'
+    repeat: Literal['none', 'daily', 'weekly', 'monthly'] = 'none'
+    repeat_series_id: str | None = Field(default=None, max_length=80)
     notes: str = Field(default='', max_length=5000)
     chapter: str = Field(default='', max_length=120)
     page_start: int | None = Field(default=None, ge=1, le=20000)
@@ -67,6 +69,11 @@ class Item(BaseDocument):
             self.is_task = True
         if self.week_number is not None and self.course_id is None:
             raise ValueError('A week must belong to a course')
+        if self.repeat != 'none':
+            if self.planned_date is None:
+                raise ValueError('Repeating tasks require a planned date')
+            if self.kind == 'assignment':
+                raise ValueError('Use individual deadlines for assignments rather than repetition')
         if self.submitted and self.kind != 'assignment':
             raise ValueError('Only an assignment may be marked submitted')
         return self
@@ -81,6 +88,7 @@ class ItemPatch(BaseModel):
     planned_date: date | None = None
     due_date: date | None = None
     priority: Literal['low', 'medium', 'high'] | None = None
+    repeat: Literal['none', 'daily', 'weekly', 'monthly'] | None = None
     notes: str | None = Field(default=None, max_length=5000)
     chapter: str | None = Field(default=None, max_length=120)
     page_start: int | None = Field(default=None, ge=1, le=20000)
