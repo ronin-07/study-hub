@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse, StreamingResponse
 
 from .security import User, current_user
+from .deployment import require_drive_available
 
 router = APIRouter(prefix='/api/drive', tags=['drive'])
 GOOGLE_AUTH = 'https://accounts.google.com/o/oauth2/v2/auth'
@@ -27,6 +28,7 @@ DRIVE_ID = re.compile(r'^[A-Za-z0-9_-]{5,200}$')
 
 
 def _config():
+    require_drive_available()
     keys = ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REDIRECT_URI', 'APP_SIGNING_SECRET', 'OAUTH_ENCRYPTION_KEY']
     missing = [x for x in keys if not os.getenv(x)]
     if missing:
@@ -41,7 +43,7 @@ def _state(uid: str, secret: str):
     return payload + '.' + sig
 
 
-def _decode_state(value: str, secret: str) -> str:
+def _decode_claims(value: str, secret: str) -> dict:
     try:
         payload, signature = value.rsplit('.', 1)
         expected = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
@@ -50,10 +52,13 @@ def _decode_state(value: str, secret: str) -> str:
         data = json.loads(base64.urlsafe_b64decode(payload + '=' * (-len(payload) % 4)))
         if not 0 <= time.time() - data['ts'] < 600:
             raise ValueError('Expired')
-        return data['uid']
+        return data
     except (ValueError, KeyError, TypeError, json.JSONDecodeError):
         raise HTTPException(400, 'Invalid or expired OAuth state') from None
 
+
+def _decode_state(value: str, secret: str) -> str:
+    return _decode_claims(value, secret)['uid']
 
 def _token(store, uid: str, config):
     saved = store.get(uid, 'secrets', 'drive-token')
@@ -99,17 +104,25 @@ def _store():
 async def status(user: User = Depends(current_user)):
     store = _store()
     return {'connected': bool(store.get(user.uid, 'secrets', 'drive-token')),
-            'configured': all(os.getenv(x) for x in ('GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REDIRECT_URI', 'APP_SIGNING_SECRET', 'OAUTH_ENCRYPTION_KEY'))}
+            'configured': not (os.getenv('VERCEL_ENV') == 'preview' and os.getenv('STUDY_HUB_ALLOW_PREVIEW_DRIVE_OAUTH') != 'true') and all(os.getenv(x) for x in ('GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REDIRECT_URI', 'APP_SIGNING_SECRET', 'OAUTH_ENCRYPTION_KEY'))}
 
 
 @router.get('/connect')
 async def connect(user: User = Depends(current_user)):
     cfg = _config()
+    state = _state(user.uid, cfg['APP_SIGNING_SECRET'])
+    store = _store()
+    # One-time, server-recorded challenge to prevent OAuth state replay.
+    challenge_id = hashlib.sha256(state.encode()).hexdigest()
+    for old in store.list(user.uid, 'oauth-challenges'):
+        if old.get('created_at', 0) < time.time() - 900:
+            store.delete(user.uid, 'oauth-challenges', old['id'])
+    store.put(user.uid, 'oauth-challenges', {'id': challenge_id, 'created_at': int(time.time())})
     return {'authorization_url': GOOGLE_AUTH + '?' + urlencode({
         'client_id': cfg['GOOGLE_CLIENT_ID'], 'redirect_uri': cfg['GOOGLE_REDIRECT_URI'],
         'response_type': 'code', 'scope': SCOPE, 'access_type': 'offline',
         'include_granted_scopes': 'true', 'prompt': 'consent',
-        'state': _state(user.uid, cfg['APP_SIGNING_SECRET'])
+        'state': state
     })}
 
 
@@ -119,6 +132,12 @@ async def callback(code: str | None = None, state: str | None = None, error: str
     if error or not code or not state:
         raise HTTPException(400, 'Google authorization was cancelled or incomplete')
     uid = _decode_state(state, cfg['APP_SIGNING_SECRET'])
+    store = _store()
+    challenge_id = hashlib.sha256(state.encode()).hexdigest()
+    challenge = store.get(uid, 'oauth-challenges', challenge_id)
+    if not challenge or challenge.get('created_at', 0) < time.time() - 600:
+        raise HTTPException(400, 'OAuth request was not initiated here, expired or already used')
+    store.delete(uid, 'oauth-challenges', challenge_id)
     async with httpx.AsyncClient(timeout=20) as client:
         response = await client.post(GOOGLE_TOKEN, data={
             'code': code, 'client_id': cfg['GOOGLE_CLIENT_ID'],

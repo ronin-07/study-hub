@@ -11,15 +11,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import ValidationError
 
+from .workspace_models import Semester
 from .models import Course, FocusSession, FinishFocus, Item, ItemPatch, ReadingPosition, Resource, StartFocus, Week
 from .security import User, current_user, firebase_app
+from .deployment import validate_deployment_environment
 from .storage import get_store
+
+validate_deployment_environment()
 
 if os.getenv('STUDY_HUB_AUTH_MODE', 'local') == 'firebase' or os.getenv('STORAGE_BACKEND') == 'firestore':
     firebase_app()
 
 app_store = get_store()
-app = FastAPI(title='Study Hub API', version='0.3.0')
+app = FastAPI(title='Study Hub API', version='0.4.0')
 if os.getenv('STUDY_HUB_AUTH_MODE', 'local') == 'local':
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=['127.0.0.1', 'localhost', 'testserver'])
 app.add_middleware(CORSMiddleware,
@@ -29,6 +33,8 @@ app.add_middleware(CORSMiddleware,
 
 from .drive import router as drive_router  # noqa: E402
 app.include_router(drive_router)
+from .workspace import router as workspace_router  # noqa: E402
+app.include_router(workspace_router)
 
 
 def all_docs(uid: str, kind: str) -> list[dict]:
@@ -58,11 +64,16 @@ async def health():
 
 @app.get('/api/snapshot')
 async def snapshot(user: User = Depends(current_user)):
-    return {kind: all_docs(user.uid, kind) for kind in ('courses', 'weeks', 'items', 'resources', 'sessions')}
+    return {kind: all_docs(user.uid, kind) for kind in ('courses', 'weeks', 'items', 'resources', 'sessions', 'semesters')}
 
 
 @app.post('/api/courses', response_model=Course, status_code=201)
 async def add_course(value: Course, user: User = Depends(current_user)):
+    if value.semester_id:
+        semester = app_store.get(user.uid, 'semesters', value.semester_id)
+        if not semester:
+            raise HTTPException(404, 'Semester not found')
+        value.semester = semester['name']
     app_store.put(user.uid, 'courses', value.model_dump(mode='json'))
     return value
 
@@ -101,6 +112,8 @@ async def patch_item(identifier: str, updates: ItemPatch, user: User = Depends(c
 @app.delete('/api/items/{identifier}', status_code=204)
 async def delete_item(identifier: str, user: User = Depends(current_user)):
     exists(user.uid, 'items', identifier)
+    if any(r.get('item_id') == identifier for r in all_docs(user.uid, 'resources')):
+        raise HTTPException(409, 'Detach linked PDF resources before deleting this study item')
     app_store.delete(user.uid, 'items', identifier)
 
 
@@ -176,6 +189,12 @@ async def start_session(value: StartFocus, user: User = Depends(current_user)):
             raise HTTPException(404, 'Linked task not found')
         if value.course_id and item.get('course_id') != value.course_id:
             raise HTTPException(422, 'Task does not belong to selected course')
+        if value.week_number and item.get('week_number') != value.week_number:
+            raise HTTPException(422, 'Task does not belong to selected week')
+        if not value.course_id and item.get('course_id'):
+            value.course_id = item['course_id']
+        if value.week_number is None and item.get('week_number'):
+            value.week_number = item['week_number']
     session = FocusSession(**value.model_dump(), started_at=now_s())
     app_store.put(user.uid, 'sessions', session.model_dump(mode='json'))
     return session

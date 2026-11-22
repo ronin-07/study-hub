@@ -43,3 +43,38 @@
 .pdf-actions input{width:57px;padding:7px 4px;text-align:center;border:1px solid var(--line);border-radius:8px;color:var(--text);background:var(--paper)}
 .pdf-guidance{padding:7px 15px;background:#2c2a49;color:#e0dbef;text-align:center;font-size:.69rem}
 @media(max-width:540px){.pdf-topbar{padding:10px 9px;gap:6px;flex-wrap:wrap}.pdf-actions{width:100%;justify-content:flex-end}.pdf-guidance{font-size:.6rem}.indexed-actions .btn{flex:1}.backup-source .btn{width:100%}}
+
+/* v0.4: reading workspace, semester management and editable course materials */
+.semester-panel{margin-bottom:18px;background:linear-gradient(110deg,var(--paper),var(--soft))}
+.semester-controls{display:flex;flex-wrap:wrap;align-items:center;gap:12px}
+.semester-controls label{display:flex;align-items:center;gap:9px;font-size:.78rem;color:var(--muted)}
+.semester-controls select{max-width:230px;padding:9px 12px;border:1px solid var(--line);background:var(--paper);color:var(--text);border-radius:10px}
+.workspace-actions{display:flex;align-items:flex-start;flex-wrap:wrap;gap:7px}
+.resource-editor{margin-top:12px}
+.resource-row .btn{flex-shrink:0}
+.pdf-workspace{background:#18172a;color:#f8f7ff}
+.pdf-workspace .pdf-file-title{display:flex;align-items:center;gap:9px;min-width:0;max-width:40%}
+.pdf-file-title span{font-size:.68rem;color:var(--muted);white-space:nowrap}
+.pdf-reading-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(265px,310px);flex:1;min-height:0}
+.pdf-expanded .pdf-reading-layout{grid-template-columns:minmax(0,1fr)}
+.pdf-document-panel{display:flex;flex-direction:column;min-width:0;min-height:0}
+.pdf-document-panel .pdf-guidance{padding:10px 14px;line-height:1.5}
+.pdf-document-scroll{min-height:0;flex:1;overflow:auto}
+.pdf-document-scroll .pdf-frame{display:block;width:100%;height:100%;min-height:480px;background:white}
+.pdf-study-side{overflow:auto;background:var(--paper);color:var(--text);border-left:1px solid var(--line);padding:19px;display:flex;flex-direction:column;gap:19px}
+.pdf-side-block{border-bottom:1px solid var(--line);padding-bottom:17px}
+.pdf-side-block:last-child{border-bottom:0}
+.pdf-side-block h3{font-size:.87rem;margin:8px 0 10px}
+.pdf-side-block p{font-size:.74rem;line-height:1.6;color:var(--muted)}
+.pdf-check{display:flex;align-items:flex-start;gap:9px;margin:12px 0;font-size:.77rem;line-height:1.4;cursor:pointer}
+.pdf-check input{margin-top:2px;accent-color:#6d5bd4}
+.pdf-related{width:100%;background:var(--soft);border:1px solid var(--line);color:var(--text);display:flex;align-items:center;text-align:left;justify-content:space-between;gap:8px;padding:10px;margin:7px 0;border-radius:10px}
+.pdf-related span:first-child{font-size:.72rem;flex:1;min-width:0;overflow-wrap:anywhere}
+.pdf-zoom-label{color:var(--muted);font-size:.7rem;min-width:35px;text-align:center}
+@media(max-width:950px){.pdf-reading-layout{grid-template-columns:minmax(0,1fr) minmax(210px,260px)}.pdf-file-title span{display:none}}
+@media(max-width:690px){.pdf-reading-layout{grid-template-columns:1fr;grid-template-rows:minmax(50vh,1fr) auto}.pdf-study-side{max-height:32vh;border-left:0;border-top:1px solid var(--line);padding:12px}.pdf-actions{flex-wrap:wrap;justify-content:flex-end}.pdf-zoom-label{display:none}.pdf-topbar{flex-wrap:wrap}.pdf-workspace .pdf-file-title{max-width:100%}}
+.semester-chips{display:flex;flex-wrap:wrap;gap:9px;margin:14px 0}
+.semester-chip{display:flex;align-items:center;gap:7px;background:var(--soft);border:1px solid var(--line);border-radius:10px;padding:6px 9px}
+.semester-chip strong{font-size:.76rem}
+.exam-task-form{display:flex;gap:8px;margin:15px 0}
+.exam-task-form input{flex:1;min-width:0;border:1px solid var(--line);border-radius:10px;background:var(--paper);color:var(--text);padding:10px;font-size:.78rem}
