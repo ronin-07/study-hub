@@ -486,7 +486,7 @@ export default function Page() {
                       {studyGroups.slice(0,4).map((group,index)=>{
                         const weekLabel=group.weekNumbers.length===1?`Week ${group.weekNumbers[0]}`:group.weekNumbers.length?`Weeks ${group.weekNumbers.join(', ')}`:'Course tasks';
                         const progress=group.activityCount?Math.round(100*group.doneCount/group.activityCount):0;
-                        return <div key={group.course.id} className={'home-course-tile tile-'+(index%4)}>
+                        return <div key={group.course.id} className={'home-course-tile tile-'+(index%4)+(Math.min(studyGroups.length,4)%2===1&&index===Math.min(studyGroups.length,4)-1?' compact-wide':'')}>
                           <div className="home-course-heading"><div className="home-course-icon"><BookOpen size={24}/></div><div className="home-course-title"><h3>{group.course.code} · {group.course.title}</h3><span>{weekLabel}</span></div>{group.overdueCount?<span className="home-overdue-pill">{group.overdueCount} overdue</span>:<span className="home-today-pill">Today</span>}</div>
                           <div className="home-course-progress"><span>{group.doneCount} / {group.activityCount} activities</span><div className="home-progress-track" role="progressbar" aria-label={`${group.course.title} selected week activity progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><div style={{width:`${progress}%`}}/></div></div>
                           <div className="home-course-activities">

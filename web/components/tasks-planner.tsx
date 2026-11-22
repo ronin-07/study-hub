@@ -7,7 +7,7 @@ import { api } from '@/lib/api';
 import type { MutationHint } from '@/lib/snapshot-cache';
 import { Badge, Card, DayStatus, EmptyState, FormRow } from '@/components/common';
 import { formatDate, kindLabels, localToday, type Course, type Item, type Priority } from '@/lib/types';
-import { isOverdue, todayPriorities, upcomingWork, shiftCalendarMonth } from '@/lib/task-view';
+import { canPlanOnDate, isOverdue, todayPriorities, upcomingWork, shiftCalendarMonth } from '@/lib/task-view';
 
 type Repeat = 'none'|'daily'|'weekly'|'monthly';
 type Mode = 'today'|'upcoming'|'calendar'|'completed';
@@ -44,6 +44,8 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,run,onToggle,
   const [draft,setDraft]=useState<Draft>(()=>blank(today));
   const [editing,setEditing]=useState<Item|null>(null);
   const [hoverDay,setHoverDay]=useState('');
+  const [draggedTaskId,setDraggedTaskId]=useState<string|null>(null);
+  const [dragNotice,setDragNotice]=useState('');
   const [showInbox,setShowInbox]=useState(true);
   // Personal-deadline deep links highlight a task without opening its edit form.
   const [highlightedTask,setHighlightedTask]=useState<string|null>(null);
@@ -100,6 +102,7 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,run,onToggle,
     e.preventDefault();
     if(!draft.title.trim())return;
     if(draft.repeat!=='none'&&!draft.planned_date)return;
+    if(draft.planned_date&&draft.due_date&&draft.planned_date>draft.due_date)return;
     const itemKind=draft.course_id?(draft.kind==='personal'?'revision':draft.kind):'personal';
     const payload={title:draft.title.trim(),planned_date:draft.planned_date||null,due_date:draft.due_date||null,
       priority:draft.priority,notes:draft.notes,repeat:itemKind==='assignment'?'none':draft.repeat};
@@ -112,10 +115,15 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,run,onToggle,
   const reschedule=async(id:string,date:string)=>{
     const item=items.find(i=>i.id===id);
     if(!item||item.done||busy||pendingItems.has(id))return;
+    if(!canPlanOnDate(item,date)){
+      setDragNotice(`Cannot schedule “${item.title}” after its deadline (${formatDate(item.due_date!)}).`);
+      return;
+    }
+    setDragNotice('');
     await run(()=>api(`/api/items/${id}`,user,{method:'PATCH',body:{planned_date:date}}),{collection:'items'});
   };
   const drop=(e:DragEvent<HTMLButtonElement>,date:string)=>{
-    e.preventDefault();setHoverDay('');
+    e.preventDefault();setHoverDay('');setDraggedTaskId(null);
     const id=e.dataTransfer.getData('text/plain');
     if(id)void reschedule(id,date);
   };
@@ -124,12 +132,15 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,run,onToggle,
     await run(()=>api(`/api/items/${item.id}`,user,{method:'DELETE'}),{collection:'items',deleteId:item.id});
     closeForm();
   };
+  const formDateInvalid=Boolean(draft.planned_date&&draft.due_date&&draft.planned_date>draft.due_date);
+  const draggedTask=draggedTaskId?items.find(i=>i.id===draggedTaskId):null;
   const formVisible=createOpen||editing!==null;
   const formCourse=availableCourses.find(c=>c.id===draft.course_id);
   const showRow=(i:Item,drag=false)=>{
     const course=availableCourses.find(c=>c.id===i.course_id);
     return <div className={'planner-v05-task'+(isOverdue(i,today)?' planner-task-overdue':'')+(highlightedTask===i.id?' planner-target-item':'')} ref={highlightedTask===i.id?highlightedRef:undefined} key={i.id} draggable={drag&&!busy&&!i.done&&!pendingItems.has(i.id)} aria-busy={pendingItems.has(i.id)}
-        onDragStart={e=>{if(drag)e.dataTransfer.setData('text/plain',i.id);}}>
+        onDragStart={e=>{if(drag){e.dataTransfer.setData('text/plain',i.id);e.dataTransfer.effectAllowed='move';setDraggedTaskId(i.id);setDragNotice('');}}}
+        onDragEnd={()=>{setDraggedTaskId(null);setHoverDay('');}}>
       {drag&&<GripVertical className="planner-v05-drag" size={15} aria-hidden="true"/>}
       <input type="checkbox" checked={i.done} disabled={busy||pendingItems.has(i.id)} aria-label={`Complete ${i.title}`} onChange={()=>onToggle(i)}/>
       <div className="planner-v05-taskbody"><strong className={i.done?'complete':''}>{i.title}</strong>
@@ -164,14 +175,20 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,run,onToggle,
         <div className="planner-v05-weekdays">{days.map(day=><span key={day}>{day}</span>)}</div>
         <div className="planner-v05-grid">{monthCells.map(day=>{
           const counts=calendarBuckets.get(day.key);
-          return <button key={day.key} className={`planner-v05-day ${day.outside?'outside':''} ${day.key===today?'today':''} ${day.key===selectedDay?'selected':''} ${hoverDay===day.key?'drop-target':''}`}
-            title={`Select ${fullLabel(day.key)}; drop tasks here to plan them`} aria-label={`${fullLabel(day.key)} — ${counts?.planned||0} planned, ${counts?.due||0} due`}
-            onClick={()=>selectCalendarDay(day.key)} onDragOver={e=>e.preventDefault()} onDragEnter={()=>setHoverDay(day.key)} onDragLeave={()=>setHoverDay('')} onDrop={e=>drop(e,day.key)}>
+          const blocked=draggedTask&&!canPlanOnDate(draggedTask,day.key);
+          return <button key={day.key} className={`planner-v05-day ${day.outside?'outside':''} ${day.key===today?'today':''} ${day.key===selectedDay?'selected':''} ${draggedTask&&hoverDay===day.key?(blocked?'drop-blocked':'drop-target'):''}`}
+            title={blocked?`Cannot plan after ${formatDate(draggedTask!.due_date!)}`:`Select ${fullLabel(day.key)}; drop tasks here to plan them`} aria-label={`${fullLabel(day.key)} — ${counts?.planned||0} planned, ${counts?.due||0} due${blocked?' — after task deadline':''}`}
+            onClick={()=>selectCalendarDay(day.key)}
+            onDragOver={e=>{if(draggedTask){e.preventDefault();e.dataTransfer.dropEffect=blocked?'none':'move';setHoverDay(previous=>previous===day.key?previous:day.key);}}}
+            onDragLeave={e=>{if(!e.currentTarget.contains(e.relatedTarget as Node|null))setHoverDay(previous=>previous===day.key?'':previous);}}
+            onDrop={e=>drop(e,day.key)}>
             <span className="planner-v05-day-number">{day.day}</span>
             <div className="planner-v05-day-markers">{!!counts?.planned&&<span className="planned">{counts.planned} plan</span>}{!!counts?.due&&<span className="due">{counts.due} due</span>}</div>
           </button>;
         })}</div>
-        <p className="planner-v05-hint">Drag an open task onto a date to plan it. Deadlines stay unchanged. On mobile, choose Edit to change its planned date.</p>
+        <p className="planner-v05-hint">Drag an open task onto a date to plan it. Dates after its deadline are blocked. On mobile, choose Edit to change its planned date.</p>
+        {draggedTask&&hoverDay&&!canPlanOnDate(draggedTask,hoverDay)&&<p role="status" className="planner-v05-drop-notice"><AlertTriangle size={15} aria-hidden="true"/> Cannot plan after {formatDate(draggedTask.due_date!)}. Choose an earlier day.</p>}
+        {dragNotice&&<p role="alert" className="planner-v05-drop-notice"><AlertTriangle size={15} aria-hidden="true"/> {dragNotice}</p>}
       </div><div className="planner-v05-agenda"><div className="planner-v05-agenda-title"><div><span>SELECTED DAY</span><h3>{fullLabel(selectedDay)}</h3></div><button className="icon-btn" onClick={()=>startCreate(selectedDay)} aria-label="Add task for this day"><Plus size={18}/></button></div>
         <h4>Planned work <span>{scheduled.length}</span></h4>{scheduled.length?scheduled.map(i=>showRow(i,true)):<p className="planner-v05-hint">Nothing planned. Drop a task here or add a new one.</p>}
         <h4>Due on this day <span>{due.length}</span></h4>{due.length?due.map(i=><button type="button" key={i.id} className="planner-v05-due" onClick={()=>openEdit(i)} title={`Open ${i.title}`} aria-label={`Open task ${i.title}`}><Clock3 size={15}/><span>{i.title}</span>{i.done&&<CheckCircle2 size={14}/>}<ArrowRight size={14}/></button>):<p className="planner-v05-hint">No additional deadlines on this date.</p>}
@@ -188,13 +205,14 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,run,onToggle,
           {!editing&&<FormRow label="Belongs to"><select value={draft.course_id} onChange={e=>setDraft(p=>({...p,course_id:e.target.value,kind:e.target.value?'revision':'personal',week_number:'',repeat:'none'}))}><option value="">Personal task</option>{availableCourses.map(c=><option key={c.id} value={c.id}>{c.code} · {c.title}</option>)}</select></FormRow>}
           {!editing&&draft.course_id&&<div className="planner-v05-form-columns"><FormRow label="Study activity"><select value={draft.kind} onChange={e=>setDraft(p=>({...p,kind:e.target.value,repeat:e.target.value==='assignment'?'none':p.repeat}))}>{['revision','reading','notes','assignment'].map(k=><option key={k} value={k}>{kindLabels[k as keyof typeof kindLabels]}</option>)}</select></FormRow><FormRow label="Teaching week (optional)"><select value={draft.week_number} onChange={e=>setDraft(p=>({...p,week_number:e.target.value}))}><option value="">Whole course</option>{Array.from({length:formCourse?.week_count||0},(_,i)=><option key={i+1} value={i+1}>Week {i+1}</option>)}</select></FormRow></div>}
           {editing&&<p className="planner-v05-hint">{editing.course_id?`Linked to ${availableCourses.find(c=>c.id===editing.course_id)?.code||'course'}${editing.week_number?` · Week ${editing.week_number}`:''}`:'Personal task'} — editing its date or completion here updates the same task in Study.</p>}
-          <div className="planner-v05-form-columns"><FormRow label="Planned work date"><input type="date" value={draft.planned_date} onChange={e=>setDraft(p=>({...p,planned_date:e.target.value}))}/></FormRow><FormRow label="Due date (optional)"><input type="date" value={draft.due_date} onChange={e=>setDraft(p=>({...p,due_date:e.target.value}))}/></FormRow></div>
+          <div className="planner-v05-form-columns"><FormRow label="Planned work date"><input type="date" max={draft.due_date||undefined} value={draft.planned_date} onChange={e=>setDraft(p=>({...p,planned_date:e.target.value}))}/></FormRow><FormRow label="Due date (optional)"><input type="date" min={draft.planned_date||undefined} value={draft.due_date} onChange={e=>setDraft(p=>({...p,due_date:e.target.value}))}/></FormRow></div>
+          {formDateInvalid&&<p role="alert" className="planner-v05-drop-notice"><AlertTriangle size={15}/> Planned date cannot be after the deadline.</p>}
           <div className="planner-v05-form-columns"><FormRow label="Priority"><select value={draft.priority} onChange={e=>setDraft(p=>({...p,priority:e.target.value as Priority}))}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></FormRow><FormRow label="Repeat after completion"><select value={draft.repeat} disabled={(editing?.kind||draft.kind)==='assignment'} onChange={e=>setDraft(p=>({...p,repeat:e.target.value as Repeat}))}>{Object.entries(cadenceLabel).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></FormRow></div>
           {draft.repeat!=='none'&&<p className="planner-v05-hint"><Repeat2 size={13}/> When you complete this task, a new one will be scheduled for the next {draft.repeat==='daily'?'day':draft.repeat==='weekly'?'week':'month'}. No background tasks are generated.</p>}
           <FormRow label="Notes (optional)"><textarea rows={3} value={draft.notes} onChange={e=>setDraft(p=>({...p,notes:e.target.value}))} placeholder="Details, checklist notes or reference links"/></FormRow>
           {editing?.kind==='assignment'&&<label className="planner-v05-submitted"><input type="checkbox" checked={draft.submitted} onChange={e=>setDraft(p=>({...p,submitted:e.target.checked}))}/> Officially submitted</label>}
           <div className="planner-v05-formactions">{editing&&<button type="button" className="btn secondary planner-v05-delete" disabled={busy} onClick={()=>void remove(editing)}><Trash2 size={15}/> Delete</button>}
-            <button type="button" className="btn secondary" disabled={busy} onClick={closeForm}>Cancel</button><button className="btn primary" disabled={busy||!draft.title.trim()||(draft.repeat!=='none'&&!draft.planned_date)} aria-busy={busy}>{busy&&<LoaderCircle className="spin" size={14}/>} {busy?'Saving…':editing?'Save changes':'Create task'}</button></div>
+            <button type="button" className="btn secondary" disabled={busy} onClick={closeForm}>Cancel</button><button className="btn primary" disabled={busy||formDateInvalid||!draft.title.trim()||(draft.repeat!=='none'&&!draft.planned_date)} aria-busy={busy}>{busy&&<LoaderCircle className="spin" size={14}/>} {busy?'Saving…':editing?'Save changes':'Create task'}</button></div>
         </form>
       </div>
     </div>}

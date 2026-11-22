@@ -168,3 +168,54 @@ def test_cloud_snapshot_reads_collections_concurrently(client, monkeypatch):
     assert response.status_code == 200
     assert set(observed) == {'courses', 'weeks', 'items', 'resources', 'sessions', 'semesters'}
     assert all(not values for values in response.json().values())
+
+
+def test_cannot_plan_after_due_date_on_create_or_reschedule(client):
+    invalid = client.post('/api/items', json={
+        'kind': 'personal', 'title': 'Late plan',
+        'planned_date': '2026-11-27', 'due_date': '2026-11-26',
+    })
+    assert invalid.status_code == 422
+    assert 'Planned work date cannot be after the deadline' in invalid.text
+    assert client.get('/api/items').json() == []
+
+    created = client.post('/api/items', json={
+        'kind': 'personal', 'title': 'Submit project',
+        'planned_date': '2026-11-25', 'due_date': '2026-11-26',
+    })
+    assert created.status_code == 201
+    task_id = created.json()['id']
+    assert client.patch(f'/api/items/{task_id}', json={'planned_date': '2026-11-26'}).status_code == 200
+    rejected = client.patch(f'/api/items/{task_id}', json={'planned_date': '2026-11-27'})
+    assert rejected.status_code == 422
+    saved = next(t for t in client.get('/api/items').json() if t['id'] == task_id)
+    assert saved['planned_date'] == '2026-11-26'
+    assert saved['due_date'] == '2026-11-26'
+
+
+def test_reject_deadline_change_that_precedes_existing_plan(client):
+    created = client.post('/api/items', json={
+        'kind': 'personal', 'title': 'Reading',
+        'planned_date': '2026-11-24', 'due_date': '2026-11-30',
+    }).json()
+    response = client.patch(f"/api/items/{created['id']}", json={'due_date': '2026-11-23'})
+    assert response.status_code == 422
+    persisted = client.get('/api/items').json()[0]
+    assert persisted['due_date'] == '2026-11-30'
+    assert client.patch(f"/api/items/{created['id']}", json={'due_date': None}).status_code == 200
+    assert client.patch(f"/api/items/{created['id']}", json={'planned_date': '2026-12-02'}).status_code == 200
+
+
+def test_legacy_misaligned_dates_can_be_completed_without_data_migration(client):
+    # An old v0.5 task may already have a plan later than its due date.
+    # The new scheduling rule must not block its completion or non-date edits.
+    import app.main as main
+    from app.models import Item
+    legacy = Item(kind='personal', title='Legacy deadline',
+                  planned_date='2026-11-28', due_date='2026-11-25').model_dump(mode='json')
+    main.app_store.put('local-owner', 'items', legacy)
+    done = client.patch('/api/items/' + legacy['id'], json={'done': True})
+    assert done.status_code == 200
+    assert done.json()['done'] is True
+    corrected = client.patch('/api/items/' + legacy['id'], json={'planned_date': '2026-11-25'})
+    assert corrected.status_code == 200

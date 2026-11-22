@@ -111,6 +111,8 @@ async def add_week(value: Week, user: User = Depends(current_user)):
 
 @app.post('/api/items', response_model=Item, status_code=201)
 async def add_item(value: Item, user: User = Depends(current_user)):
+    if value.planned_date and value.due_date and value.planned_date > value.due_date:
+        raise HTTPException(422, 'Planned work date cannot be after the deadline')
     validate_context(user.uid, value.course_id, value.week_number)
     validate_item_reference(user.uid, value.course_id, value.week_number, value.resource_id)
     app_store.put(user.uid, 'items', value.model_dump(mode='json'))
@@ -124,7 +126,11 @@ async def patch_item(identifier: str, updates: ItemPatch, user: User = Depends(c
         raise HTTPException(404, 'Item not found')
     if original.get('course_id'):
         ensure_course_active(user.uid, original['course_id'])
-    merged = {**original, **updates.model_dump(exclude_unset=True, mode='json')}
+    fields = updates.model_dump(exclude_unset=True, mode='json')
+    merged = {**original, **fields}
+    # Enforce on date changes but keep legacy records completable/editable.
+    if ('planned_date' in fields or 'due_date' in fields) and merged.get('planned_date') and merged.get('due_date') and merged['planned_date'] > merged['due_date']:
+        raise HTTPException(422, 'Planned work date cannot be after the deadline')
     validate_item_reference(user.uid, merged.get('course_id'), merged.get('week_number'), merged.get('resource_id'))
     try:
         value = Item.model_validate(merged)

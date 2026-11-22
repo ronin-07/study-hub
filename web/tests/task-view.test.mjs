@@ -52,3 +52,12 @@ test('personal and course-specific focus selectors keep linked task identity', (
   assert.deepEqual(focusTasksForContext([personal,course,complete,unplannedNotes], '').map(t=>t.id), ['personal']);
   assert.deepEqual(focusTasksForContext([personal,course,complete,unplannedNotes], 'c2').map(t=>t.id), ['course']);
 });
+
+test('planning is allowed on or before the deadline, but never after', async () => {
+  const {canPlanOnDate} = await import('../lib/task-view.ts');
+  assert.equal(canPlanOnDate({due_date:null}, '2027-12-31'), true);
+  assert.equal(canPlanOnDate({due_date:'2026-11-26'}, '2026-11-25'), true);
+  assert.equal(canPlanOnDate({due_date:'2026-11-26'}, '2026-11-26'), true);
+  assert.equal(canPlanOnDate({due_date:'2026-11-26'}, '2026-11-27'), false);
+  assert.equal(canPlanOnDate({due_date:'2026-12-31'}, '2027-01-01'), false);
+});

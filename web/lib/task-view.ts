@@ -1,6 +1,11 @@
 /** Date-only task projections shared by Home and Tasks. Never mutate the snapshot. */
 import type { Item } from './types';
 
+/** A deadline is the last day work may be planned; an undated deadline is unrestricted. */
+export function canPlanOnDate(item: Pick<Item, 'due_date'>, day: string): boolean {
+  return !item.due_date || day <= item.due_date;
+}
+
 export function isActionable(item: Item): boolean {
   // Includes pre-fix documents whose planned/due date was saved without is_task.
   return item.is_task || item.kind === 'assignment' || !!item.planned_date || !!item.due_date;
