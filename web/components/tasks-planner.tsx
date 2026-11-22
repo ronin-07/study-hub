@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, type DragEvent, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type DragEvent, type FormEvent } from 'react';
 import type { User } from 'firebase/auth';
 import { AlertTriangle, ArrowLeft, ArrowRight, BookOpen, CalendarDays, CheckCircle2, Clock3, GripVertical, ListTodo, LoaderCircle, Plus, Repeat2, Timer, Trash2, X } from 'lucide-react';
 import { api } from '@/lib/api';
@@ -24,11 +24,12 @@ function monthDays(year:number,month:number){
   return Array.from({length:42},(_,i)=>{const d=new Date(first);d.setDate(first.getDate()+i);return {key:dateKey(d),outside:d.getMonth()!==month,day:d.getDate()};});
 }
 
-export function TasksPlanner({items,courses,user,busy,run,onToggle,onFocus,onOpenResource,createOpen,setCreateOpen}:{
+export function TasksPlanner({items,courses,user,busy,run,onToggle,onFocus,onOpenResource,createOpen,setCreateOpen,calendarJump}:{
   items:Item[];courses:Course[];user:User|null;busy:boolean;
   run:(fn:()=>Promise<unknown>)=>Promise<boolean>;
   onToggle:(item:Item)=>void;onFocus:(item:Item)=>void;onOpenResource:(item:Item)=>void;
   createOpen:boolean;setCreateOpen:(value:boolean)=>void;
+  calendarJump?:{date:string;token:number}|null;
 }){
   const today=localToday();
   const [mode,setMode]=useState<Mode>('today');
