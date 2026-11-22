@@ -20,10 +20,12 @@ test('task and study forms constrain planned date to the deadline',()=>{
   assert.match(course,/date>planItem\.due_date/);
   assert.match(course,/max=\{itemDraft\.due_date\|\|undefined\}/);
 });
-test('an odd last course expands horizontally without disturbing mobile cards',()=>{
-  assert.match(home,/compact-wide/);
-  assert.match(css,/home-course-grid>\.home-course-tile\.compact-wide\{grid-column:1\/-1/);
-  assert.match(css,/@media\(max-width:650px\)\{\.home-course-grid>\.home-course-tile\.compact-wide\{grid-column:auto/);
+test('course cards stay equally sized in a responsive scroller rather than stretching the last card',()=>{
+  assert.doesNotMatch(home,/compact-wide/);
+  assert.match(home,/studyGroups\.map\(\(group,index\)=>/);
+  assert.match(css,/grid-auto-columns:calc\(\(100% - 28px\)\/3\)/);
+  assert.match(css,/grid-auto-columns:calc\(\(100% - 14px\)\/2\)/);
+  assert.match(css,/grid-auto-columns:100%/);
 });
 test('Plan for today is disabled when a weekly activity is already past its deadline',()=>{
   assert.match(course,/disabled=\{busy\|\|Boolean\(planItem\.due_date&&localToday\(\)>planItem\.due_date\)\}/);

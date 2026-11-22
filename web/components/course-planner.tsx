@@ -67,6 +67,8 @@ export function CoursePlanner({ data, user, busy, pendingItems, courseId, weekNu
   const semesterOptions = useMemo(() => makeSemesters(data), [data]);
   const [semesterKey, setSemesterKey] = useState('');
   const [showArchived, setShowArchived] = useState(false);
+  const [semestersExpanded, setSemestersExpanded] = useState(true);
+  const [coursesExpanded, setCoursesExpanded] = useState(true);
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>(()=>landingItem && landingItem.weekNumber===null?'tasks':'overview');
   const landingRef=useRef<HTMLDivElement|null>(null);
   useEffect(()=>{landingRef.current?.scrollIntoView({behavior:'smooth',block:'center'});},[landingItem?.id,workspaceTab]);
@@ -252,11 +254,11 @@ export function CoursePlanner({ data, user, busy, pendingItems, courseId, weekNu
     </div>
     <div className="planner-shell">
       <aside className="planner-rail">
-        <div className="planner-rail-title"><span>SEMESTERS</span></div>
-        <div className="planner-semester-list">{semesterOptions.map(s=><button key={s.key} className={'planner-semester-btn '+(s.key===currentSemesterKey?'selected':'')} onClick={()=>chooseSemester(s.key)}>{s.name}</button>)}</div>
-        {activeSemester&&<button className="planner-semester-edit" onClick={()=>editSemester(activeSemester)}><Pencil size={13}/> Edit semester</button>}
-        <div className="planner-rail-title planner-course-title"><span>COURSES <small>({activeCount})</small></span></div>
-        <div className="planner-course-list">{visible.map(c=>
+        <button type="button" className="planner-rail-title planner-rail-toggle" aria-expanded={semestersExpanded} aria-controls="planner-semester-section" onClick={()=>setSemestersExpanded(value=>!value)}><span>SEMESTERS</span><ChevronDown size={16} className={semestersExpanded?'':'collapsed'} aria-hidden="true"/></button>
+        {semestersExpanded&&<div id="planner-semester-section" className="planner-rail-section"><div className="planner-semester-list">{semesterOptions.map(s=><button key={s.key} className={'planner-semester-btn '+(s.key===currentSemesterKey?'selected':'')} onClick={()=>chooseSemester(s.key)}>{s.name}</button>)}</div>
+        {activeSemester&&<button className="planner-semester-edit" onClick={()=>editSemester(activeSemester)}><Pencil size={13}/> Edit semester</button>}</div>}
+        <button type="button" className="planner-rail-title planner-course-title planner-rail-toggle" aria-expanded={coursesExpanded} aria-controls="planner-course-section" onClick={()=>setCoursesExpanded(value=>!value)}><span>COURSES <small>({activeCount})</small></span><ChevronDown size={16} className={coursesExpanded?'':'collapsed'} aria-hidden="true"/></button>
+        {coursesExpanded&&<div id="planner-course-section" className="planner-rail-section"><div className="planner-course-list">{visible.map(c=>
           <button key={c.id} className={'planner-course-btn '+(selectedId===c.id?'selected':'')} onClick={()=>chooseCourse(c)}>
             <span className="planner-course-icon">{c.code.slice(0,2)}</span><span className="planner-course-meta"><strong>{c.title}</strong><small>{c.code} · {c.week_count} weeks</small></span><ChevronRight size={15}/>
           </button>)}
@@ -266,7 +268,7 @@ export function CoursePlanner({ data, user, busy, pendingItems, courseId, weekNu
           const next=!showArchived; setShowArchived(next);
           const replacement=matching.find(c=>Boolean(c.archived)===next);
           selectCourse(replacement?.id||''); selectWeek(1);setWorkspaceTab('overview');
-        }}><Archive size={16}/>{showArchived?'Back to active courses':`Archived courses (${archivedCount})`}</button>
+        }}><Archive size={16}/>{showArchived?'Back to active courses':`Archived courses (${archivedCount})`}</button></div>}
         <div className="planner-rail-foot"><BookMarked size={17}/><strong>Everything in its place.</strong><p>Books and Goodnotes notebooks live in the Course Library; lecture slides stay with their week.</p></div>
       </aside>
       <div className="planner-workspace">

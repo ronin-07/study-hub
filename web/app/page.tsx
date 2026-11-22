@@ -60,6 +60,10 @@ export default function Page() {
 
   const [taskForm,setTaskForm] = useState(false);
   const [priorityFilter,setPriorityFilter] = useState<'all'|'course'|'personal'>('all');
+  const courseScrollerRef = useRef<HTMLDivElement | null>(null);
+  const [courseScrollIndex, setCourseScrollIndex] = useState(0);
+  const [visibleCourseCards, setVisibleCourseCards] = useState(3);
+  const [canScrollNextCourse, setCanScrollNextCourse] = useState(true);
   const [homeFocusMode,setHomeFocusMode] = useState<'25'|'50'|'90'|'free'>('25');
   const [calendarJump,setCalendarJump] = useState<{date:string;token:number}|null>(null);
   const [homeSelectedDate,setHomeSelectedDate] = useState<string|null>(null);
@@ -196,6 +200,24 @@ export default function Page() {
     } catch(e) {setError(e instanceof Error?e.message:'Action failed');return false;}
     finally {setBusy(false);}
   };
+  const scrollCourses = (direction: -1 | 1) => {
+    const scroller = courseScrollerRef.current;
+    if (!scroller) return;
+    const card = scroller.querySelector<HTMLElement>('.home-course-tile');
+    if (!card) return;
+    const gap = Number.parseFloat(window.getComputedStyle(scroller).columnGap) || 0;
+    scroller.scrollBy({ left: direction * (card.getBoundingClientRect().width + gap), behavior: 'smooth' });
+  };
+  const syncCourseScroll = () => {
+    const scroller = courseScrollerRef.current;
+    const card = scroller?.querySelector<HTMLElement>('.home-course-tile');
+    if (!scroller || !card) return;
+    const gap = Number.parseFloat(window.getComputedStyle(scroller).columnGap) || 0;
+    const cardStep = card.getBoundingClientRect().width + gap;
+    setCourseScrollIndex(Math.round(scroller.scrollLeft / cardStep));
+    setVisibleCourseCards(Math.max(1, Math.round((scroller.clientWidth + gap) / cardStep)));
+    setCanScrollNextCourse(scroller.scrollLeft + scroller.clientWidth < scroller.scrollWidth - 2);
+  };
   const selectedCourse = data.courses.find(c=>c.id===courseId&&!c.archived);
   const selectedWeek = data.weeks.find(w=>w.course_id===courseId && w.number===weekNumber);
   const activeCourseIds = new Set(data.courses.filter(c=>!c.archived).map(c=>c.id));
@@ -207,6 +229,13 @@ export default function Page() {
   const overdue=todayWork.filter(i=>isOverdue(i,today));
   const upcoming=upcomingDeadlines(openTasks,today);
   const studyGroups=todayStudyCourses(data.courses,data.items,today);
+  useEffect(() => {
+    // Keep carousel labels accurate across responsive breakpoints and data changes.
+    const refresh = () => syncCourseScroll();
+    refresh();
+    window.addEventListener('resize', refresh);
+    return () => window.removeEventListener('resize', refresh);
+  }, [studyGroups.length, tab, snapshotReady]);
   const calendarDays=nextSevenDays(today,openTasks);
   const homeAgenda=homeSelectedDate?agendaForDate(openTasks,homeSelectedDate):[];
   const filteredPriorities=todayWork.filter(i=>priorityFilter==='all'||(priorityFilter==='course'?!!i.course_id:!i.course_id));
@@ -482,11 +511,11 @@ export default function Page() {
                 <section className="home-panel home-course-panel" aria-labelledby="home-courses-title">
                   <div className="home-panel-heading"><div className="home-heading-icon"><BookOpen size={21}/></div><div><h2 id="home-courses-title">Today’s study courses</h2><p>Coursework planned or due today, plus unfinished overdue work.</p></div><span className="home-count-pill">{studyGroups.length} {studyGroups.length===1?'course':'courses'}</span></div>
                   {studyGroups.length?<>
-                    <div className="home-course-grid">
-                      {studyGroups.slice(0,4).map((group,index)=>{
+                    <div className="home-course-grid" ref={courseScrollerRef} onScroll={syncCourseScroll} role="region" aria-label="Today’s study course cards" tabIndex={0}>
+                      {studyGroups.map((group,index)=>{
                         const weekLabel=group.weekNumbers.length===1?`Week ${group.weekNumbers[0]}`:group.weekNumbers.length?`Weeks ${group.weekNumbers.join(', ')}`:'Course tasks';
                         const progress=group.activityCount?Math.round(100*group.doneCount/group.activityCount):0;
-                        return <div key={group.course.id} className={'home-course-tile tile-'+(index%4)+(Math.min(studyGroups.length,4)%2===1&&index===Math.min(studyGroups.length,4)-1?' compact-wide':'')}>
+                        return <div key={group.course.id} className={'home-course-tile tile-'+(index%4)}>
                           <div className="home-course-heading"><div className="home-course-icon"><BookOpen size={24}/></div><div className="home-course-title"><h3>{group.course.code} · {group.course.title}</h3><span>{weekLabel}</span></div>{group.overdueCount?<span className="home-overdue-pill">{group.overdueCount} overdue</span>:<span className="home-today-pill">Today</span>}</div>
                           <div className="home-course-progress"><span>{group.doneCount} / {group.activityCount} activities</span><div className="home-progress-track" role="progressbar" aria-label={`${group.course.title} selected week activity progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><div style={{width:`${progress}%`}}/></div></div>
                           <div className="home-course-activities">
@@ -497,12 +526,12 @@ export default function Page() {
                         </div>;
                       })}
                     </div>
-                    {studyGroups.length>4&&<button className="home-more-courses" onClick={()=>navigate('tasks')}>View work in {studyGroups.length-4} more {studyGroups.length===5?'course':'courses'} <ArrowRight size={14}/></button>}
+                    {studyGroups.length>3&&<div className="home-course-pagination" aria-label="Browse courses"><span>{Math.min(courseScrollIndex+1,studyGroups.length)}–{Math.min(courseScrollIndex+visibleCourseCards,studyGroups.length)} of {studyGroups.length} courses</span><div><button type="button" aria-label="Previous course cards" onClick={()=>scrollCourses(-1)} disabled={courseScrollIndex===0}><ArrowLeft size={16}/></button><button type="button" aria-label="Next course cards" onClick={()=>scrollCourses(1)} disabled={!canScrollNextCourse}><ArrowRight size={16}/></button></div></div>}
                   </>:<div className="home-course-empty"><div className="home-heading-icon"><CheckCircle2 size={21}/></div><div><h3>No course work scheduled for today</h3><p>{selectedCourse?'You’re up to date on scheduled work. Continue your last course, or plan an activity from a weekly checklist.':'Create your first course and plan activities to see them here.'}</p></div><button className="home-mini-btn" onClick={()=>selectedCourse?openCourse(selectedCourse.id):setTab('courses')}>{selectedCourse?'Continue studying':'Open Study'} <ArrowRight size={15}/></button></div>}
                 </section>
                 <section className="home-panel home-priorities" aria-labelledby="home-priorities-title">
                   <div className="home-panel-heading"><div className="home-heading-icon"><CheckCircle2 size={21}/></div><div><h2 id="home-priorities-title">Today’s priorities</h2><p>Your planned, due, and overdue work.</p></div><div className="home-priority-filters" aria-label="Filter priorities">{(['all','course','personal'] as const).map(filter=><button key={filter} onClick={()=>setPriorityFilter(filter)} className={priorityFilter===filter?'active':''} aria-pressed={priorityFilter===filter}>{filter==='all'?'All':filter==='course'?'Course':'Personal'}</button>)}</div></div>
-                  {filteredPriorities.length?<div className="home-priority-list">{filteredPriorities.slice(0,6).map(i=><div key={i.id} className={'home-priority-row'+(isOverdue(i,today)?' overdue':'')}><input type="checkbox" aria-label={`Complete ${i.title}`} disabled={busy||pendingItems.has(i.id)} checked={i.done} onChange={()=>toggle(i)}/><div className="home-priority-info"><strong>{i.title}</strong><small>{i.course_id?(data.courses.find(c=>c.id===i.course_id)?.code||'Course'):'Personal'}{i.week_number?` · Week ${i.week_number}`:''}{i.due_date&&i.due_date<today?` · Due ${dateText(i.due_date)}`:i.planned_date&&i.planned_date<today?` · Planned ${dateText(i.planned_date)}`:''}</small></div><span className={'home-priority-tag'+(isOverdue(i,today)?' overdue':'')}>{isOverdue(i,today)?'Overdue':'Today'}</span>{i.resource_id&&<button className="home-row-action" aria-label={`Open resource for ${i.title}`} disabled={busy} onClick={()=>openTaskResource(i)} title="Open linked resource"><BookOpen size={16}/></button>}<button className="home-row-action" aria-label={`Focus on ${i.title}`} disabled={busy} onClick={()=>startFrom(i)} title="Focus on task"><Play size={15}/></button></div>)}</div>:<div className="home-list-empty"><CheckCircle2 size={19}/> {priorityFilter==='all'?'Nothing overdue or due today. Enjoy a clear slate!':`No ${priorityFilter} priorities for today.`}</div>}
+                  {filteredPriorities.length?<div className="home-priority-list">{filteredPriorities.slice(0,6).map(i=><div key={i.id} className={'home-priority-row'+(isOverdue(i,today)?' overdue':'')}><input type="checkbox" aria-label={`Complete ${i.title}`} disabled={busy||pendingItems.has(i.id)} checked={i.done} onChange={()=>toggle(i)}/><button type="button" className="home-priority-info" aria-label={`Open ${i.title}`} onClick={()=>openDeadlineDestination(i)}><strong>{i.title}</strong><small>{i.course_id?(data.courses.find(c=>c.id===i.course_id)?.code||'Course'):'Personal'}{i.week_number?` · Week ${i.week_number}`:''}{i.due_date&&i.due_date<today?` · Due ${dateText(i.due_date)}`:i.planned_date&&i.planned_date<today?` · Planned ${dateText(i.planned_date)}`:''}</small></button><span className={'home-priority-tag'+(isOverdue(i,today)?' overdue':'')}>{isOverdue(i,today)?'Overdue':'Today'}</span>{i.resource_id&&<button className="home-row-action" aria-label={`Open resource for ${i.title}`} disabled={busy} onClick={()=>openTaskResource(i)} title="Open linked resource"><BookOpen size={16}/></button>}<button className="home-row-action" aria-label={`Focus on ${i.title}`} disabled={busy} onClick={()=>startFrom(i)} title="Focus on task"><Play size={15}/></button></div>)}</div>:<div className="home-list-empty"><CheckCircle2 size={19}/> {priorityFilter==='all'?'Nothing overdue or due today. Enjoy a clear slate!':`No ${priorityFilter} priorities for today.`}</div>}
                   {filteredPriorities.length>6&&<button className="home-panel-link home-list-footer" onClick={()=>navigate('tasks')}>View {filteredPriorities.length-6} more tasks <ArrowRight size={14}/></button>}
                 </section>
               </div>
