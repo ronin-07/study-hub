@@ -2,10 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent } from 'react';
 import type { User } from 'firebase/auth';
-import { AlertTriangle, ArrowLeft, ArrowRight, BookOpen, CalendarDays, CheckCircle2, Clock3, GripVertical, ListTodo, LoaderCircle, Plus, Repeat2, Timer, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, ArrowRight, BookOpen, CalendarDays, CheckCircle2, Clock3, GripVertical, LoaderCircle, Plus, Repeat2, Timer, Trash2, X } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { MutationHint } from '@/lib/snapshot-cache';
-import { Badge, Card, DayStatus, EmptyState, FormRow } from '@/components/common';
+import { Card, DayStatus, FormRow } from '@/components/common';
+import { PhotoEmptyState } from '@/components/photo-empty-state';
 import { formatDate, kindLabels, localToday, type Course, type Item, type Priority } from '@/lib/types';
 import { canPlanOnDate, isOverdue, todayPriorities, upcomingWork, shiftCalendarMonth } from '@/lib/task-view';
 
@@ -190,12 +191,14 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,completingIds
         {draggedTask&&hoverDay&&!canPlanOnDate(draggedTask,hoverDay)&&<p role="status" className="planner-v05-drop-notice"><AlertTriangle size={15} aria-hidden="true"/> Cannot plan after {formatDate(draggedTask.due_date!)}. Choose an earlier day.</p>}
         {dragNotice&&<p role="alert" className="planner-v05-drop-notice"><AlertTriangle size={15} aria-hidden="true"/> {dragNotice}</p>}
       </div><div className="planner-v05-agenda"><div className="planner-v05-agenda-title"><div><span>SELECTED DAY</span><h3>{fullLabel(selectedDay)}</h3></div><button className="icon-btn" onClick={()=>startCreate(selectedDay)} aria-label="Add task for this day"><Plus size={18}/></button></div>
-        <h4>Planned work <span>{scheduled.length}</span></h4>{scheduled.length?scheduled.map(i=>showRow(i,true)):<p className="planner-v05-hint">Nothing planned. Drop a task here or add a new one.</p>}
-        <h4>Due on this day <span>{due.length}</span></h4>{due.length?due.map(i=><button type="button" key={i.id} className="planner-v05-due" onClick={()=>openEdit(i)} title={`Open ${i.title}`} aria-label={`Open task ${i.title}`}><Clock3 size={15}/><span>{i.title}</span>{i.done&&<CheckCircle2 size={14}/>}<ArrowRight size={14}/></button>):<p className="planner-v05-hint">No additional deadlines on this date.</p>}
+        {!scheduled.length&&!due.length?<PhotoEmptyState compact scene="calendar" title="Your calendar is free" detail="Nothing planned or due on this day." actionLabel="Add task" onAction={()=>startCreate(selectedDay)}/>:<>
+          <h4>Planned work <span>{scheduled.length}</span></h4>{scheduled.length?scheduled.map(i=>showRow(i,true)):<p className="planner-v05-hint">Nothing planned on this date.</p>}
+          <h4>Due on this day <span>{due.length}</span></h4>{due.length?due.map(i=><button type="button" key={i.id} className="planner-v05-due" onClick={()=>openEdit(i)} title={`Open ${i.title}`} aria-label={`Open task ${i.title}`}><Clock3 size={15}/><span>{i.title}</span>{i.done&&<CheckCircle2 size={14}/>}<ArrowRight size={14}/></button>):<p className="planner-v05-hint">No additional deadlines on this date.</p>}
+        </>}
         <button className="planner-v05-inbox-toggle" onClick={()=>setShowInbox(!showInbox)}>{showInbox?'Hide':'Show'} unscheduled tasks ({inbox.length})</button>
         {showInbox&&<div className="planner-v05-inbox">{inbox.length?inbox.map(i=>showRow(i,true,true)):<p className="planner-v05-hint">Your inbox is clear.</p>}</div>}
       </div></div>:<div className="planner-v05-list"><div className="planner-v05-list-heading"><h3>{mode==='today'?"Today's priorities":mode==='upcoming'?'Upcoming & unscheduled':'Completed tasks'}</h3><span>{listed.length} tasks</span></div>
-        {listed.length?listed.map(i=>showRow(i,false,mode!=='completed')):<EmptyState icon={<ListTodo size={24}/>} title="All caught up" detail={mode==='completed'?'Complete a task to see it here.':'Choose a study assignment or add a personal task to start planning.'}/>}
+        {listed.length?listed.map(i=>showRow(i,false,mode!=='completed')):<PhotoEmptyState scene="tasks" title={mode==='completed'?'No completed tasks yet':mode==='today'?'Your day is clear':'No tasks here'} detail={mode==='completed'?'Completed tasks will appear here.':'Create a study task or add a personal reminder.'} actionLabel="Add task" onAction={()=>startCreate()}/>}
       </div>}
     </Card>
     {formVisible&&<div className="planner-v05-overlay" role="presentation" onMouseDown={e=>{if(e.target===e.currentTarget&&!busy)closeForm();}}>

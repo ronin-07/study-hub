@@ -11,6 +11,7 @@ import { api } from '@/lib/api';
 import type { MutationHint } from '@/lib/snapshot-cache';
 import { Badge, Card, EmptyState, FormRow, SectionTitle } from '@/components/common';
 import { ProgressTrack, ProgressValue } from '@/components/progress-motion';
+import { PhotoEmptyState } from '@/components/photo-empty-state';
 import { isActionable, isOverdue } from '@/lib/task-view';
 import { resolveWorkspaceSemester } from '@/lib/course-navigation';
 import { type Course, type Item, type Resource, type Semester, type Snapshot, formatDate, kindLabels, localToday } from '@/lib/types';
@@ -47,6 +48,7 @@ interface Props {
   courseId: string;
   weekNumber: number;
   landingItem?: { id: string; weekNumber: number | null } | null;
+  sectionJump?: {courseId:string;section:'course-library'|'tasks';token:number}|null;
   selectCourse: (id: string) => void;
   selectWeek: (week: number) => void;
   run: (operation: () => Promise<unknown>, mutation?: MutationHint) => Promise<boolean>;
@@ -57,7 +59,7 @@ interface Props {
 }
 
 /** Single registered semester -> course -> week navigation source of truth. */
-export function CoursePlanner({ data, progressItems, user, busy, pendingItems, completingIds, exitingIds, courseId, weekNumber, selectCourse, selectWeek, run, toggleItem, focusOn, openResource, openDrive, landingItem }: Props) {
+export function CoursePlanner({ data, progressItems, user, busy, pendingItems, completingIds, exitingIds, courseId, weekNumber, selectCourse, selectWeek, run, toggleItem, focusOn, openResource, openDrive, landingItem, sectionJump }: Props) {
   const semesterOptions = useMemo(() => makeSemesters(data), [data]);
   const [semesterKey, setSemesterKey] = useState('');
   const [showArchived, setShowArchived] = useState(false);
@@ -117,6 +119,7 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
   const visible = matching.filter(c => Boolean(c.archived) === showArchived);
   const selected = visible.find(c => c.id === courseId) || visible[0];
   const selectedId = selected?.id || '';
+  useEffect(()=>{if(sectionJump?.courseId===selectedId)setWorkspaceTab(sectionJump.section);},[sectionJump?.token,selectedId]);
   const activeCount = matching.filter(c => !c.archived).length;
   const archivedCount = matching.filter(c => c.archived).length;
   const week = data.weeks.find(w => w.course_id === selectedId && w.number === weekNumber);
@@ -353,8 +356,8 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
         </div>}
       </aside>
       <div className="planner-workspace">
-        {!semester ? <div className="planner-empty-main"><GraduationCap size={34}/><h2>Start with a semester</h2><p>Create your first semester to organize your courses and weeks.</p><button className="btn primary" onClick={()=>editSemester()}><Plus size={16}/> Add semester</button></div>
-        : !selected ? <div className="planner-empty-main"><BookOpen size={34}/><h2>{showArchived?'No archived courses':'No courses in '+semester.name}</h2><p>{showArchived?'Courses you archive will appear here.':'Create a course in this semester to begin your study plan.'}</p>{!showArchived&&<button className="btn primary" onClick={()=>openCourseForm()}><Plus size={16}/> Add course</button>}</div>
+        {!semester ? <div className="planner-empty-main"><PhotoEmptyState scene="study" title="Start with a semester" detail="Create a semester to organize courses and study materials." actionLabel="Add semester" onAction={()=>editSemester()}/></div>
+        : !selected ? showArchived?<div className="planner-empty-main"><BookOpen size={34}/><h2>No archived courses</h2><p>Courses you archive will appear here.</p></div>:<div className="planner-empty-main"><PhotoEmptyState scene="study" title="Add your semester courses" detail="Add a course to organize your weekly studies and resources." actionLabel="Add course" onAction={()=>openCourseForm()}/></div>
         : <>
           <div className="planner-course-header planner-study-course-header">
             <div><span className="eyebrow">{selected.code} · COURSE WORKSPACE</span><h2>{selected.title}</h2><p>{semester.name} · {selected.week_count} teaching weeks{selected.exam_date?` · Exam ${formatDate(selected.exam_date)}`:''}</p>{selected.goals&&<p className="planner-goal">{selected.goals}</p>}</div>
@@ -418,11 +421,11 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
             </div>
           </div>}
           {workspaceTab==='course-library'&&<Card className="planner-library-panel"><SectionTitle title="Course Library" aside={!isReadOnly&&<button className="btn primary small" onClick={()=>openResourceForm('course')}><Plus size={14}/> Add shared resource</button>}/>
-            {shared.length?shared.map(resourceRow):<EmptyState icon={<Library size={26}/>} title="Your shared library is empty" detail="Add a book, whole-course Goodnotes notebook, or reference PDF."/>}
+            {shared.length?shared.map(resourceRow):<PhotoEmptyState scene="resources" title="No resources yet" detail="Link your textbooks, slides, and Goodnotes PDFs here." actionLabel={isReadOnly?undefined:'Add resource'} onAction={isReadOnly?undefined:()=>openResourceForm('course')}/>}
             {!isReadOnly&&<button className="btn secondary full" onClick={()=>openDrive(selected.id,weekNumber,'textbook','course')}><Cloud size={16}/> Browse Goodnotes backups for this course</button>}
           </Card>}
           {workspaceTab==='week-resources'&&<Card><SectionTitle title={`Week ${weekNumber} resources`} aside={!isReadOnly&&<button className="btn primary small" onClick={()=>openResourceForm('week')}><Plus size={14}/> Add link</button>}/>
-            {weekResources.length?weekResources.map(resourceRow):<EmptyState icon={<FileText size={24}/>} title="No weekly materials" detail="Link DTU Learn lecture slides or choose a backed-up annotated PDF."/>}
+            {weekResources.length?weekResources.map(resourceRow):<PhotoEmptyState scene="study" title="No weekly materials" detail="Link lecture slides or annotated PDFs for this week." actionLabel={isReadOnly?undefined:'Add resource'} onAction={isReadOnly?undefined:()=>openResourceForm('week')}/>}
             {!isReadOnly&&<button className="btn secondary full" onClick={()=>openDrive(selected.id,weekNumber,'annotated','week')}><Cloud size={16}/> Browse Goodnotes backups</button>}
           </Card>}
           {workspaceTab==='tasks'&&<Card><SectionTitle title="Course study tasks" aside={!isReadOnly&&<button className="btn primary small" onClick={()=>{setItemDraft({...itemDraftDefaults,kind:'assignment',is_task:true});setDialog('item');}}><Plus size={14}/> Add task</button>}/>

@@ -5,7 +5,7 @@ import type { User } from 'firebase/auth';
 import {
   ArrowLeft, ArrowRight, BookOpen, CalendarDays, Check, CheckCircle2, ChevronDown, Clock3,
   Cloud, ExternalLink, FileText, Folder, GraduationCap, Home, Link2, ListTodo, LoaderCircle, FolderCheck, ScanSearch,
-  Pause, Play, Plus, RotateCcw, Square, Timer, X, Sparkles, Sun, Moon, Target, AlertTriangle, MoreHorizontal, BarChart3, LogOut
+  Pause, Play, Plus, RotateCcw, Square, Timer, X, Sparkles, Sun, Moon, Target, AlertTriangle, BarChart3, LogOut
 } from 'lucide-react';
 import { api, pdfBlob } from '@/lib/api';
 import { formatLocalClock, formatLocalDate } from '@/lib/clock';
@@ -22,6 +22,8 @@ import {
   resumeFocusClock, focusClockSeconds, rekeyFocusClock, type FocusClockAnchor,
 } from '@/lib/focus-timing';
 import { TasksPlanner } from '@/components/tasks-planner';
+import { PhotoEmptyState } from '@/components/photo-empty-state';
+import { CourseActionsMenu } from '@/components/course-actions-menu';
 import { COMPLETION_HOLD_MS, COMPLETION_EXIT_MS, presentCompletingItems, type CompletionPhase } from '@/lib/task-completion-presentation';
 import { isActionable, isOverdue, todayPriorities, upcomingDeadlines, focusTasksForContext } from '@/lib/task-view';
 import { todayStudyCourses, nextSevenDays, nextDeadlineDays, agendaForDate } from '@/lib/home-view';
@@ -135,6 +137,7 @@ export default function Page() {
   const [homeSelectedDate,setHomeSelectedDate] = useState<string|null>(null);
   const [courseLandingItem,setCourseLandingItem] = useState<{id:string;weekNumber:number|null}|null>(null);
   const [taskJump,setTaskJump] = useState<{id:string;token:number}|null>(null);
+  const [courseSectionJump,setCourseSectionJump] = useState<{courseId:string;section:'course-library'|'tasks';token:number}|null>(null);
   const [taskLandingMode,setTaskLandingMode] = useState<'today'|'upcoming'|'completed'>('today');
   const [focusCourse,setFocusCourse] = useState('');
   const [focusItem,setFocusItem] = useState('');
@@ -415,12 +418,13 @@ export default function Page() {
   };
   const rememberCourse=(id:string)=>{setCourseId(id);if(id)window.localStorage.setItem('studyhub-last-course',id);};
   const rememberWeek=(week:number)=>{setWeekNumber(week);if(courseId)window.localStorage.setItem(`studyhub-last-week-${courseId}`,String(week));};
-  const openCourse=(id:string,week?:number,landingItem?:Item)=>{
+  const openCourse=(id:string,week?:number,landingItem?:Item,section?:'course-library'|'tasks')=>{
     const course=data.courses.find(c=>c.id===id&&!c.archived);
     if(!course){setTab('courses');return;}
     const saved=Number(window.localStorage.getItem(`studyhub-last-week-${id}`))||1;
     const selected=Math.max(1,Math.min(course.week_count,week||saved));
     setCourseLandingItem(landingItem?{id:landingItem.id,weekNumber:landingItem.week_number}:null);
+    setCourseSectionJump(section?previous=>({courseId:id,section,token:(previous?.token||0)+1}):null);
     rememberCourse(id);setWeekNumber(selected);
     window.localStorage.setItem(`studyhub-last-week-${id}`,String(selected));
     setTab('courses');
@@ -517,6 +521,11 @@ export default function Page() {
       previous?.sessionId===optimistic.id ? rekeyFocusClock(previous,saved.id)
         :recoverFocusClock(saved,Date.now(),performance.now())),
     ()=>setFocusClock(null));
+  };
+  // Explicit course action starts the currently selected timer mode. Existing sessions are never replaced.
+  const focusOnCourse=(id:string)=>{
+    setFocusCourse(id);setFocusItem('');setTab('focus');
+    if(!active&&!busy&&!focusBusyRef.current)void startFocus(id,'',focusMode);
   };
   const startQuickFocus=async()=>{
     if(active){setQuickFocusOpen(false);return;}
@@ -785,16 +794,16 @@ export default function Page() {
                             {group.tasks.slice(0,2).map(i=><div className={'home-course-task task-completion-row'+(isOverdue(i,today)?' late':'')+(completingIds.has(i.id)?' is-completing':'')+(exitingIds.has(i.id)?' is-exiting':'')} key={i.id}><input type="checkbox" aria-label={`Complete ${i.title}`} disabled={busy||pendingItems.has(i.id)||completingIds.has(i.id)} className="task-completion-check" checked={i.done||completingIds.has(i.id)} onChange={()=>toggle(i)}/><button className="home-course-task-title" title={`Open ${i.title} in course`} onClick={()=>openCourse(group.course.id,i.week_number||undefined)}>{i.title}{group.weekNumbers.length>1&&i.week_number&&<small>W{i.week_number}</small>}</button>{isOverdue(i,today)&&<span className="home-overdue-pill compact">Overdue</span>}{i.resource_id&&<button className="home-task-resource" disabled={busy} onClick={()=>openTaskResource(i)} aria-label={`Open resource for ${i.title}`} title="Open linked resource"><BookOpen size={15}/></button>}</div>)}
                             {group.tasks.length>2&&<button className="home-extra-items" onClick={()=>navigate('tasks')}>+ {group.tasks.length-2} more tasks <ArrowRight size={13}/></button>}
                           </div>
-                          <div className="home-course-actions"><button className="home-open-course" onClick={()=>openCourse(group.course.id,group.tasks[0]?.week_number||undefined)}>Open course <ArrowRight size={16}/></button><button className="home-subtle-button" aria-label={`View tasks for ${group.course.title}`} title="View all tasks" onClick={()=>navigate('tasks')}><MoreHorizontal size={20}/></button></div>
+                          <div className="home-course-actions"><button className="home-open-course" onClick={()=>openCourse(group.course.id,group.tasks[0]?.week_number||undefined)}>Open course <ArrowRight size={16}/></button><CourseActionsMenu courseId={group.course.id} courseTitle={group.course.title} onViewTasks={()=>openCourse(group.course.id,undefined,undefined,'tasks')} onFocus={()=>focusOnCourse(group.course.id)} onLibrary={()=>openCourse(group.course.id,undefined,undefined,'course-library')}/></div>
                         </div>;
                       })}
                     </div>
                     {studyGroups.length>3&&<div className="home-course-pagination" aria-label="Browse courses"><span>{Math.min(courseScrollIndex+1,studyGroups.length)}–{Math.min(courseScrollIndex+visibleCourseCards,studyGroups.length)} of {studyGroups.length} courses</span><div><button type="button" aria-label="Previous course cards" onClick={()=>scrollCourses(-1)} disabled={courseScrollIndex===0}><ArrowLeft size={16}/></button><button type="button" aria-label="Next course cards" onClick={()=>scrollCourses(1)} disabled={!canScrollNextCourse}><ArrowRight size={16}/></button></div></div>}
-                  </>:<div className="home-course-empty"><div className="home-heading-icon"><CheckCircle2 size={21}/></div><div><h3>No course work scheduled for today</h3><p>{selectedCourse?'You’re up to date on scheduled work. Continue your last course, or plan an activity from a weekly checklist.':'Create your first course and plan activities to see them here.'}</p></div><button className="home-mini-btn" onClick={()=>selectedCourse?openCourse(selectedCourse.id):setTab('courses')}>{selectedCourse?'Continue studying':'Open Study'} <ArrowRight size={15}/></button></div>}
+                  </>:<PhotoEmptyState compact scene="home" title="Your day is clear" detail={selectedCourse?'No course work scheduled today. Plan a new activity when you’re ready.':'No study tasks planned for today.'} actionLabel="Add task" onAction={()=>{setTaskForm(true);setTab('tasks');}} secondaryLabel="Open calendar" onSecondary={()=>openCalendarDate(today)}/>}
                 </section>
                 <section className="home-panel home-priorities" aria-labelledby="home-priorities-title">
                   <div className="home-panel-heading"><div className="home-heading-icon"><CheckCircle2 size={21}/></div><div><h2 id="home-priorities-title">Today’s priorities</h2></div><div className="home-priority-filters" aria-label="Filter priorities">{(['all','course','personal'] as const).map(filter=><button key={filter} onClick={()=>setPriorityFilter(filter)} className={priorityFilter===filter?'active':''} aria-pressed={priorityFilter===filter}>{filter==='all'?'All':filter==='course'?'Course':'Personal'}</button>)}</div></div>
-                  {filteredPriorities.length?<div className="home-priority-list">{filteredPriorities.slice(0,6).map(i=><div key={i.id} className={'home-priority-row task-completion-row'+(isOverdue(i,today)?' overdue':'')+(completingIds.has(i.id)?' is-completing':'')+(exitingIds.has(i.id)?' is-exiting':'')}><input type="checkbox" aria-label={`Complete ${i.title}`} disabled={busy||pendingItems.has(i.id)||completingIds.has(i.id)} className="task-completion-check" checked={i.done||completingIds.has(i.id)} onChange={()=>toggle(i)}/><button type="button" className="home-priority-info" aria-label={`Open ${i.title}`} onClick={()=>openDeadlineDestination(i)}><strong>{i.title}</strong><small>{i.course_id?(data.courses.find(c=>c.id===i.course_id)?.code||'Course'):'Personal'}{i.week_number?` · Week ${i.week_number}`:''}{i.due_date&&i.due_date<today?` · Due ${dateText(i.due_date)}`:i.planned_date&&i.planned_date<today?` · Planned ${dateText(i.planned_date)}`:''}</small></button><span className={'home-priority-tag'+(isOverdue(i,today)?' overdue':'')}>{isOverdue(i,today)?'Overdue':'Today'}</span>{i.resource_id&&<button className="home-row-action" aria-label={`Open resource for ${i.title}`} disabled={busy} onClick={()=>openTaskResource(i)} title="Open linked resource"><BookOpen size={16}/></button>}<button className="home-row-action" aria-label={`Focus on ${i.title}`} disabled={busy} onClick={()=>startFrom(i)} title="Focus on task"><Play size={15}/></button></div>)}</div>:<div className="home-list-empty"><CheckCircle2 size={19}/> {priorityFilter==='all'?'No priorities for today.':`No ${priorityFilter} priorities for today.`}</div>}
+                  {filteredPriorities.length?<div className="home-priority-list">{filteredPriorities.slice(0,6).map(i=><div key={i.id} className={'home-priority-row task-completion-row'+(isOverdue(i,today)?' overdue':'')+(completingIds.has(i.id)?' is-completing':'')+(exitingIds.has(i.id)?' is-exiting':'')}><input type="checkbox" aria-label={`Complete ${i.title}`} disabled={busy||pendingItems.has(i.id)||completingIds.has(i.id)} className="task-completion-check" checked={i.done||completingIds.has(i.id)} onChange={()=>toggle(i)}/><button type="button" className="home-priority-info" aria-label={`Open ${i.title}`} onClick={()=>openDeadlineDestination(i)}><strong>{i.title}</strong><small>{i.course_id?(data.courses.find(c=>c.id===i.course_id)?.code||'Course'):'Personal'}{i.week_number?` · Week ${i.week_number}`:''}{i.due_date&&i.due_date<today?` · Due ${dateText(i.due_date)}`:i.planned_date&&i.planned_date<today?` · Planned ${dateText(i.planned_date)}`:''}</small></button><span className={'home-priority-tag'+(isOverdue(i,today)?' overdue':'')}>{isOverdue(i,today)?'Overdue':'Today'}</span>{i.resource_id&&<button className="home-row-action" aria-label={`Open resource for ${i.title}`} disabled={busy} onClick={()=>openTaskResource(i)} title="Open linked resource"><BookOpen size={16}/></button>}<button className="home-row-action" aria-label={`Focus on ${i.title}`} disabled={busy} onClick={()=>startFrom(i)} title="Focus on task"><Play size={15}/></button></div>)}</div>:studyGroups.length&&priorityFilter==='all'?<PhotoEmptyState compact scene="home" title="All caught up" detail="No priorities scheduled for today." actionLabel="Add task" onAction={()=>{setTaskForm(true);setTab('tasks');}}/>:<div className="home-list-empty"><CheckCircle2 size={19}/> {priorityFilter==='all'?'No priorities for today.':`No ${priorityFilter} priorities for today.`}</div>}
                   {filteredPriorities.length>6&&<button className="home-panel-link home-list-footer" onClick={()=>navigate('tasks')}>View {filteredPriorities.length-6} more tasks <ArrowRight size={14}/></button>}
                 </section>
               </div>
@@ -806,7 +815,7 @@ export default function Page() {
           </div>}
 
           {tab==='courses'&&<CoursePlanner data={data.items===presentedItems?data:{...data,items:presentedItems}} progressItems={data.items} user={user} busy={busy} pendingItems={pendingItems} completingIds={completingIds} exitingIds={exitingIds}
-            courseId={courseId} weekNumber={weekNumber} landingItem={courseLandingItem} selectCourse={rememberCourse} selectWeek={rememberWeek}
+            courseId={courseId} weekNumber={weekNumber} landingItem={courseLandingItem} sectionJump={courseSectionJump} selectCourse={rememberCourse} selectWeek={rememberWeek}
             run={act} toggleItem={toggle} focusOn={startFrom}
             openResource={r=>{if(r.source==='drive'&&r.drive_file_id)previewPdf(r.drive_file_id,r.title,r.id,r.last_page);else if(r.url)window.open(r.url,'_blank','noopener,noreferrer');}}
             openDrive={(id,week,kind,scope)=>{setLinkCourse(id);setLinkWeek(week);setLinkScope(scope);setLinkKind(kind);setLinkItem('');setTab('library');}}
@@ -841,6 +850,7 @@ export default function Page() {
           {tab==='library'&&<>
             <div className="page-heading"><div><span className="eyebrow"><Folder size={13}/> CONNECTED MATERIALS</span><h1>Resources</h1><p>Browse and link Goodnotes PDFs.</p></div><Badge tone={drive.connected?'good':'muted'}>{drive.connected?'Drive connected':'Drive not connected'}</Badge></div>
             <div className="two-col-layout course-layout"><div className="stack">
+              {!drive.connected&&data.resources.length===0&&<PhotoEmptyState compact scene="resources" title="No resources yet" detail="Link slides, books, and notes from your courses." actionLabel="Open Study" onAction={()=>navigate('courses')}/>}
               <Card><SectionTitle title="Google Drive connection"/>
                 <p className="muted">Use the PDF backup you already have in Goodnotes. Study Hub indexes file names and folder paths without copying the notes.</p>
                 {drive.connected?<div className="connection-status"><span className="live-dot"/> Connected privately <button className="text-button" onClick={()=>{if(confirm('Disconnect Google Drive and erase the local folder index? Existing linked resources will remain.'))void act(async()=>{await api('/api/drive/disconnect',user,{method:'DELETE'});setDrive({connected:false,configured:drive.configured});setDriveFiles([]);setSourceFolder(null);setDriveIndex([]);},{collection:'none'});}}>Disconnect</button></div>:<button className="btn primary" disabled={!drive.configured||busy} onClick={connectDrive}><Cloud size={16}/> Connect my Drive</button>}
@@ -863,7 +873,7 @@ export default function Page() {
                   {f.suggestion?<div className="match-recommendation"><span><Sparkles size={14}/> Suggested: {f.suggestion.course_code} · Week {f.suggestion.week_number} · {f.suggestion.kind}</span><Badge tone={f.suggestion.confidence==='high'?'good':'warning'}>{f.suggestion.confidence} confidence</Badge></div>:<p className="match-missing">No clear course/week match — select the fields on the right to link manually.</p>}
                   <div className="indexed-actions"><button className="btn secondary small" onClick={()=>previewPdf(f.id,f.name)}><BookOpen size={14}/> Preview</button>{f.links.length===0&&f.suggestion&&<button className="btn primary small" disabled={busy} onClick={()=>confirmSuggestion(f)}><Check size={14}/> Confirm match</button>}{f.links.length===0&&<button className="btn secondary small" disabled={!linkCourse||busy} onClick={()=>linkDriveFile(f)}><Link2 size={14}/> Link manually</button>}</div>
                 </div>)}
-                {indexedVisible.length===0&&<EmptyState icon={<FileText size={23}/>} title="Nothing here yet" detail="Scan your selected backup folder, or switch the list filter."/>}
+                {indexedVisible.length===0&&(driveIndex.length===0?<PhotoEmptyState compact scene="resources" title="No backup PDFs yet" detail="Scan your Goodnotes folder to discover PDF files." actionLabel="Scan folder" onAction={()=>void scanBackup()}/>:<EmptyState icon={<FileText size={23}/>} title="No files in this filter" detail="Try All files to view your indexed PDFs."/>)}
                 {indexedVisible.length>visibleCount&&<button className="btn secondary full" onClick={()=>setVisibleCount(n=>n+30)}>Show more ({indexedVisible.length-visibleCount} remaining)</button>}
               </Card>}
             </div><div className="stack"><Card><SectionTitle title="Link to a course or teaching week"/><FormRow label="Course"><select value={linkCourse} onChange={e=>{setLinkCourse(e.target.value);setLinkWeek(1);setLinkItem('');}}><option value="">Select course</option>{data.courses.filter(c=>!c.archived).map(c=><option key={c.id} value={c.id}>{c.code} · {c.title}</option>)}</select></FormRow><FormRow label="Resource belongs to"><select value={linkScope} onChange={e=>setLinkScope(e.target.value as 'course'|'week')}><option value="course">Course Library (all weeks)</option><option value="week">One teaching week</option></select></FormRow>{linkScope==='week'&&<FormRow label="Week"><select value={linkWeek} onChange={e=>{setLinkWeek(Number(e.target.value));setLinkItem('');}}>{Array.from({length:data.courses.find(c=>c.id===linkCourse)?.week_count||13},(_,n)=><option key={n+1} value={n+1}>Week {n+1}</option>)}</select></FormRow>}<FormRow label="Material type"><select value={linkKind} onChange={e=>setLinkKind(e.target.value as Resource['kind'])}>{(['handwritten','annotated','slides','textbook','other'] as const).map(k=><option key={k} value={k}>{k==='handwritten'?'Handwritten notes':k==='annotated'?'Annotated slides':k==='slides'?'Original slides':k==='textbook'?'Textbook':'Other'}</option>)}</select></FormRow>{linkScope==='week'&&<FormRow label="Attach to study item (optional)"><select value={linkItem} onChange={e=>setLinkItem(e.target.value)}><option value="">Entire week</option>{data.items.filter(i=>i.course_id===linkCourse&&i.week_number===linkWeek).map(i=><option key={i.id} value={i.id}>{i.title}</option>)}</select></FormRow>}</Card>
