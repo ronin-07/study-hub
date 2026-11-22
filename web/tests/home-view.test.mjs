@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { todayStudyCourses, nextSevenDays, nextDeadlineDays } from '../lib/home-view.ts';
+import { todayStudyCourses, nextSevenDays, nextDeadlineDays, agendaForDate } from '../lib/home-view.ts';
 const item=(id,course_id,week_number,planned_date,due_date=null,done=false)=>({id,title:id,kind:'notes',course_id,week_number,planned_date,due_date,done,is_task:true,priority:'medium'});
 const courses=[{id:'a',code:'02410',title:'First',week_count:13},{id:'b',code:'02516',title:'Second',week_count:13},{id:'c',code:'00000',title:'Archived',archived:true,week_count:13}];
 test('groups actionable work by active course, excludes personal, future, archived and completed',()=>{
@@ -27,4 +27,17 @@ test('seven-day strip handles year-end and counts a task once if planned and due
 test('deadline days compare calendar dates without local timezone errors',()=>{
  assert.equal(nextDeadlineDays('2026-11-22','2026-11-25'),3);
  assert.equal(nextDeadlineDays('2026-12-31','2027-01-01'),1);
+});
+
+test('inline seven-day agenda deduplicates planned-and-due entries and skips completed items',()=>{
+ const rows=[item('both','a',3,'2026-11-25','2026-11-25'),item('due','b',5,null,'2026-11-25'),item('done','a',3,'2026-11-25',null,true),item('tomorrow','a',1,'2026-11-26')];
+ const agenda=agendaForDate(rows,'2026-11-25');
+ assert.deepEqual(agenda.map(x=>x.item.id),['both','due']);
+ assert.deepEqual(agenda.map(x=>x.reason),['planned-and-due','due']);
+ assert.equal(agendaForDate(rows,'2026-11-24').length,0);
+});
+test('inline agenda sorts important tasks before medium and low',()=>{
+ const rows=[item('low','a',1,'2026-11-25'),item('high','a',1,'2026-11-25'),item('medium','a',1,'2026-11-25')];
+ rows[0].priority='low';rows[1].priority='high';
+ assert.deepEqual(agendaForDate(rows,'2026-11-25').map(x=>x.item.id),['high','medium','low']);
 });

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, type DragEvent, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent } from 'react';
 import type { User } from 'firebase/auth';
 import { AlertTriangle, ArrowLeft, ArrowRight, BookOpen, CalendarDays, CheckCircle2, Clock3, GripVertical, ListTodo, LoaderCircle, Plus, Repeat2, Timer, Trash2, X } from 'lucide-react';
 import { api } from '@/lib/api';
@@ -86,9 +86,10 @@ export function TasksPlanner({items,courses,user,busy,run,onToggle,onFocus,onOpe
   useEffect(()=>{
     if(!taskJump)return;
     const target=items.find(i=>i.id===taskJump.id);
-    if(target)openEdit(target);
+    if(target){setMode(initialTaskMode);setSelectedCourse(target.course_id||'personal');setHighlightedTask(target.id);}
     onTaskJumpHandled?.();
   },[taskJump?.token]);
+  useEffect(()=>{if(highlightedTask)highlightedRef.current?.scrollIntoView({behavior:'smooth',block:'center'});},[highlightedTask,mode,selectedCourse]);
   const startCreate=(date?:string)=>{setEditing(null);setDraft(blank(date||today));setCreateOpen(true);};
   const closeForm=()=>{setEditing(null);setCreateOpen(false);};
   const save=async(e:FormEvent)=>{
@@ -123,7 +124,7 @@ export function TasksPlanner({items,courses,user,busy,run,onToggle,onFocus,onOpe
   const formCourse=availableCourses.find(c=>c.id===draft.course_id);
   const showRow=(i:Item,drag=false)=>{
     const course=availableCourses.find(c=>c.id===i.course_id);
-    return <div className={'planner-v05-task'+(isOverdue(i,today)?' planner-task-overdue':'')} key={i.id} draggable={drag&&!busy&&!i.done}
+    return <div className={'planner-v05-task'+(isOverdue(i,today)?' planner-task-overdue':'')+(highlightedTask===i.id?' planner-target-item':'')} ref={highlightedTask===i.id?highlightedRef:undefined} key={i.id} draggable={drag&&!busy&&!i.done}
         onDragStart={e=>{if(drag)e.dataTransfer.setData('text/plain',i.id);}}>
       {drag&&<GripVertical className="planner-v05-drag" size={15} aria-hidden="true"/>}
       <input type="checkbox" checked={i.done} disabled={busy} aria-label={`Complete ${i.title}`} onChange={()=>onToggle(i)}/>

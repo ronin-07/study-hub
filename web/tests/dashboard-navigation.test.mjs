@@ -17,17 +17,21 @@ test('Calendar has a standalone sidebar view instead of a Tasks sub-tab',()=>{
  assert.match(planner, /\(\['today','upcoming','completed'\] as const\)/);
 });
 
-test('Home date clicks select the corresponding day and agenda',()=>{
- assert.match(page, /onClick=\{\(\)=>openCalendarDate\(day\.date\)\}/);
- assert.match(page, /onClick=\{\(\)=>openCalendarDate\(today\)\}/);
+test('Home day chips expand a local agenda and full calendar retains selected day',()=>{
+ assert.match(page, /onClick=\{\(\)=>toggleHomeAgenda\(day\.date\)\}/);
+ assert.match(page, /agendaForDate\(openTasks,homeSelectedDate\)/);
+ assert.match(page, /onClick=\{\(\)=>openCalendarDate\(homeSelectedDate\|\|today\)\}/);
+ assert.match(page, /onClick=\{\(\)=>openCalendarDate\(homeSelectedDate\)\}/);
  assert.match(planner, /selectCalendarDay\(calendarJump\.date\)/);
 });
 
-test('Home deadline links open the exact task edit dialog',()=>{
- assert.match(page, /onClick=\{\(\)=>openTaskDetails\(i\.id\)\}/);
+test('Home deadline links open course/week, or highlight a personal task, without editor',()=>{
+ assert.match(page, /onClick=\{\(\)=>openDeadlineDestination\(i\)\}/);
+ assert.match(page, /openCourse\(item\.course_id,item\.week_number\|\|undefined,item\)/);
+ assert.match(page, /landingItem=\{courseLandingItem\}/);
  assert.match(page, /taskJump=\{taskJump\}/);
- assert.match(planner, /items\.find\(i=>i\.id===taskJump\.id\)/);
- assert.match(planner, /if\(target\)openEdit\(target\)/);
+ assert.match(planner, /setHighlightedTask\(target\.id\)/);
+ assert.doesNotMatch(planner, /if\(target\)openEdit\(target\)/);
 });
 
 test('Calendar deadline-only items can be opened directly',()=>{
@@ -39,4 +43,11 @@ test('Calendar deadline-only items can be opened directly',()=>{
 test('Home hero uses a standalone optimized panorama asset',()=>{
  assert.ok(existsSync(resolve(web,'public/studyhub-twilight.webp')));
  assert.match(styles, /url\('\/studyhub-twilight\.webp'\)/);
+});
+
+test('All views inherit warm dusk theme and shared background',()=>{
+ assert.match(styles,/v0\.5 — Mulberry Dusk/);
+ assert.match(styles,/\.app-shell \.main-area::before/);
+ assert.match(styles,/\.app-shell \.home-day\.selected/);
+ assert.match(styles,/\.home-inline-agenda-item/);
 });

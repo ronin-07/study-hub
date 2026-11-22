@@ -13,7 +13,7 @@ import { PdfWorkspace } from '@/components/pdf-workspace';
 import { CoursePlanner } from '@/components/course-planner';
 import { TasksPlanner } from '@/components/tasks-planner';
 import { isActionable, isOverdue, todayPriorities, upcomingDeadlines, focusTasksForContext } from '@/lib/task-view';
-import { todayStudyCourses, nextSevenDays, nextDeadlineDays } from '@/lib/home-view';
+import { todayStudyCourses, nextSevenDays, nextDeadlineDays, agendaForDate } from '@/lib/home-view';
 import { firebaseAuth, onAuthStateChanged, signIn, signOutUser, useFirebase } from '@/lib/auth';
 import { type DriveEntry, type DriveList, type FocusSession, type Item,
   type Resource, type Snapshot, type Tab, type DriveIndexed, type DriveSource, type DriveIndexResponse, type DriveScanResponse, duration,
@@ -48,6 +48,8 @@ export default function Page() {
   const [priorityFilter,setPriorityFilter] = useState<'all'|'course'|'personal'>('all');
   const [homeFocusMode,setHomeFocusMode] = useState<'25'|'50'|'90'|'free'>('25');
   const [calendarJump,setCalendarJump] = useState<{date:string;token:number}|null>(null);
+  const [homeSelectedDate,setHomeSelectedDate] = useState<string|null>(null);
+  const [courseLandingItem,setCourseLandingItem] = useState<{id:string;weekNumber:number|null}|null>(null);
   const [taskJump,setTaskJump] = useState<{id:string;token:number}|null>(null);
   const [taskLandingMode,setTaskLandingMode] = useState<'today'|'upcoming'|'completed'>('today');
   const [focusCourse,setFocusCourse] = useState('');
@@ -135,6 +137,7 @@ export default function Page() {
   const upcoming=upcomingDeadlines(openTasks,today);
   const studyGroups=todayStudyCourses(data.courses,data.items,today);
   const calendarDays=nextSevenDays(today,openTasks);
+  const homeAgenda=homeSelectedDate?agendaForDate(openTasks,homeSelectedDate):[];
   const filteredPriorities=todayWork.filter(i=>priorityFilter==='all'||(priorityFilter==='course'?!!i.course_id:!i.course_id));
   const hour=new Date(now*1000).getHours();
   const hello=hour<12?'Good morning':hour<17?'Good afternoon':'Good evening';
@@ -153,11 +156,12 @@ export default function Page() {
   const toggle=(i:Item)=>void act(async()=>{await api(`/api/items/${i.id}`,user,{method:'PATCH',body:{done:!i.done}});});
   const rememberCourse=(id:string)=>{setCourseId(id);if(id)window.localStorage.setItem('studyhub-last-course',id);};
   const rememberWeek=(week:number)=>{setWeekNumber(week);if(courseId)window.localStorage.setItem(`studyhub-last-week-${courseId}`,String(week));};
-  const openCourse=(id:string,week?:number)=>{
+  const openCourse=(id:string,week?:number,landingItem?:Item)=>{
     const course=data.courses.find(c=>c.id===id&&!c.archived);
     if(!course){setTab('courses');return;}
     const saved=Number(window.localStorage.getItem(`studyhub-last-week-${id}`))||1;
     const selected=Math.max(1,Math.min(course.week_count,week||saved));
+    setCourseLandingItem(landingItem?{id:landingItem.id,weekNumber:landingItem.week_number}:null);
     rememberCourse(id);setWeekNumber(selected);
     window.localStorage.setItem(`studyhub-last-week-${id}`,String(selected));
     setTab('courses');
@@ -169,15 +173,19 @@ export default function Page() {
     setCalendarJump(p=>({date,token:(p?.token||0)+1}));
     setTab('calendar');
   };
-  // Deadline cards open the exact task, rather than a calendar day with no task selected.
-  const openTaskDetails=(id:string)=>{
+  // Course deadlines resolve to their exact semester/course/week and highlight the activity.
+  // Personal deadlines stay in Tasks, highlighted without forcing an edit dialog.
+  const openDeadlineDestination=(item:Item)=>{
+    if(item.course_id && data.courses.some(c=>c.id===item.course_id&&!c.archived)){
+      openCourse(item.course_id,item.week_number||undefined,item);
+      return;
+    }
     setTaskForm(false);
-    const target=data.items.find(i=>i.id===id);
-    // Keep the relevant task list behind the dialog when it is closed.
-    setTaskLandingMode(target&&(isOverdue(target,today)||target.planned_date===today||target.due_date===today)?'today':'upcoming');
-    setTaskJump(p=>({id,token:(p?.token||0)+1}));
+    setTaskLandingMode(item.planned_date===today||item.due_date===today||isOverdue(item,today)?'today':'upcoming');
+    setTaskJump(p=>({id:item.id,token:(p?.token||0)+1}));
     setTab('tasks');
   };
+  const toggleHomeAgenda=(date:string)=>setHomeSelectedDate(previous=>previous===date?null:date);
   const showUpcomingTasks=()=>{
     setTaskForm(false);
     setTaskJump(null);
@@ -187,6 +195,7 @@ export default function Page() {
   const navigate=(target:Tab)=>{
     if(target==='calendar'){openCalendarDate(today);return;}
     if(target==='tasks'){setTaskLandingMode('today');setTaskJump(null);}
+    if(target==='courses')setCourseLandingItem(null);
     setTaskForm(false);
     setTab(target);
   };
@@ -349,14 +358,14 @@ export default function Page() {
                   <p className="home-focus-note">{active?'Open Focus to pause, resume, or finish.':'Timed modes are targets; sessions are stopped manually.'}</p>
                 </section>
                 <section className="home-panel home-week-goal" aria-labelledby="home-goal-title"><div className="home-widget-heading"><span className="home-heading-icon blue"><Target size={20}/></span><h2 id="home-goal-title">Weekly focus goal</h2><span className="home-widget-stat">{(weekSeconds/3600).toFixed(1)} / {weeklyGoal} h</span></div><div className="home-progress-track" role="progressbar" aria-label="Weekly focus goal progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={weekPct}><div style={{width:`${weekPct}%`}}/></div><div className="home-goal-foot"><span>{weekPct}% of your goal</span><label>Goal <input type="number" min={1} max={80} aria-label="Weekly focus target in hours" value={weeklyGoal} onChange={e=>{const n=Math.max(1,Math.min(80,Number(e.target.value)||1));setWeeklyGoal(n);localStorage.setItem('studyhub-focus-goal',String(n));}}/> h/week</label></div><small className="home-local-note">Goal preference is stored on this device.</small></section>
-                <section className="home-panel home-deadlines" aria-labelledby="home-deadlines-title"><div className="home-widget-heading"><span className="home-heading-icon"><CalendarDays size={20}/></span><h2 id="home-deadlines-title">Upcoming deadlines</h2><button className="home-panel-link" onClick={showUpcomingTasks}>View all <ArrowRight size={14}/></button></div>{upcoming.slice(0,3).map(i=><button className="home-deadline" key={i.id} onClick={()=>openTaskDetails(i.id)}><span className="home-deadline-date"><strong>{i.due_date!.slice(8,10)}</strong>{new Intl.DateTimeFormat('en-GB',{month:'short'}).format(new Date(i.due_date!+'T12:00:00'))}</span><span className="home-deadline-info"><strong>{i.title}</strong><small>{data.courses.find(c=>c.id===i.course_id)?.code||'Personal'}{i.week_number?` · Week ${i.week_number}`:''}</small></span><span className="home-days-away">{nextDeadlineDays(today,i.due_date!)===0?'Today':`${nextDeadlineDays(today,i.due_date!)}d`}</span></button>)}{!upcoming.length&&<p className="home-side-empty">Nothing due soon. Keep your momentum going.</p>}</section>
-                <section className="home-panel home-week-strip" aria-labelledby="home-calendar-title"><div className="home-widget-heading"><span className="home-heading-icon"><CalendarDays size={20}/></span><h2 id="home-calendar-title">Next 7 days</h2><button className="home-panel-link" onClick={()=>openCalendarDate(today)}>View calendar <ArrowRight size={14}/></button></div><div className="home-day-grid">{calendarDays.map((day,index)=><button key={day.date} className={'home-day'+(index===0?' current':'')} aria-label={`View ${day.weekday} ${day.day} in calendar${day.count?`, ${day.count} scheduled items`:''}`} title={`${day.count} planned/due items`} onClick={()=>openCalendarDate(day.date)}><span>{day.weekday}</span><strong>{day.day}</strong><span className={'home-day-dot'+(day.count?' has-work':'')}/></button>)}</div></section>
+                <section className="home-panel home-deadlines" aria-labelledby="home-deadlines-title"><div className="home-widget-heading"><span className="home-heading-icon"><CalendarDays size={20}/></span><h2 id="home-deadlines-title">Upcoming deadlines</h2><button className="home-panel-link" onClick={showUpcomingTasks}>View all <ArrowRight size={14}/></button></div>{upcoming.slice(0,3).map(i=><button className="home-deadline" key={i.id} onClick={()=>openDeadlineDestination(i)}><span className="home-deadline-date"><strong>{i.due_date!.slice(8,10)}</strong>{new Intl.DateTimeFormat('en-GB',{month:'short'}).format(new Date(i.due_date!+'T12:00:00'))}</span><span className="home-deadline-info"><strong>{i.title}</strong><small>{data.courses.find(c=>c.id===i.course_id)?.code||'Personal'}{i.week_number?` · Week ${i.week_number}`:''}</small></span><span className="home-days-away">{nextDeadlineDays(today,i.due_date!)===0?'Today':`${nextDeadlineDays(today,i.due_date!)}d`}</span></button>)}{!upcoming.length&&<p className="home-side-empty">Nothing due soon. Keep your momentum going.</p>}</section>
+                <section className="home-panel home-week-strip" aria-labelledby="home-calendar-title"><div className="home-widget-heading"><span className="home-heading-icon"><CalendarDays size={20}/></span><h2 id="home-calendar-title">Next 7 days</h2><button className="home-panel-link" onClick={()=>openCalendarDate(homeSelectedDate||today)}>Full calendar <ArrowRight size={14}/></button></div><div className="home-day-grid">{calendarDays.map((day,index)=><button key={day.date} className={'home-day'+(index===0?' current':'')+(homeSelectedDate===day.date?' selected':'')} aria-label={`Show ${day.weekday} ${day.day} tasks inline${day.count?`, ${day.count} scheduled items`:''}`} aria-pressed={homeSelectedDate===day.date} aria-controls={homeSelectedDate?'home-day-agenda':undefined} title={`${day.count} planned/due items`} onClick={()=>toggleHomeAgenda(day.date)}><span>{day.weekday}</span><strong>{day.day}</strong><span className={'home-day-dot'+(day.count?' has-work':'')}/></button>)}</div>{homeSelectedDate&&<div id="home-day-agenda" className="home-inline-agenda"><div className="home-inline-agenda-header"><div><strong>{new Intl.DateTimeFormat('en-GB',{weekday:'long',day:'numeric',month:'short'}).format(new Date(homeSelectedDate+'T12:00:00'))}</strong><span>{homeAgenda.length} {homeAgenda.length===1?'item':'items'}</span></div><button type="button" aria-label="Close day details" className="home-agenda-close" onClick={()=>setHomeSelectedDate(null)}><X size={16}/></button></div>{homeAgenda.length?<div className="home-inline-agenda-list">{homeAgenda.slice(0,5).map(({item,reason})=><div className="home-inline-agenda-item" key={item.id}><input type="checkbox" checked={item.done} disabled={busy} aria-label={`Complete ${item.title}`} onChange={()=>toggle(item)}/><button type="button" className="home-agenda-item-main" onClick={()=>openDeadlineDestination(item)}><strong>{item.title}</strong><small>{data.courses.find(c=>c.id===item.course_id)?.code||'Personal'}{item.week_number?` · Week ${item.week_number}`:''} · {reason==='planned-and-due'?'Planned & due':reason==='planned'?'Planned':'Due'}</small></button><ArrowRight size={15} aria-hidden="true"/></div>)}{homeAgenda.length>5&&<p className="home-agenda-more">+{homeAgenda.length-5} additional items</p>}</div>:<p className="home-side-empty">No tasks planned or due on this day.</p>}<button type="button" className="home-panel-link home-agenda-full" onClick={()=>openCalendarDate(homeSelectedDate)}>Open full day <ArrowRight size={14}/></button></div>}</section>
               </div>
             </div>
           </div>}
 
           {tab==='courses'&&<CoursePlanner data={data} user={user} busy={busy}
-            courseId={courseId} weekNumber={weekNumber} selectCourse={rememberCourse} selectWeek={rememberWeek}
+            courseId={courseId} weekNumber={weekNumber} landingItem={courseLandingItem} selectCourse={rememberCourse} selectWeek={rememberWeek}
             run={act} toggleItem={toggle} focusOn={startFrom}
             openResource={r=>{if(r.source==='drive'&&r.drive_file_id)previewPdf(r.drive_file_id,r.title,r.id,r.last_page);else if(r.url)window.open(r.url,'_blank','noopener,noreferrer');}}
             openDrive={(id,week,kind,scope)=>{setLinkCourse(id);setLinkWeek(week);setLinkScope(scope);setLinkKind(kind);setLinkItem('');setTab('library');}}

@@ -55,3 +55,13 @@ export function nextDeadlineDays(today: string, dueDate: string): number {
   };
   return Math.round((asUTC(dueDate)-asUTC(today))/86400000);
 }
+
+/** Compact Home agenda; each item appears once even if both planned and due here. */
+export type DayAgendaEntry = { item: Item; reason: 'planned-and-due' | 'planned' | 'due' };
+export function agendaForDate(items: Item[], date: string): DayAgendaEntry[] {
+  const weight = {high:0,medium:1,low:2};
+  return items.filter(i=>!i.done && (i.planned_date===date || i.due_date===date))
+    .map(item=>({item,reason: item.planned_date===date && item.due_date===date
+      ? 'planned-and-due' as const : item.planned_date===date ? 'planned' as const : 'due' as const}))
+    .sort((a,b)=>weight[a.item.priority]-weight[b.item.priority] || a.item.title.localeCompare(b.item.title));
+}

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import type { User } from 'firebase/auth';
 import {
   Archive, ArrowLeft, ArrowRight, BookMarked, BookOpen, CalendarDays, CheckCircle2,
@@ -48,6 +48,7 @@ interface Props {
   busy: boolean;
   courseId: string;
   weekNumber: number;
+  landingItem?: { id: string; weekNumber: number | null } | null;
   selectCourse: (id: string) => void;
   selectWeek: (week: number) => void;
   run: (operation: () => Promise<unknown>) => Promise<boolean>;
@@ -60,11 +61,13 @@ interface Props {
 /** v0.4.1: a single semester -> course -> week navigation source of truth.
  * Existing legacy courses remain grouped by semester name without a Firestore migration.
  */
-export function CoursePlanner({ data, user, busy, courseId, weekNumber, selectCourse, selectWeek, run, toggleItem, focusOn, openResource, openDrive }: Props) {
+export function CoursePlanner({ data, user, busy, courseId, weekNumber, selectCourse, selectWeek, run, toggleItem, focusOn, openResource, openDrive, landingItem }: Props) {
   const semesterOptions = useMemo(() => makeSemesters(data), [data]);
   const [semesterKey, setSemesterKey] = useState('');
   const [showArchived, setShowArchived] = useState(false);
-  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>('overview');
+  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>(()=>landingItem && landingItem.weekNumber===null?'tasks':'overview');
+  const landingRef=useRef<HTMLDivElement|null>(null);
+  useEffect(()=>{landingRef.current?.scrollIntoView({behavior:'smooth',block:'center'});},[landingItem?.id,workspaceTab]);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [editCourseId, setEditCourseId] = useState('');
   const [courseDraft, setCourseDraft] = useState<CourseDraft>(courseDraftDefaults);
@@ -277,7 +280,7 @@ export function CoursePlanner({ data, user, busy, courseId, weekNumber, selectCo
 
           {workspaceTab==='overview'&&<div className="planner-main-grid">
             <Card><SectionTitle title="Weekly learning checklist" aside={!isReadOnly&&<button className="btn secondary small" onClick={()=>{setItemDraft(itemDraftDefaults);setDialog('item');}}><Plus size={14}/> Add activity</button>}/>
-              {items.length?items.map(i=><div className="planner-task-row" key={i.id}><input type="checkbox" disabled={isReadOnly||busy} checked={i.done} onChange={()=>toggleItem(i)} aria-label={`Complete ${i.title}`}/><div><strong className={i.done?'complete':''}>{i.title}</strong><small>{kindLabels[i.kind]}{i.is_task?' · Linked to Tasks':''}{i.chapter?` · ${i.chapter}`:''}{i.page_start?` · pp. ${i.page_start}${i.page_end?`–${i.page_end}`:''}`:''}</small>{i.resource_id&&<button className="planner-inline-link" onClick={()=>{const r=shared.find(r=>r.id===i.resource_id)||weekResources.find(r=>r.id===i.resource_id);if(r)openResource(r);}}>Open referenced document <ExternalLink size={12}/></button>}</div>{!isReadOnly&&<button className="btn secondary small planner-plan-btn" disabled={busy||i.done} onClick={()=>openActivityPlan(i)} title={i.done?'Uncheck this completed activity to schedule it':i.planned_date?`Planned ${formatDate(i.planned_date)} · change date`:`Schedule ${i.title}`}><CalendarDays size={14}/>{i.planned_date?'Reschedule':'Plan'}</button>}{!isReadOnly&&<button className="icon-btn" disabled={busy} aria-label={`Focus on ${i.title}`} onClick={()=>focusOn(i)}><Timer size={16}/></button>}{!isReadOnly&&<button className="icon-btn danger-hover" disabled={busy} aria-label={`Delete ${i.title}`} onClick={()=>void deleteItem(i)}><X size={15}/></button>}</div>):<EmptyState icon={<CheckCircle2 size={23}/>} title="A fresh week" detail="Add a lecture, reading assignment, or revision task to begin."/>}
+              {items.length?items.map(i=><div className={'planner-task-row'+(landingItem?.id===i.id?' planner-target-item':'')} ref={landingItem?.id===i.id?landingRef:undefined} key={i.id}><input type="checkbox" disabled={isReadOnly||busy} checked={i.done} onChange={()=>toggleItem(i)} aria-label={`Complete ${i.title}`}/><div><strong className={i.done?'complete':''}>{i.title}</strong><small>{kindLabels[i.kind]}{i.is_task?' · Linked to Tasks':''}{i.chapter?` · ${i.chapter}`:''}{i.page_start?` · pp. ${i.page_start}${i.page_end?`–${i.page_end}`:''}`:''}</small>{i.resource_id&&<button className="planner-inline-link" onClick={()=>{const r=shared.find(r=>r.id===i.resource_id)||weekResources.find(r=>r.id===i.resource_id);if(r)openResource(r);}}>Open referenced document <ExternalLink size={12}/></button>}</div>{!isReadOnly&&<button className="btn secondary small planner-plan-btn" disabled={busy||i.done} onClick={()=>openActivityPlan(i)} title={i.done?'Uncheck this completed activity to schedule it':i.planned_date?`Planned ${formatDate(i.planned_date)} · change date`:`Schedule ${i.title}`}><CalendarDays size={14}/>{i.planned_date?'Reschedule':'Plan'}</button>}{!isReadOnly&&<button className="icon-btn" disabled={busy} aria-label={`Focus on ${i.title}`} onClick={()=>focusOn(i)}><Timer size={16}/></button>}{!isReadOnly&&<button className="icon-btn danger-hover" disabled={busy} aria-label={`Delete ${i.title}`} onClick={()=>void deleteItem(i)}><X size={15}/></button>}</div>):<EmptyState icon={<CheckCircle2 size={23}/>} title="A fresh week" detail="Add a lecture, reading assignment, or revision task to begin."/>}
             </Card>
             <div className="stack"><Card><SectionTitle title="Week resources" aside={<button className="planner-inline-link" onClick={()=>setWorkspaceTab('week-resources')}>View all <ArrowRight size={14}/></button>}/>
               {weekResources.length?weekResources.slice(0,4).map(resourceRow):<p className="muted">No slides linked for this week yet.</p>}
@@ -296,12 +299,12 @@ export function CoursePlanner({ data, user, busy, courseId, weekNumber, selectCo
             {!isReadOnly&&<button className="btn secondary full" onClick={()=>openDrive(selected.id,weekNumber,'annotated','week')}><Cloud size={16}/> Browse Goodnotes backups</button>}
           </Card>}
           {workspaceTab==='tasks'&&<Card><SectionTitle title="Course study tasks" aside={!isReadOnly&&<button className="btn primary small" onClick={()=>{setItemDraft({...itemDraftDefaults,kind:'assignment',is_task:true});setDialog('item');}}><Plus size={14}/> Add task</button>}/><p className="muted">Assignments, planned revision and textbook readings share their status with the global Tasks view.</p>
-            {courseItems.filter(i=>isActionable(i)).map(i=><div className="planner-task-row" key={i.id}><input type="checkbox" disabled={isReadOnly||busy} checked={i.done} onChange={()=>toggleItem(i)}/><div><strong className={i.done?'complete':''}>{i.title}</strong><small>{i.week_number?`Week ${i.week_number}`:'Exam prep'} · {kindLabels[i.kind]}{i.due_date?` · Due ${formatDate(i.due_date)}`:''}</small></div>{!isReadOnly&&<button className="icon-btn" onClick={()=>focusOn(i)} title="Start focus"><Timer size={16}/></button>}</div>)}
+            {courseItems.filter(i=>isActionable(i)).map(i=><div className={'planner-task-row'+(landingItem?.id===i.id?' planner-target-item':'')} ref={landingItem?.id===i.id?landingRef:undefined} key={i.id}><input type="checkbox" disabled={isReadOnly||busy} checked={i.done} onChange={()=>toggleItem(i)}/><div><strong className={i.done?'complete':''}>{i.title}</strong><small>{i.week_number?`Week ${i.week_number}`:'Exam prep'} · {kindLabels[i.kind]}{i.due_date?` · Due ${formatDate(i.due_date)}`:''}</small></div>{!isReadOnly&&<button className="icon-btn" onClick={()=>focusOn(i)} title="Start focus"><Timer size={16}/></button>}</div>)}
             {!courseItems.some(i=>isActionable(i))&&<EmptyState icon={<CalendarDays size={24}/>} title="No scheduled work" detail="Add assignments or schedule a revision activity."/>}
           </Card>}
           {workspaceTab==='exam'&&<Card><SectionTitle title="Exam preparation" aside={<Badge>{examItems.filter(i=>i.done).length}/{examItems.length} completed</Badge>}/><p className="muted">Whole-course revision lives here, independent of teaching weeks.</p>
             {!isReadOnly&&<form className="exam-task-form" onSubmit={e=>void saveExam(e)}><input aria-label="Exam preparation task" placeholder="Practise old exam papers" value={examTitle} onChange={e=>setExamTitle(e.target.value)} required/><button className="btn primary small" disabled={busy||!examTitle.trim()}>Add task</button></form>}
-            {examItems.map(i=><div className="planner-task-row" key={i.id}><input type="checkbox" disabled={isReadOnly||busy} checked={i.done} onChange={()=>toggleItem(i)}/><div><strong className={i.done?'complete':''}>{i.title}</strong></div>{!isReadOnly&&<button className="icon-btn" onClick={()=>focusOn(i)} title="Start focus"><Timer size={16}/></button>}</div>)}
+            {examItems.map(i=><div className={'planner-task-row'+(landingItem?.id===i.id?' planner-target-item':'')} ref={landingItem?.id===i.id?landingRef:undefined} key={i.id}><input type="checkbox" disabled={isReadOnly||busy} checked={i.done} onChange={()=>toggleItem(i)}/><div><strong className={i.done?'complete':''}>{i.title}</strong></div>{!isReadOnly&&<button className="icon-btn" onClick={()=>focusOn(i)} title="Start focus"><Timer size={16}/></button>}</div>)}
             {!examItems.length&&<EmptyState icon={<BookMarked size={23}/>} title="Exam preparation starts here" detail="Add past papers, mock exams and course-wide revision plans."/>}
           </Card>}
         </>}

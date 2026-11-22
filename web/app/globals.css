@@ -434,3 +434,186 @@
 .app-shell:not(.theme-dark) .dashboard-intro p{color:#53496b;}
 @media(max-width:780px){.dashboard-intro{min-height:132px;padding-top:8px;margin-bottom:8px;}.main-area:has(.dashboard-home)::before,.theme-dark .main-area:has(.dashboard-home)::before{height:350px;background-position:center,center,68% center;}}
 @media(max-width:650px){.dashboard-intro{min-height:133px;margin-bottom:5px;}.home-layout{gap:16px;}.home-stats-grid{gap:9px;}.main-area:has(.dashboard-home)::before,.theme-dark .main-area:has(.dashboard-home)::before{height:340px;background-position:center,center,70% center;}}
+
+/* v0.5 — Mulberry Dusk. Shared visual language across Home, Study, Tasks,
+   Calendar, Focus and Resources. Warm graphite + plum, sunset apricot,
+   orchid highlights, sage progress, and coral urgency replace flat navy. */
+.app-shell.theme-dark{
+  --bg:#1b151c;--paper:#2a202b;--soft:#352936;--text:#fcf4f1;
+  --muted:#c4b0bb;--line:#4c3a4b;--teal:#ffbd9c;
+  --teal-bright:#d4a2f3;--dark:#3c263e;
+  --shadow:0 8px 26px #0c080f42;--soft-shadow:0 16px 40px #0c080f60;
+}
+.app-shell:not(.theme-dark){
+  --bg:#f7f0eb;--paper:#fffaf7;--soft:#f4e9e7;--text:#392b38;
+  --muted:#74626f;--line:#e6d7de;--teal:#985e79;
+  --teal-bright:#a47ab7;--dark:#542e4f;
+}
+.app-shell .sidebar{
+  background:linear-gradient(175deg,#241824 0%,#301e30 48%,#211820 100%);
+  border-right:1px solid #7a4c654a;
+}
+.app-shell .sidebar:before{background:radial-gradient(circle,#be778653,transparent 68%)}
+.app-shell .brand-mark{background:linear-gradient(140deg,#e4a5b7,#ad719c 53%,#775789);box-shadow:0 9px 28px #c2709b44}
+.app-shell .nav-btn{color:#d2c0cc}
+.app-shell .nav-btn.current{background:linear-gradient(100deg,#a56c8c5c,#6c466c50);color:#fff6f5;border-color:#edb8bb58;box-shadow:inset 3px 0 0 #ffb997}
+.app-shell .nav-btn:hover{background:#dbb9d01a;color:#fff}
+.app-shell .nav-count{background:#efb29e2b;color:#ffdfc7}
+.app-shell .sidebar-course-dot{background:#e2a2b0}
+.app-shell .sidebar-course-dot.tone-1{background:#8bd3b8}
+.app-shell .sidebar-course-dot.tone-2{background:#b99be0}
+.app-shell .sidebar-course-dot.tone-3{background:#e9ba80}
+.app-shell .sidebar-profile-avatar,.app-shell .avatar{background:linear-gradient(125deg,#b8779b,#785789);color:white}
+.app-shell .sidebar-courses-heading{color:#ead2db}
+.app-shell .sidebar-course-link{color:#dac6d4}
+.app-shell .sidebar-bottom{border-color:#d7a0c02e}
+.app-shell .theme-toggle{color:#e9cede;border-color:#edb2cb36}
+.app-shell .link-btn{color:#ffc6ab}
+.app-shell .main-area{position:relative;isolation:isolate;background:
+  radial-gradient(ellipse at 90% 2%,#8a4b6845,transparent 36%),
+  radial-gradient(ellipse at 18% 40%,#55324e25,transparent 62%),var(--bg)}
+.app-shell .main-area::before,
+.app-shell .main-area:has(.dashboard-home)::before,
+.app-shell.theme-dark .main-area:has(.dashboard-home)::before{
+  content:'';position:absolute;z-index:0;inset:0 0 auto;
+  height:clamp(315px,30vw,460px);pointer-events:none;
+  background:
+    linear-gradient(90deg,#1b151cf2 0%,#24171fcd 30%,#3c234e73 60%,#2517224c 100%),
+    linear-gradient(180deg,#1b151c22 0%,#1b151c0d 24%,#1b151c98 67%,#1b151c 100%),
+    url('/studyhub-twilight.webp') 62% 48% / cover no-repeat;
+}
+.app-shell:not(.theme-dark) .main-area::before,
+.app-shell:not(.theme-dark) .main-area:has(.dashboard-home)::before{
+  background:
+    linear-gradient(90deg,#f7f0ebf5 0%,#f7f0ebd6 36%,#f7f0eb89 72%),
+    linear-gradient(180deg,#f7f0eb29 0%,#f7f0ebbb 63%,#f7f0eb 100%),
+    url('/studyhub-twilight.webp') 62% 48% / cover no-repeat;
+}
+.app-shell .main-area>.topbar,.app-shell .main-area>.page-content{position:relative;z-index:1}
+.app-shell .main-area>.topbar.dashboard-topbar{position:absolute;z-index:2}
+.app-shell.theme-dark .topbar:not(.dashboard-topbar){background:#251a268f;border-color:#c38da42e;backdrop-filter:blur(14px)}
+.app-shell:not(.theme-dark) .topbar:not(.dashboard-topbar){background:#fff7f1cc;border-color:#dec9d3;backdrop-filter:blur(14px)}
+.app-shell.theme-dark .topbar-date,.app-shell.theme-dark .topbar-theme{background:#39273aaa;border:1px solid #bc8aa15e;color:#fbefec}
+.app-shell .eyebrow,.app-shell .breadcrumb svg{color:var(--teal)}
+.app-shell .btn.primary{background:linear-gradient(110deg,#a86180,#855a98);border-color:#c88da6;color:#fff9f6;box-shadow:0 5px 17px #a05a743a}
+.app-shell .btn.primary:hover:not(:disabled){background:linear-gradient(110deg,#b97792,#9467a4)}
+.app-shell .btn.secondary:hover:not(:disabled){border-color:var(--teal);background:var(--soft)}
+.app-shell .brand-mark,.app-shell .home-heading-icon,.app-shell .home-stat-icon,.app-shell .home-course-icon{transition:box-shadow .18s ease}
+.app-shell .resource-icon{color:var(--teal);background:var(--soft)}
+.app-shell .progress-track>div,.app-shell .home-progress-track>div{background:linear-gradient(90deg,#b280b7,#f6b08f)}
+.app-shell .segmented button.selected{color:var(--teal);border:1px solid var(--line)}
+.app-shell.theme-dark .icon-btn:hover{background:#634459;border-color:#926b84;color:#fff2e7}
+.app-shell .form-row input:focus,.app-shell .form-row select:focus,.app-shell .form-row textarea:focus{border-color:#cf9fc0;box-shadow:0 0 0 3px #cf9fc024}
+.app-shell .hint-card{background:linear-gradient(140deg,var(--soft),var(--paper));border-color:var(--line)}
+.app-shell .hint-card p{color:var(--muted)}
+.app-shell .planner-target-item{
+  position:relative;border-radius:12px;padding-inline:12px;
+  border:1px solid #edab9a!important;background:linear-gradient(90deg,#f2a08026,#c39ae016);
+  box-shadow:inset 3px 0 0 #ffc09d,0 0 0 3px #e9ad8920;
+}
+.app-shell:not(.theme-dark) .planner-target-item{background:linear-gradient(90deg,#fff0dd,#f9eaf3)}
+/* Home: rich warm surfaces retain the existing information architecture. */
+.app-shell.theme-dark .dashboard-home{
+  --home-panel:#30212e;--home-plate:#392b3a;--home-border:#6b465e;
+  --home-text:#fff6f2;--home-muted:#d2b9c7;--home-accent:#ffc2a3;
+}
+.app-shell:not(.theme-dark) .dashboard-home{
+  --home-panel:#fffaf7;--home-plate:#f9ebeb;--home-border:#e5ced7;
+  --home-text:#3a2b39;--home-muted:#75636f;--home-accent:#9c5e82;
+}
+.app-shell.theme-dark .home-panel{background:linear-gradient(150deg,#332535f2,#241c2bf5);border-color:#744c646e;box-shadow:0 15px 38px #100c1540}
+.app-shell.theme-dark .home-stat{background:linear-gradient(145deg,#332536ed,#261e2cef);border-color:#76536972}
+.app-shell.theme-dark .home-stat.danger{background:linear-gradient(135deg,#512735ea,#2c202ceb);border-color:#d0697891}
+.app-shell .home-stat-icon.purple,.app-shell .home-heading-icon{background:#cf98bf28;color:#edb7d6}
+.app-shell .home-stat-icon.blue,.app-shell .home-heading-icon.blue{background:#578f8860;color:#b3f1d8}
+.app-shell .home-stat-icon.red{background:#9b3f4e70;color:#ff91a0}
+.app-shell.theme-dark .home-course-tile{background:linear-gradient(145deg,#563447d7,#2c2233e8);border-color:#c084a384}
+.app-shell.theme-dark .home-course-tile.tile-1,.app-shell.theme-dark .home-course-tile.tile-3{background:linear-gradient(145deg,#29433fdb,#242d35e8);border-color:#72b5a175}
+.app-shell .home-course-icon{background:#a270a573;color:#fff3f0}
+.app-shell .tile-1 .home-course-icon,.app-shell .tile-3 .home-course-icon{background:#4c91826b;color:#d7fff0}
+.app-shell .home-today-pill{background:#8f678e;color:#fff}
+.app-shell .home-overdue-pill,.app-shell .home-priority-tag.overdue{background:#9d304c;color:#fff}
+.app-shell.theme-dark .home-course-title>span,.app-shell.theme-dark .home-course-progress>span{color:#e0c9d4}
+.app-shell.theme-dark .home-course-task-title{color:#fff5f0}
+.app-shell.theme-dark .home-panel-link{color:#ffc2a3}
+.app-shell .home-open-course{background:linear-gradient(100deg,#e9a4b4,#ffcfab);color:#382130}
+.app-shell .home-open-course:hover{box-shadow:0 0 24px #f7b4a061}
+.app-shell .home-focus-widget{background:radial-gradient(circle at 88% 50%,#b477914f,transparent 45%),linear-gradient(140deg,var(--home-panel),#372738)}
+.app-shell .home-focus-play{background:linear-gradient(140deg,#f5a7b5,#ffc7a1);color:#40233a;border-color:#e9b6bc61;box-shadow:0 0 0 9px #e9a8bb18,0 0 32px #eba3a957}
+.app-shell .home-priority-filters{background:#a37b9852}
+.app-shell .home-priority-filters button.active{background:#986384}
+.app-shell .home-priority-tag:not(.overdue){background:#845f9b}
+.app-shell.theme-dark .home-deadline-date{background:#ac688747;color:#ffdfcd}
+.app-shell.theme-dark .home-day{background:#201a267a;color:#fff6f1}
+.app-shell .home-day.current{border-color:#e9a7ae;background:#ac738433}
+.app-shell .home-day.selected{border-color:#f8c79f;background:#c089a747;box-shadow:0 0 0 2px #eba3ad38;transform:translateY(-2px)}
+.app-shell .home-day-dot.has-work{background:#f6af9c;box-shadow:0 0 9px #ffc2a6c0}
+.app-shell .home-priority-row.overdue{background:linear-gradient(90deg,#a23c4d65,#70405420);border-left-color:#ff7c87}
+.app-shell .home-course-task input,.app-shell .home-priority-row input,.app-shell .home-inline-agenda-item input{accent-color:#ca93bd}
+.app-shell:not(.theme-dark) .home-panel,.app-shell:not(.theme-dark) .home-stat{background:linear-gradient(140deg,#fffaf7,#faeff0);border-color:#e3cdd5}
+.app-shell:not(.theme-dark) .home-course-tile{background:linear-gradient(145deg,#f7e5ec,#fceff2);border-color:#d8b5ca}
+.app-shell:not(.theme-dark) .home-course-tile.tile-1,.app-shell:not(.theme-dark) .home-course-tile.tile-3{background:linear-gradient(145deg,#e4f4ed,#f3f9f1);border-color:#abd0c1}
+.app-shell:not(.theme-dark) .home-focus-widget{background:linear-gradient(135deg,#fdf1ec,#f7e7f1)}
+.app-shell:not(.theme-dark) .home-day{background:#f5e9eb;color:#3a2b39}
+.app-shell:not(.theme-dark) .home-day.selected{background:#f4d9e2;border-color:#c8829a}
+.app-shell:not(.theme-dark) .home-panel-link{color:#985b79}
+.app-shell:not(.theme-dark) .home-progress-track{background:#dbcbd4}
+/* Inline seven-day agenda: compact by default, keyboard-accessible, no route change. */
+.home-inline-agenda{margin-top:15px;border-top:1px solid var(--home-border);padding-top:13px;animation:homeAgendaIn .2s ease both}
+.home-inline-agenda-header{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px}
+.home-inline-agenda-header>div{display:flex;gap:6px;align-items:baseline;flex-wrap:wrap}
+.home-inline-agenda-header strong{font-size:.8rem;color:var(--home-text)}
+.home-inline-agenda-header span{font-size:.65rem;color:var(--home-muted)}
+.home-agenda-close{display:grid;place-items:center;border:1px solid var(--home-border);border-radius:8px;background:transparent;color:var(--home-muted);width:27px;height:27px}
+.home-inline-agenda-list{display:flex;flex-direction:column;gap:5px}
+.home-inline-agenda-item{display:flex;align-items:center;gap:9px;padding:8px 9px;border:1px solid var(--home-border);border-radius:11px;background:#ffffff08;min-width:0}
+.home-inline-agenda-item input{margin:0;width:17px;height:17px;flex-shrink:0}
+.home-agenda-item-main{display:flex;flex:1;min-width:0;flex-direction:column;gap:3px;align-items:flex-start;text-align:left;border:0;padding:0;background:transparent;color:var(--home-text)}
+.home-agenda-item-main strong{font-size:.72rem;overflow-wrap:anywhere}
+.home-agenda-item-main small{color:var(--home-muted);font-size:.64rem;overflow-wrap:anywhere}
+.home-inline-agenda-item>svg{color:var(--home-accent);flex-shrink:0}
+.home-inline-agenda-item:hover{border-color:var(--home-accent);background:#ffbca611}
+.home-agenda-full{margin:12px 0 0 auto;display:flex}
+.home-agenda-more{font-size:.65rem;color:var(--home-muted);margin:4px 0}
+.app-shell:not(.theme-dark) .home-inline-agenda-item{background:#f8eeef}
+@keyframes homeAgendaIn{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:translateY(0)}}
+@media(prefers-reduced-motion:reduce){.home-inline-agenda{animation:none}.app-shell .home-day.selected{transform:none}}
+@media(max-width:780px){.app-shell .main-area::before,.app-shell .main-area:has(.dashboard-home)::before{background-position:center,center,68% center}}
+/* Home retains exactly the same shell tones as the other sections. */
+.app-shell.theme-dark .main-area:has(.dashboard-home){background:
+  radial-gradient(ellipse at 90% 2%,#8a4b6845,transparent 36%),
+  radial-gradient(ellipse at 18% 40%,#55324e25,transparent 62%),var(--bg)}
+.app-shell.theme-dark .home-focus-widget{background:radial-gradient(circle at 88% 50%,#b477914f,transparent 45%),linear-gradient(140deg,#38283a,#2b2031)}
+/* Secondary page accents: course hero, focus dial, calendar markers, resource cards. */
+.app-shell.theme-dark .planner-hero{background:radial-gradient(circle at 85% 5%,#eba89346,transparent 42%),linear-gradient(115deg,#56324b,#784c65 60%,#4b3a52)}
+.app-shell .planner-hero span{color:#ffe0cc}
+.app-shell .planner-hero p,.app-shell .planner-hero-progress small{color:#f4dfe8}
+.app-shell .planner-hero-progress .progress-track>div{background:linear-gradient(90deg,#8cddc5,#ffd09f)}
+.app-shell.theme-dark .planner-course-icon{background:#6a485f;color:#ffe0d1}
+.app-shell:not(.theme-dark) .planner-course-icon{background:#ecd6df;color:#844f74}
+.app-shell .planner-course-btn.selected{border-color:#c692b178;box-shadow:0 5px 15px #bd8e9c13}
+.app-shell.theme-dark .focus-card{background:radial-gradient(circle at 50% 52%,#4b3044,var(--paper) 67%)}
+.app-shell .timer-dial:before{background:conic-gradient(from 0deg,#b280ba,#efacb1 42%,#ffd0a9 64%,#79586a 67%,#79586a)}
+.app-shell .dial-label{color:var(--teal)}
+.app-shell.theme-dark .focus-modes button.current{background:#70465a;color:#fff1e5;border-color:#c58da1}
+.app-shell:not(.theme-dark) .focus-modes button.current{background:#f3dfe8;color:#88526f;border-color:#d2a4ba}
+.app-shell.theme-dark .session-row>span,.app-shell.theme-dark .date-tile{background:#624256;color:#ffc8a5}
+.app-shell .planner-v05-day-markers .planned{background:#c385a82c;color:var(--teal)}
+.app-shell .planner-v05-day-markers .due{background:#f2a47d29;color:#e8aa87}
+.app-shell .planner-v05-day.drop-target{background:#b8819835}
+.app-shell.theme-dark .accent-card{background:linear-gradient(140deg,#5e3554,#7f5266 65%,#5c435b)}
+.app-shell.theme-dark .welcome-hero{background:radial-gradient(circle at 88% 27%,#eab1aa62,transparent 30%),linear-gradient(115deg,#57324a,#8e5775)}
+.app-shell .badge.good{background:#244f49;color:#a5eed1}
+.app-shell:not(.theme-dark) .badge.good{background:#dff6e9;color:#246d58}
+.app-shell .planner-v05-overlay{background:#140b13ce;backdrop-filter:blur(5px)}
+.app-shell .planner-v05-dialog{box-shadow:0 26px 100px #0d0710a0}
+.app-shell.theme-dark .alert{background:#5e2a3b;border-color:#b55c6b;color:#ffe2e2}
+.app-shell.theme-dark .home-focus-select-wrap select{background:#5a3b50;color:#fff3ed;border-color:#a97c90}
+.app-shell.theme-dark .home-day span:first-child{color:#e0c6d1}
+.app-shell .home-deadline:hover .home-deadline-info>strong{color:var(--home-accent)}
+.app-shell.theme-dark .home-goal-foot input{background:#3d2d3e;color:#fff6f0;border-color:#85667c}
+.app-shell .home-count-pill,.app-shell .home-days-away{background:#c08aa52f;color:var(--home-text)}
+.app-shell.theme-dark .home-course-empty{border-color:#a66a8c99}
+:focus-visible{outline-color:#ffbc9e!important}
+.login-shell{background:linear-gradient(90deg,#f8eeebf2,#f3e3e8dc),url('/studyhub-twilight.webp') center / cover no-repeat}
+@media(max-width:650px){.home-inline-agenda-item{padding:8px 7px}.home-inline-agenda-header>div{align-items:flex-start;flex-direction:column}.home-day-grid{gap:3px}}
