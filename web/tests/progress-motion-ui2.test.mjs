@@ -60,7 +60,7 @@ test('Focus goal and actual session statistics are visual-only animations', () =
   assert.match(page,/label="Weekly focus goal progress" value=\{weekPct\}/);
   assert.match(page,/ProgressValue value=\{weekSeconds\/3600\} decimals=\{1\} suffix=" hours"/);
   assert.match(page,/ProgressValue value=\{totalSeconds\/3600\} decimals=\{1\} suffix=" hours"/);
-  assert.match(component,/setTimeout\(\(\) => setCelebrating\(false\), 900\)/);
+  assert.match(component,/setTimeout\(\(\) => setCelebrating\(false\), 2200\)/);
   assert.match(css,/\.planner-study-hero:has\(\.progress-celebrating\)/);
 });
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { memo, useMemo, useSyncExternalStore, type CSSProperties } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
 import { type FocusSession, duration } from '@/lib/types';
 import {
   type FocusClockAnchor, recoverFocusClock, focusClockSeconds, focusClockDisplaySeconds, focusClockProgress,
@@ -69,9 +69,22 @@ export const FocusDial = memo(function FocusDial({session, anchor}: {
   const elapsedSeconds = focusClockSeconds(clock, wallMs, monoMs);
   const displaySeconds = focusClockDisplaySeconds(clock, session.mode, wallMs, monoMs);
   const targetReached = session.mode !== 'free' && elapsedSeconds >= Number(session.mode) * 60;
+  // Track crossings, not renders: a session already at its target must not celebrate on mount.
+  const previousTarget = useRef({sessionId:session.id, reached:targetReached});
+  const [targetCelebrating, setTargetCelebrating] = useState(false);
+  useEffect(() => {
+    const previous = previousTarget.current;
+    previousTarget.current = {sessionId:session.id, reached:targetReached};
+    if (previous.sessionId !== session.id) {setTargetCelebrating(false);return;}
+    if (previous.reached || !targetReached) return;
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+    setTargetCelebrating(true);
+    const timeout = window.setTimeout(() => setTargetCelebrating(false), 2100);
+    return () => window.clearTimeout(timeout);
+  }, [session.id, targetReached]);
   const progress = focusClockProgress(clock, session.mode, wallMs, monoMs);
   const style = {'--focus-progress': `${(progress * 100).toFixed(2)}%`} as CSSProperties;
-  return <div className="timer-dial focus-dial-progress" style={style}
+  return <div className={'timer-dial focus-dial-progress'+(targetCelebrating?' focus-target-celebrating':'')} style={style}
     role="timer" aria-label={`Focus timer ${clock.status}, ${duration(displaySeconds)} ${session.mode === 'free' ? 'elapsed' : 'remaining'}`} >
     <span className="dial-label">{clock.status==='paused'?'PAUSED':targetReached?'TARGET REACHED':'FOCUSING'}</span>
     <strong>{duration(displaySeconds)}</strong>

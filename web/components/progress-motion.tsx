@@ -59,7 +59,7 @@ export function ProgressTrack({value, label, className='progress-track', identit
       return;
     }
     setCelebrating(true);
-    const timeout = window.setTimeout(() => setCelebrating(false), 900);
+    const timeout = window.setTimeout(() => setCelebrating(false), 2200);
     return () => window.clearTimeout(timeout);
   }, [percentage, identity]);
   return <div className={`${className} progress-motion-track${percentage===100?' progress-complete':''}${celebrating?' progress-celebrating':''}`}
