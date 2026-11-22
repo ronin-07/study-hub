@@ -10,7 +10,6 @@ import {
 import { api } from '@/lib/api';
 import type { MutationHint } from '@/lib/snapshot-cache';
 import { Badge, Card, EmptyState, FormRow, SectionTitle } from '@/components/common';
-import { AnimatedPercent } from '@/components/visual-polish';
 import { isActionable, isOverdue } from '@/lib/task-view';
 import { resolveWorkspaceSemester } from '@/lib/course-navigation';
 import { type Course, type Item, type Resource, type Semester, type Snapshot, formatDate, kindLabels, localToday } from '@/lib/types';
@@ -356,9 +355,9 @@ export function CoursePlanner({ data, user, busy, pendingItems, courseId, weekNu
               </>}
             </div>
           </div>
-          <div className={"planner-hero planner-study-hero"+(courseItems.length>0&&courseCompletion===100?" is-complete":"")}>
+          <div className="planner-hero planner-study-hero">
             <div><span>WEEK {weekNumber} · CONTINUE LEARNING</span><h3>{week?.title||`Continue with Week ${weekNumber}`}</h3>{week?.objectives&&<p>{week.objectives}</p>}</div>
-            <div className="planner-hero-progress"><strong><AnimatedPercent value={courseCompletion}/></strong><small>{courseDoneCount}/{courseItems.length} complete</small><div className="progress-track" role="progressbar" aria-valuenow={courseCompletion} aria-valuemin={0} aria-valuemax={100} aria-label="Course completion"><div style={{width:`${courseCompletion}%`}}/></div></div>
+            <div className="planner-hero-progress"><strong>{courseCompletion}%</strong><small>{courseDoneCount}/{courseItems.length} complete</small><div className="progress-track" role="progressbar" aria-valuenow={courseCompletion} aria-valuemin={0} aria-valuemax={100} aria-label="Course completion"><div style={{width:`${courseCompletion}%`}}/></div></div>
           </div>
           <div className="planner-week-toolbar planner-study-week-toolbar">{weekPicker}{weekEditButton}</div>
           <nav className="planner-tabbar planner-study-tabs" aria-label="Course workspace sections">{([
@@ -391,25 +390,25 @@ export function CoursePlanner({ data, user, busy, pendingItems, courseId, weekNu
             <div className="stack planner-study-side-cards">
               <Card className="planner-study-week-resources-card"><div className="planner-classic-card-title"><h3>Week resources</h3><button className="planner-inline-link" onClick={()=>setWorkspaceTab('week-resources')}>View all <ArrowRight size={15}/></button></div>
                 {weekResources.slice(0,2).map(resourceRow)}
-                {!weekResources.length&&<p className="planner-study-hint study-inline-empty"><FolderOpen size={17} aria-hidden="true"/> No slides linked for this week yet.</p>}
+                {!weekResources.length&&<p className="planner-study-hint">No slides linked for this week yet.</p>}
                 {!isReadOnly&&<button className="btn secondary full planner-resource-footer" onClick={()=>openResourceForm('week')}><Plus size={15}/> Link lecture slides</button>}
               </Card>
               <Card className="planner-study-shared-library-card"><div className="planner-classic-card-title"><h3>Shared course library</h3><Badge>{shared.length} {shared.length===1?'file':'files'}</Badge></div>
                 {shared.slice(0,3).map(resourceRow)}
-                {!shared.length&&<p className="planner-study-hint study-inline-empty"><BookOpen size={17} aria-hidden="true"/> No shared resources linked yet.</p>}
+                {!shared.length&&<p className="planner-study-hint">No shared textbooks or Goodnotes notebooks linked yet.</p>}
                 <button className="btn secondary full planner-resource-footer" onClick={()=>setWorkspaceTab('course-library')}><Library size={15}/> Open Course Library</button>
               </Card>
               <Card className="planner-study-notes-card"><SectionTitle title="Quick notes" aside={!isReadOnly&&<button className="planner-inline-link" onClick={startNote}><Plus size={15}/> Add note</button>}/>
-                {weekNotes.length?weekNotes.slice(0,3).map(note=><div className="planner-study-note" key={note.id}><div><strong>{note.title}</strong><p>{note.notes||'No text added yet.'}</p></div>{!isReadOnly&&<button className="icon-btn" aria-label={`Edit note ${note.title}`} onClick={()=>editNote(note)}><Pencil size={15}/></button>}</div>):<p className="planner-study-note-empty study-inline-empty"><NotebookPen size={17} aria-hidden="true"/> No notes for Week {weekNumber} yet.</p>}
+                {weekNotes.length?weekNotes.slice(0,3).map(note=><div className="planner-study-note" key={note.id}><div><strong>{note.title}</strong><p>{note.notes||'No text added yet.'}</p></div>{!isReadOnly&&<button className="icon-btn" aria-label={`Edit note ${note.title}`} onClick={()=>editNote(note)}><Pencil size={15}/></button>}</div>):<p className="planner-study-note-empty">No notes yet. Add a note for Week {weekNumber}.</p>}
               </Card>
             </div>
           </div>}
           {workspaceTab==='course-library'&&<Card className="planner-library-panel"><SectionTitle title="Course Library" aside={!isReadOnly&&<button className="btn primary small" onClick={()=>openResourceForm('course')}><Plus size={14}/> Add shared resource</button>}/>
-            {shared.length?shared.map(resourceRow):<EmptyState icon={<Library size={26}/>} title="Your shared library is empty" photo="library" detail="Add a book, whole-course Goodnotes notebook, or reference PDF."/>}
+            {shared.length?shared.map(resourceRow):<EmptyState icon={<Library size={26}/>} title="Your shared library is empty" detail="Add a book, whole-course Goodnotes notebook, or reference PDF."/>}
             {!isReadOnly&&<button className="btn secondary full" onClick={()=>openDrive(selected.id,weekNumber,'textbook','course')}><Cloud size={16}/> Browse Goodnotes backups for this course</button>}
           </Card>}
           {workspaceTab==='week-resources'&&<Card><SectionTitle title={`Week ${weekNumber} resources`} aside={!isReadOnly&&<button className="btn primary small" onClick={()=>openResourceForm('week')}><Plus size={14}/> Add link</button>}/>
-            {weekResources.length?weekResources.map(resourceRow):<EmptyState icon={<FileText size={24}/>} title="No weekly materials" photo="desk" detail="Link DTU Learn lecture slides or choose a backed-up annotated PDF."/>}
+            {weekResources.length?weekResources.map(resourceRow):<EmptyState icon={<FileText size={24}/>} title="No weekly materials" detail="Link DTU Learn lecture slides or choose a backed-up annotated PDF."/>}
             {!isReadOnly&&<button className="btn secondary full" onClick={()=>openDrive(selected.id,weekNumber,'annotated','week')}><Cloud size={16}/> Browse Goodnotes backups</button>}
           </Card>}
           {workspaceTab==='tasks'&&<Card><SectionTitle title="Course study tasks" aside={!isReadOnly&&<button className="btn primary small" onClick={()=>{setItemDraft({...itemDraftDefaults,kind:'assignment',is_task:true});setDialog('item');}}><Plus size={14}/> Add task</button>}/>

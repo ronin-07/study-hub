@@ -15,7 +15,6 @@ import { Badge, Card, EmptyState, FormRow, SectionTitle } from '@/components/com
 import { PdfWorkspace } from '@/components/pdf-workspace';
 import { CoursePlanner } from '@/components/course-planner';
 import { FocusElapsed, FocusDial } from '@/components/focus-elapsed';
-import { AnimatedPercent, SaveFeedback, type Feedback } from '@/components/visual-polish';
 import {
   previewPause, previewResume, recoverFocusClock, startFocusClock, pauseFocusClock,
   resumeFocusClock, focusClockSeconds, rekeyFocusClock, type FocusClockAnchor,
@@ -60,12 +59,6 @@ export default function Page() {
   const pendingItemsRef=useRef<Set<string>>(new Set());
   const lastLoadedAtRef=useRef(0);
   const [error,setError] = useState('');
-  const [feedback,setFeedback] = useState<Feedback|null>(null);
-  useEffect(()=>{
-    if(!feedback||feedback.tone==='saving')return;
-    const timeout=window.setTimeout(()=>setFeedback(null),3400);
-    return ()=>window.clearTimeout(timeout);
-  },[feedback]);
   const [courseId,setCourseId] = useState('');
   const [weekNumber,setWeekNumber] = useState(1);
   const [now,setNow] = useState(Math.floor(Date.now()/1000));
@@ -130,7 +123,7 @@ export default function Page() {
     return onAuthStateChanged(firebaseAuth, u=>{
       pendingItemsRef.current.clear();setPendingItems(new Set());
       focusBusyRef.current=false;focusRevisionRef.current++;setFocusBusy(false);setFocusPreview(null);setFocusClock(null);
-      setFinishReview(false);setQuickFocusOpen(false);setFeedback(null);
+      setFinishReview(false);setQuickFocusOpen(false);
       setUser(u);setAuthReady(true);
     });
   },[]);
@@ -230,10 +223,9 @@ export default function Page() {
   // Collection-scoped mutations remove an otherwise mandatory six-collection refresh.
   // Other operations keep the existing full refresh for compatibility.
   const act = async(fn:()=>Promise<unknown>, mutation?:MutationHint):Promise<boolean>=>{
-    setBusy(true);setError('');setFeedback({tone:'saving',message:'Saving changes…'});
+    setBusy(true);setError('');
     try {
       const result=await fn();
-      let refreshFailed = false;
       if(mutation){
         if(mutation.collection!=='none') {
           if(!mutation.deleteId&&(!result||typeof result!=='object'||!('id' in result))){
@@ -244,11 +236,10 @@ export default function Page() {
         }
       } else {
         const refreshed=await load();
-        if(!refreshed){refreshFailed=true;setError('Changes were saved, but the dashboard could not refresh. Use the refresh button to reload your data.');setFeedback({tone:'error',message:'Saved, but refresh needed'});}
+        if(!refreshed)setError('Changes were saved, but the dashboard could not refresh. Use the refresh button to reload your data.');
       }
-      if(!refreshFailed) setFeedback({tone:'success',message:'Changes saved'});
       return true;
-    } catch(e) {setError(e instanceof Error?e.message:'Action failed');setFeedback({tone:'error',message:'Could not save changes'});return false;}
+    } catch(e) {setError(e instanceof Error?e.message:'Action failed');return false;}
     finally {setBusy(false);}
   };
   const scrollCourses = (direction: -1 | 1) => {
@@ -351,7 +342,6 @@ export default function Page() {
         // The user sees the authoritative old state if the write failed.
         setData(previous=>({...previous,items:previous.items.map(i=>i.id===item.id?item:i)}));
         setError(`Could not save “${item.title}”. ${e instanceof Error?e.message:'Please retry.'}`);
-        setFeedback({tone:'error',message:'Task update failed'});
       }finally{
         pendingItemsRef.current.delete(item.id);
         setPendingItems(new Set(pendingItemsRef.current));
@@ -432,7 +422,6 @@ export default function Page() {
     }catch(e){
       if(sameUser()){
         setError(`Focus action failed: ${e instanceof Error?e.message:'Please retry.'} Refresh if another tab changed the session.`);
-        setFeedback({tone:'error',message:'Focus update failed'});
         onFailure?.();
       }
       return false;
@@ -525,7 +514,7 @@ export default function Page() {
     const confirmed=Number(finishSeconds);
     if(!Number.isInteger(confirmed)||confirmed<0||confirmed>reviewLimit)return;
     void focusRequest(null,`/api/sessions/${active.id}/finish`,{confirmed_seconds:confirmed},
-      ()=>{setFinishReview(false);setFocusClock(null);setFeedback({tone:'success',message:'Focus session saved'});});
+      ()=>{setFinishReview(false);setFocusClock(null);});
   };
   const loadDriveStatus=useCallback(async()=>{
     if (useFirebase&&!user) return;
@@ -694,7 +683,6 @@ export default function Page() {
           <button className="topbar-theme" aria-label={theme==='light'?'Switch to dark theme':'Switch to light theme'} title={theme==='light'?'Dark theme':'Light theme'} onClick={toggleTheme}>{theme==='light'?<Moon size={17}/>:<Sun size={17}/>}</button>
         </div></header>
       <main className={'page-content'+(tab==='today'?' dashboard-page':'')}>
-        <SaveFeedback feedback={feedback} onDismiss={()=>setFeedback(null)}/>
         {error&&<div className="alert" role="alert"><span>{error}</span><button onClick={()=>setError('')} aria-label="Dismiss error"><X size={17}/></button></div>}
         {(loading||(!snapshotIssue&&(!snapshotReady||loadedUserRef.current!==(user?.uid||'local'))))?<div className="loading-state" role="status"><LoaderCircle className="spin"/> Securely loading your workspace…</div>:!snapshotReady?<Card className="load-error" >
           <div className="load-error-icon"><AlertTriangle size={24}/></div>
@@ -724,9 +712,9 @@ export default function Page() {
                       {studyGroups.map((group,index)=>{
                         const weekLabel=group.weekNumbers.length===1?`Week ${group.weekNumbers[0]}`:group.weekNumbers.length?`Weeks ${group.weekNumbers.join(', ')}`:'Course tasks';
                         const progress=group.activityCount?Math.round(100*group.doneCount/group.activityCount):0;
-                        return <div key={group.course.id} className={'home-course-tile tile-'+(index%4)+(group.activityCount>0&&progress===100?' is-complete':'')}>
+                        return <div key={group.course.id} className={'home-course-tile tile-'+(index%4)}>
                           <div className="home-course-heading"><div className="home-course-icon"><BookOpen size={24}/></div><div className="home-course-title"><h3>{group.course.code} · {group.course.title}</h3><span>{weekLabel}</span></div>{group.overdueCount?<span className="home-overdue-pill">{group.overdueCount} overdue</span>:<span className="home-today-pill">Today</span>}</div>
-                          <div className="home-course-progress"><span>{group.doneCount} / {group.activityCount} activities</span><AnimatedPercent className="home-progress-percent" value={progress}/><div className="home-progress-track" role="progressbar" aria-label={`${group.course.title} selected week activity progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><div style={{width:`${progress}%`}}/></div></div>
+                          <div className="home-course-progress"><span>{group.doneCount} / {group.activityCount} activities</span><div className="home-progress-track" role="progressbar" aria-label={`${group.course.title} selected week activity progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><div style={{width:`${progress}%`}}/></div></div>
                           <div className="home-course-activities">
                             {group.tasks.slice(0,2).map(i=><div className={'home-course-task'+(isOverdue(i,today)?' late':'')} key={i.id}><input type="checkbox" aria-label={`Complete ${i.title}`} disabled={busy||pendingItems.has(i.id)} checked={i.done} onChange={()=>toggle(i)}/><button className="home-course-task-title" title={`Open ${i.title} in course`} onClick={()=>openCourse(group.course.id,i.week_number||undefined)}>{i.title}{group.weekNumbers.length>1&&i.week_number&&<small>W{i.week_number}</small>}</button>{isOverdue(i,today)&&<span className="home-overdue-pill compact">Overdue</span>}{i.resource_id&&<button className="home-task-resource" disabled={busy} onClick={()=>openTaskResource(i)} aria-label={`Open resource for ${i.title}`} title="Open linked resource"><BookOpen size={15}/></button>}</div>)}
                             {group.tasks.length>2&&<button className="home-extra-items" onClick={()=>navigate('tasks')}>+ {group.tasks.length-2} more tasks <ArrowRight size={13}/></button>}
@@ -736,7 +724,7 @@ export default function Page() {
                       })}
                     </div>
                     {studyGroups.length>3&&<div className="home-course-pagination" aria-label="Browse courses"><span>{Math.min(courseScrollIndex+1,studyGroups.length)}–{Math.min(courseScrollIndex+visibleCourseCards,studyGroups.length)} of {studyGroups.length} courses</span><div><button type="button" aria-label="Previous course cards" onClick={()=>scrollCourses(-1)} disabled={courseScrollIndex===0}><ArrowLeft size={16}/></button><button type="button" aria-label="Next course cards" onClick={()=>scrollCourses(1)} disabled={!canScrollNextCourse}><ArrowRight size={16}/></button></div></div>}
-                  </>:<div className="home-course-empty home-course-empty--photo"><div className="home-heading-icon"><CheckCircle2 size={21}/></div><div><h3>No course work scheduled for today</h3><p>{selectedCourse?'You’re up to date on scheduled work. Continue your last course, or plan an activity from a weekly checklist.':'Create your first course and plan activities to see them here.'}</p></div><button className="home-mini-btn" onClick={()=>selectedCourse?openCourse(selectedCourse.id):setTab('courses')}>{selectedCourse?'Continue studying':'Open Study'} <ArrowRight size={15}/></button></div>}
+                  </>:<div className="home-course-empty"><div className="home-heading-icon"><CheckCircle2 size={21}/></div><div><h3>No course work scheduled for today</h3><p>{selectedCourse?'You’re up to date on scheduled work. Continue your last course, or plan an activity from a weekly checklist.':'Create your first course and plan activities to see them here.'}</p></div><button className="home-mini-btn" onClick={()=>selectedCourse?openCourse(selectedCourse.id):setTab('courses')}>{selectedCourse?'Continue studying':'Open Study'} <ArrowRight size={15}/></button></div>}
                 </section>
                 <section className="home-panel home-priorities" aria-labelledby="home-priorities-title">
                   <div className="home-panel-heading"><div className="home-heading-icon"><CheckCircle2 size={21}/></div><div><h2 id="home-priorities-title">Today’s priorities</h2></div><div className="home-priority-filters" aria-label="Filter priorities">{(['all','course','personal'] as const).map(filter=><button key={filter} onClick={()=>setPriorityFilter(filter)} className={priorityFilter===filter?'active':''} aria-pressed={priorityFilter===filter}>{filter==='all'?'All':filter==='course'?'Course':'Personal'}</button>)}</div></div>
@@ -745,8 +733,8 @@ export default function Page() {
                 </section>
               </div>
               <div className="home-side-column">
-                <section className="home-panel home-deadlines" aria-labelledby="home-deadlines-title"><div className="home-widget-heading"><span className="home-heading-icon"><CalendarDays size={20}/></span><h2 id="home-deadlines-title">Upcoming deadlines</h2><button className="home-panel-link" onClick={showUpcomingTasks}>View all <ArrowRight size={14}/></button></div>{upcoming.slice(0,3).map(i=><button className="home-deadline" key={i.id} onClick={()=>openDeadlineDestination(i)}><span className="home-deadline-date"><strong>{i.due_date!.slice(8,10)}</strong>{new Intl.DateTimeFormat('en-GB',{month:'short'}).format(new Date(i.due_date!+'T12:00:00'))}</span><span className="home-deadline-info"><strong>{i.title}</strong><small>{data.courses.find(c=>c.id===i.course_id)?.code||'Personal'}{i.week_number?` · Week ${i.week_number}`:''}</small></span><span className="home-days-away">{nextDeadlineDays(today,i.due_date!)===0?'Today':`${nextDeadlineDays(today,i.due_date!)}d`}</span></button>)}{!upcoming.length&&<p className="home-side-empty study-inline-empty"><CalendarDays size={18} aria-hidden="true"/> No upcoming deadlines.</p>}</section>
-                <section className="home-panel home-week-strip" aria-labelledby="home-calendar-title"><div className="home-widget-heading"><span className="home-heading-icon"><CalendarDays size={20}/></span><h2 id="home-calendar-title">Next 7 days</h2><button className="home-panel-link" onClick={()=>openCalendarDate(homeSelectedDate||today)}>Full calendar <ArrowRight size={14}/></button></div><div className="home-day-grid">{calendarDays.map((day,index)=><button key={day.date} className={'home-day'+(index===0?' current':'')+(homeSelectedDate===day.date?' selected':'')} aria-label={`Show ${day.weekday} ${day.day} tasks inline${day.count?`, ${day.count} scheduled items`:''}`} aria-pressed={homeSelectedDate===day.date} aria-controls={homeSelectedDate?'home-day-agenda':undefined} title={`${day.count} planned/due items`} onClick={()=>toggleHomeAgenda(day.date)}><span>{day.weekday}</span><strong>{day.day}</strong><span className={'home-day-dot'+(day.count?' has-work':'')}/></button>)}</div>{homeSelectedDate&&<div id="home-day-agenda" className="home-inline-agenda"><div className="home-inline-agenda-header"><div><strong>{new Intl.DateTimeFormat('en-GB',{weekday:'long',day:'numeric',month:'short'}).format(new Date(homeSelectedDate+'T12:00:00'))}</strong><span>{homeAgenda.length} {homeAgenda.length===1?'item':'items'}</span></div><button type="button" aria-label="Close day details" className="home-agenda-close" onClick={()=>setHomeSelectedDate(null)}><X size={16}/></button></div>{homeAgenda.length?<div className="home-inline-agenda-list">{homeAgenda.slice(0,5).map(({item,reason})=><div className="home-inline-agenda-item" key={item.id}><input type="checkbox" checked={item.done} disabled={busy} aria-label={`Complete ${item.title}`} onChange={()=>toggle(item)}/><button type="button" className="home-agenda-item-main" onClick={()=>openDeadlineDestination(item)}><strong>{item.title}</strong><small>{data.courses.find(c=>c.id===item.course_id)?.code||'Personal'}{item.week_number?` · Week ${item.week_number}`:''} · {reason==='planned-and-due'?'Planned & due':reason==='planned'?'Planned':'Due'}</small></button><ArrowRight size={15} aria-hidden="true"/></div>)}{homeAgenda.length>5&&<p className="home-agenda-more">+{homeAgenda.length-5} additional items</p>}</div>:<p className="home-side-empty study-inline-empty"><CalendarDays size={18} aria-hidden="true"/> No tasks planned or due on this day.</p>}<button type="button" className="home-panel-link home-agenda-full" onClick={()=>openCalendarDate(homeSelectedDate)}>Open full day <ArrowRight size={14}/></button></div>}</section>
+                <section className="home-panel home-deadlines" aria-labelledby="home-deadlines-title"><div className="home-widget-heading"><span className="home-heading-icon"><CalendarDays size={20}/></span><h2 id="home-deadlines-title">Upcoming deadlines</h2><button className="home-panel-link" onClick={showUpcomingTasks}>View all <ArrowRight size={14}/></button></div>{upcoming.slice(0,3).map(i=><button className="home-deadline" key={i.id} onClick={()=>openDeadlineDestination(i)}><span className="home-deadline-date"><strong>{i.due_date!.slice(8,10)}</strong>{new Intl.DateTimeFormat('en-GB',{month:'short'}).format(new Date(i.due_date!+'T12:00:00'))}</span><span className="home-deadline-info"><strong>{i.title}</strong><small>{data.courses.find(c=>c.id===i.course_id)?.code||'Personal'}{i.week_number?` · Week ${i.week_number}`:''}</small></span><span className="home-days-away">{nextDeadlineDays(today,i.due_date!)===0?'Today':`${nextDeadlineDays(today,i.due_date!)}d`}</span></button>)}{!upcoming.length&&<p className="home-side-empty">No upcoming deadlines.</p>}</section>
+                <section className="home-panel home-week-strip" aria-labelledby="home-calendar-title"><div className="home-widget-heading"><span className="home-heading-icon"><CalendarDays size={20}/></span><h2 id="home-calendar-title">Next 7 days</h2><button className="home-panel-link" onClick={()=>openCalendarDate(homeSelectedDate||today)}>Full calendar <ArrowRight size={14}/></button></div><div className="home-day-grid">{calendarDays.map((day,index)=><button key={day.date} className={'home-day'+(index===0?' current':'')+(homeSelectedDate===day.date?' selected':'')} aria-label={`Show ${day.weekday} ${day.day} tasks inline${day.count?`, ${day.count} scheduled items`:''}`} aria-pressed={homeSelectedDate===day.date} aria-controls={homeSelectedDate?'home-day-agenda':undefined} title={`${day.count} planned/due items`} onClick={()=>toggleHomeAgenda(day.date)}><span>{day.weekday}</span><strong>{day.day}</strong><span className={'home-day-dot'+(day.count?' has-work':'')}/></button>)}</div>{homeSelectedDate&&<div id="home-day-agenda" className="home-inline-agenda"><div className="home-inline-agenda-header"><div><strong>{new Intl.DateTimeFormat('en-GB',{weekday:'long',day:'numeric',month:'short'}).format(new Date(homeSelectedDate+'T12:00:00'))}</strong><span>{homeAgenda.length} {homeAgenda.length===1?'item':'items'}</span></div><button type="button" aria-label="Close day details" className="home-agenda-close" onClick={()=>setHomeSelectedDate(null)}><X size={16}/></button></div>{homeAgenda.length?<div className="home-inline-agenda-list">{homeAgenda.slice(0,5).map(({item,reason})=><div className="home-inline-agenda-item" key={item.id}><input type="checkbox" checked={item.done} disabled={busy} aria-label={`Complete ${item.title}`} onChange={()=>toggle(item)}/><button type="button" className="home-agenda-item-main" onClick={()=>openDeadlineDestination(item)}><strong>{item.title}</strong><small>{data.courses.find(c=>c.id===item.course_id)?.code||'Personal'}{item.week_number?` · Week ${item.week_number}`:''} · {reason==='planned-and-due'?'Planned & due':reason==='planned'?'Planned':'Due'}</small></button><ArrowRight size={15} aria-hidden="true"/></div>)}{homeAgenda.length>5&&<p className="home-agenda-more">+{homeAgenda.length-5} additional items</p>}</div>:<p className="home-side-empty">No tasks planned or due on this day.</p>}<button type="button" className="home-panel-link home-agenda-full" onClick={()=>openCalendarDate(homeSelectedDate)}>Open full day <ArrowRight size={14}/></button></div>}</section>
               </div>
             </div>
           </div>}
@@ -778,7 +766,7 @@ export default function Page() {
             </Card><div className="stack"><Card><SectionTitle title="Your focus statistics"/><div className="focus-stat"><span>This week</span><strong>{(weekSeconds/3600).toFixed(1)} hours</strong></div><div className="focus-stat"><span>All time</span><strong>{(totalSeconds/3600).toFixed(1)} hours</strong></div><div className="focus-stat"><span>Completed sessions</span><strong>{data.focus_stats?.completed_sessions ?? data.sessions.filter(s=>s.status==='finished').length}</strong></div></Card>
               <Card className="focus-week-goal"><SectionTitle title="Weekly focus goal" aside={<Badge>{(weekSeconds/3600).toFixed(1)} / {weeklyGoal} h</Badge>}/>
                 <div className="home-progress-track" role="progressbar" aria-label="Weekly focus goal progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={weekPct}><div style={{width:`${weekPct}%`}}/></div>
-                <div className="focus-week-goal-footer"><span><AnimatedPercent value={weekPct}/> of your weekly goal</span><label>Target <input type="number" min={1} max={80} aria-label="Weekly focus target in hours" value={weeklyGoal} onChange={e=>{const n=Math.max(1,Math.min(80,Number(e.target.value)||1));setWeeklyGoal(n);localStorage.setItem('studyhub-focus-goal',String(n));}}/> h/week</label></div>
+                <div className="focus-week-goal-footer"><span>{weekPct}% of your weekly goal</span><label>Target <input type="number" min={1} max={80} aria-label="Weekly focus target in hours" value={weeklyGoal} onChange={e=>{const n=Math.max(1,Math.min(80,Number(e.target.value)||1));setWeeklyGoal(n);localStorage.setItem('studyhub-focus-goal',String(n));}}/> h/week</label></div>
                 <small>Target preference is stored on this device.</small>
               </Card><Card><SectionTitle title="Recent sessions"/>{data.sessions.filter(s=>s.status==='finished').sort((a,b)=>(b.ended_at||0)-(a.ended_at||0)).slice(0,5).map(s=><div className="session-row" key={s.id}><span><Check size={15}/></span><div><strong>{data.items.find(i=>i.id===s.item_id)?.title||'Focus session'}</strong><small>{new Date(s.started_at*1000).toLocaleDateString()} · {Math.round((s.focus_seconds||0)/60)} min</small></div></div>)}{!data.sessions.some(s=>s.status==='finished')&&<p className="muted">Your finished sessions will appear here.</p>}</Card></div></div>
 

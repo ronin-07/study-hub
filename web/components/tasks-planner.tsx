@@ -195,7 +195,7 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,run,onToggle,
         <button className="planner-v05-inbox-toggle" onClick={()=>setShowInbox(!showInbox)}>{showInbox?'Hide':'Show'} unscheduled tasks ({inbox.length})</button>
         {showInbox&&<div className="planner-v05-inbox">{inbox.length?inbox.map(i=>showRow(i,true)):<p className="planner-v05-hint">Your inbox is clear.</p>}</div>}
       </div></div>:<div className="planner-v05-list"><div className="planner-v05-list-heading"><h3>{mode==='today'?"Today's priorities":mode==='upcoming'?'Upcoming & unscheduled':'Completed tasks'}</h3><span>{listed.length} tasks</span></div>
-        {listed.length?listed.map(i=>showRow(i)):<EmptyState icon={<ListTodo size={24}/>} title="All caught up" photo={mode==='completed'?'library':'desk'} detail={mode==='completed'?'Complete a task to see it here.':'Choose a study assignment or add a personal task to start planning.'}/>}
+        {listed.length?listed.map(i=>showRow(i)):<EmptyState icon={<ListTodo size={24}/>} title="All caught up" detail={mode==='completed'?'Complete a task to see it here.':'Choose a study assignment or add a personal task to start planning.'}/>}
       </div>}
     </Card>
     {formVisible&&<div className="planner-v05-overlay" role="presentation" onMouseDown={e=>{if(e.target===e.currentTarget&&!busy)closeForm();}}>
