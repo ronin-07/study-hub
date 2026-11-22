@@ -42,7 +42,7 @@ test('Study navigation nests course links beneath independently collapsible seme
   assert.match(planner,/setOpenSemesterKeys/);
   assert.match(planner,/studyhub-expanded-semesters/);
   assert.match(planner,/const \[semestersExpanded, setSemestersExpanded\] = useState\(true\)/);
+  assert.match(planner,/const \[coursesExpanded, setCoursesExpanded\] = useState\(true\)/);
   assert.doesNotMatch(planner,/className="planner-course-list"/);
   assert.match(planner,/Archived courses/);
-  assert.doesNotMatch(planner,/planner-course-section/);
 });
