@@ -31,6 +31,8 @@ test('Home deadline links open course/week, or highlight a personal task, withou
  assert.match(page, /landingItem=\{courseLandingItem\}/);
  assert.match(page, /taskJump=\{taskJump\}/);
  assert.match(planner, /setHighlightedTask\(target\.id\)/);
+ assert.match(planner, /const \[highlightedTask,setHighlightedTask\]=useState<string\|null>\(null\)/);
+ assert.match(planner, /const highlightedRef=useRef<HTMLDivElement\|null>\(null\)/);
  assert.doesNotMatch(planner, /if\(target\)openEdit\(target\)/);
 });
 

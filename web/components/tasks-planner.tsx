@@ -44,6 +44,9 @@ export function TasksPlanner({items,courses,user,busy,run,onToggle,onFocus,onOpe
   const [editing,setEditing]=useState<Item|null>(null);
   const [hoverDay,setHoverDay]=useState('');
   const [showInbox,setShowInbox]=useState(true);
+  // Personal-deadline deep links highlight a task without opening its edit form.
+  const [highlightedTask,setHighlightedTask]=useState<string|null>(null);
+  const highlightedRef=useRef<HTMLDivElement|null>(null);
   const availableCourses=courses.filter(c=>!c.archived);
   const filtered=items.filter(i=>selectedCourse==='all'||(selectedCourse==='personal'?!i.course_id:i.course_id===selectedCourse));
   const open=filtered.filter(i=>!i.done);
