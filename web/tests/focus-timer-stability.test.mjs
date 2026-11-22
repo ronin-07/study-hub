@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {
-  startFocusClock, recoverFocusClock, focusClockSeconds, pauseFocusClock,
+  startFocusClock, recoverFocusClock, focusClockSeconds, focusClockDisplaySeconds, pauseFocusClock,
   resumeFocusClock, rekeyFocusClock, focusClockProgress,
 } from '../lib/focus-timing.ts';
 
@@ -38,10 +38,12 @@ test('Resume starts a fresh full second, without an immediate +1 or a backward j
   assert.equal(focusClockSeconds(resumed,1_052_760,52_760),23);
 });
 
-test('Progress ring follows elapsed time and freezes in paused state',()=>{
+test('Countdown ring drains while Stopwatch ring fills, and both freeze when paused',()=>{
   const clock=startFocusClock('s',5_000,100);
-  assert.equal(focusClockProgress(clock,'25',5_000,100),0);
+  assert.equal(focusClockProgress(clock,'25',5_000,100),1);
   assert.equal(focusClockProgress(clock,'25',755_000,750_100),0.5);
+  assert.equal(focusClockProgress(clock,'25',1_505_000,1_500_100),0);
+  assert.equal(focusClockProgress(clock,'25',1_605_000,1_600_100),0);
   assert.equal(focusClockProgress(clock,'free',35_000,30_100),0.5);
   const paused=pauseFocusClock(clock,35_000,30_100);
   assert.equal(focusClockProgress(paused,'free',900_000,999_000),0.5);
@@ -70,4 +72,43 @@ test('Topbar and dial share one anchor; local API responses cannot rebase it',()
   assert.match(clock,/const listeners = new Set/);
   assert.match(css,/\.timer-dial\.focus-dial-progress::before/);
   assert.match(css,/--focus-progress/);
+});
+
+
+test('Timed modes count down from the full target and never display negative time',()=>{
+  const clock=startFocusClock('s',100_960,1_000);
+  assert.equal(focusClockDisplaySeconds(clock,'25',100_960,1_000),1500);
+  assert.equal(focusClockDisplaySeconds(clock,'50',100_960,1_000),3000);
+  assert.equal(focusClockDisplaySeconds(clock,'90',100_960,1_000),5400);
+  assert.equal(focusClockDisplaySeconds(clock,'50',101_959,1_999),3000);
+  assert.equal(focusClockDisplaySeconds(clock,'50',101_960,2_000),2999);
+  assert.equal(focusClockDisplaySeconds(clock,'50',3_100_960,3_001_000),0);
+  assert.equal(focusClockDisplaySeconds(clock,'50',3_200_960,3_101_000),0);
+  // Zero on screen does not cap the true elapsed time used by the backend.
+  assert.equal(focusClockSeconds(clock,3_200_960,3_101_000),3100);
+});
+
+test('Count-up Stopwatch still starts at zero and never switches to a countdown',()=>{
+  const clock=startFocusClock('s',100_960,1_000);
+  assert.equal(focusClockDisplaySeconds(clock,'free',100_960,1_000),0);
+  assert.equal(focusClockDisplaySeconds(clock,'free',121_960,22_000),21);
+  assert.equal(focusClockDisplaySeconds(clock,'free',131_960,32_000),31);
+});
+
+test('Pausing a countdown freezes it, and resuming has no one-second jump',()=>{
+  const clock=startFocusClock('s',1_000_000,1_000);
+  const paused=pauseFocusClock(clock,1_021_780,22_780);
+  assert.equal(focusClockDisplaySeconds(paused,'50',1_050_000,50_000),2979);
+  assert.equal(focusClockProgress(paused,'25',1_050_000,50_000),1-21/1500);
+  const resumed=resumeFocusClock(paused,1_050_760,50_760);
+  assert.equal(focusClockDisplaySeconds(resumed,'50',1_051_759,51_759),2979);
+  assert.equal(focusClockDisplaySeconds(resumed,'50',1_051_760,51_760),2978);
+});
+
+test('Header and circular Focus dial both use the same countdown function',()=>{
+  const source=readFileSync(new URL('../components/focus-elapsed.tsx',import.meta.url),'utf8');
+  assert.match(source,/duration\(focusClockDisplaySeconds\(clock, session\.mode, wallMs, monoMs\)\)/);
+  assert.match(source,/const displaySeconds = focusClockDisplaySeconds\(clock, session\.mode, wallMs, monoMs\)/);
+  assert.match(source,/duration\(displaySeconds\)/);
+  assert.match(source,/targetReached/);
 });

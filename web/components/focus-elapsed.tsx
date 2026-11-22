@@ -3,7 +3,7 @@
 import { memo, useMemo, useSyncExternalStore, type CSSProperties } from 'react';
 import { type FocusSession, duration } from '@/lib/types';
 import {
-  type FocusClockAnchor, recoverFocusClock, focusClockSeconds, focusClockProgress,
+  type FocusClockAnchor, recoverFocusClock, focusClockSeconds, focusClockDisplaySeconds, focusClockProgress,
 } from '@/lib/focus-timing';
 
 function monotonicNow(): number {
@@ -59,7 +59,7 @@ export const FocusElapsed = memo(function FocusElapsed({session, anchor}: {
   session: FocusSession; anchor: FocusClockAnchor | null;
 }) {
   const {clock, wallMs, monoMs} = useClockSample(session, anchor);
-  return <>{duration(focusClockSeconds(clock, wallMs, monoMs))}</>;
+  return <>{duration(focusClockDisplaySeconds(clock, session.mode, wallMs, monoMs))}</>;
 });
 
 export const FocusDial = memo(function FocusDial({session, anchor}: {
@@ -67,12 +67,14 @@ export const FocusDial = memo(function FocusDial({session, anchor}: {
 }) {
   const {clock, wallMs, monoMs} = useClockSample(session, anchor);
   const elapsedSeconds = focusClockSeconds(clock, wallMs, monoMs);
+  const displaySeconds = focusClockDisplaySeconds(clock, session.mode, wallMs, monoMs);
+  const targetReached = session.mode !== 'free' && elapsedSeconds >= Number(session.mode) * 60;
   const progress = focusClockProgress(clock, session.mode, wallMs, monoMs);
   const style = {'--focus-progress': `${(progress * 100).toFixed(2)}%`} as CSSProperties;
   return <div className="timer-dial focus-dial-progress" style={style}
-    role="timer" aria-label={`Focus timer ${clock.status}, ${duration(elapsedSeconds)}`}>
-    <span className="dial-label">{clock.status==='paused'?'PAUSED':'FOCUSING'}</span>
-    <strong>{duration(elapsedSeconds)}</strong>
-    <span className="dial-sub">{session.mode==='free'?'Count-up session':`Target: ${session.mode} minutes`}</span>
+    role="timer" aria-label={`Focus timer ${clock.status}, ${duration(displaySeconds)} ${session.mode === 'free' ? 'elapsed' : 'remaining'}`} >
+    <span className="dial-label">{clock.status==='paused'?'PAUSED':targetReached?'TARGET REACHED':'FOCUSING'}</span>
+    <strong>{duration(displaySeconds)}</strong>
+    <span className="dial-sub">{session.mode==='free'?'Count-up session':targetReached?'Target reached · finish when ready':'Time remaining'}</span>
   </div>;
 });

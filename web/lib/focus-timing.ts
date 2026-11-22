@@ -69,6 +69,19 @@ export function focusClockSeconds(clock: FocusClockAnchor, wallMs: number, monoM
   return Math.floor(focusClockElapsedMs(clock, wallMs, monoMs) / 1000);
 }
 
+/**
+ * Timed focus sessions show time REMAINING, not accumulated study time.
+ * Stopwatch sessions continue counting up. This is presentation only:
+ * saved focus_seconds and statistics still use actual elapsed focus time.
+ * A timed goal never automatically ends a session at zero.
+ */
+export function focusClockDisplaySeconds(
+  clock: FocusClockAnchor, mode: FocusSession['mode'], wallMs: number, monoMs: number,
+): number {
+  const elapsedSeconds = focusClockSeconds(clock, wallMs, monoMs);
+  return mode === 'free' ? elapsedSeconds : Math.max(0, Number(mode) * 60 - elapsedSeconds);
+}
+
 /** Freeze the full second that was visible when the user clicked Pause/End. */
 export function pauseFocusClock(clock: FocusClockAnchor, wallMs: number, monoMs: number): FocusClockAnchor {
   if (clock.status === 'paused') return clock;
@@ -89,9 +102,9 @@ export function rekeyFocusClock(clock: FocusClockAnchor, sessionId: string): Foc
   return { ...clock, sessionId };
 }
 
-/** Dynamic ring: a timed session fills once; stopwatch loops each minute. */
+/** Countdown ring drains to zero; stopwatch ring fills and loops each minute. */
 export function focusClockProgress(clock: FocusClockAnchor, mode: FocusSession['mode'], wallMs: number, monoMs: number): number {
   const milliseconds = focusClockElapsedMs(clock, wallMs, monoMs);
   if (mode === 'free') return (milliseconds % 60_000) / 60_000;
-  return Math.min(1, milliseconds / (Number(mode) * 60_000));
+  return Math.max(0, 1 - milliseconds / (Number(mode) * 60_000));
 }
