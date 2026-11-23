@@ -27,7 +27,7 @@ test('mobile header stays in normal flow and removes the duplicate iPhone clock'
 test('desktop sidebar can collapse, expand, resize and restore saved preferences',()=>{
   assert.match(page,/studyhub-sidebar-collapsed/);
   assert.match(page,/studyhub-sidebar-width/);
-  assert.match(page,/sidebarCollapsed\?'Expand sidebar':'Collapse sidebar to icons'/);
+  assert.match(page,/sidebarCollapsed\?'Expand sidebar':'Collapse sidebar'/);
   assert.match(page,/role="separator" aria-label="Resize sidebar"/);
   assert.match(page,/onPointerDown=\{onSidebarPointerDown\}/);
   assert.match(page,/onKeyDown=\{onSidebarResizeKey\}/);
@@ -35,5 +35,5 @@ test('desktop sidebar can collapse, expand, resize and restore saved preferences
   assert.match(page,/Math\.max\(205,Math\.min\(340/);
   assert.match(css,/\.app-shell \.sidebar\.is-collapsed\{width:76px/);
   assert.match(css,/\.sidebar\.is-collapsed \.nav-text/);
-  assert.match(page,/aria-label=\{t\.label\}/);
+  assert.match(page,/incomplete tasks`:t\.label/);
 });

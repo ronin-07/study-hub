@@ -38,15 +38,15 @@ test('Resume starts a fresh full second, without an immediate +1 or a backward j
   assert.equal(focusClockSeconds(resumed,1_052_760,52_760),23);
 });
 
-test('Countdown ring drains while Stopwatch ring fills, and both freeze when paused',()=>{
+test('Countdown ring drains; Stopwatch has no cyclic progress; paused time stays frozen',()=>{
   const clock=startFocusClock('s',5_000,100);
   assert.equal(focusClockProgress(clock,'25',5_000,100),1);
   assert.equal(focusClockProgress(clock,'25',755_000,750_100),0.5);
   assert.equal(focusClockProgress(clock,'25',1_505_000,1_500_100),0);
   assert.equal(focusClockProgress(clock,'25',1_605_000,1_600_100),0);
-  assert.equal(focusClockProgress(clock,'free',35_000,30_100),0.5);
+  assert.equal(focusClockProgress(clock,'free',35_000,30_100),0);
   const paused=pauseFocusClock(clock,35_000,30_100);
-  assert.equal(focusClockProgress(paused,'free',900_000,999_000),0.5);
+  assert.equal(focusClockProgress(paused,'free',900_000,999_000),0);
 });
 
 test('Suspended computer catches up and clock correction backwards does not decrease duration',()=>{
@@ -71,6 +71,8 @@ test('Topbar and dial share one anchor; local API responses cannot rebase it',()
   assert.match(clock,/useSyncExternalStore/);
   assert.match(clock,/const listeners = new Set/);
   assert.match(css,/\.timer-dial\.focus-dial-progress::before/);
+  assert.match(clock,/focus-dial-stopwatch/);
+  assert.match(css,/\.timer-dial\.focus-dial-stopwatch::before/);
   assert.match(css,/--focus-progress/);
 });
 

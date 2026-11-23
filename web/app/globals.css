@@ -1780,3 +1780,128 @@ html[data-study-hub-theme="light"]{color-scheme:light}
 @media(max-width:580px){.resources-index-toolbar{align-items:stretch}.resources-search{flex-basis:100%}.resources-source-actions .btn{flex:1}.resources-filter-label{flex:1}.resources-filter-label select{flex:1}.resources-index-row{padding-right:5px}}
 @media(prefers-reduced-motion:reduce){.resources-index-row{transition:none}}
 @media(max-width:900px){.resources-link-column.is-empty{display:none}.resources-link-card{scroll-margin-top:20px}}
+
+/* v0.5.2 Polish 4 — final navigation, focus, and resource workspace consistency.
+   These are presentation-only refinements; existing records and timer storage stay intact. */
+.app-shell .sidebar .nav-btn:not(.current){color:#d0bacb}
+.app-shell .sidebar .nav-btn:not(.current):hover{color:#fff8fd}
+.app-shell .sidebar .nav-btn:focus-visible,
+.app-shell .sidebar .sidebar-collapse-button:focus-visible,
+.app-shell .sidebar .sidebar-profile-copy:focus-visible{
+  outline:2px solid #f2b7a1!important;outline-offset:3px;border-radius:10px;
+}
+.sidebar-profile-copy{min-width:0;outline-offset:3px}
+.sidebar-profile-copy strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.app-shell .sidebar .sidebar-collapse-button{min-width:34px;min-height:36px}
+.app-shell .breadcrumb{letter-spacing:.01em}
+
+/* Only fixed-duration sessions show percentage. An open-ended Stopwatch uses a
+   continuous, non-resetting ring; its visual effect is unrelated to elapsed time. */
+.timer-dial.focus-dial-stopwatch::before{
+  background:conic-gradient(from -40deg,#bc88b8 0%,#e7acbc 46%,#f0b69d 75%,#bc88b8 100%);
+}
+.timer-dial.focus-dial-stopwatch.is-running{
+  animation:focus-stopwatch-ambient 7s ease-in-out infinite;
+}
+@keyframes focus-stopwatch-ambient{
+  0%,100%{box-shadow:0 12px 50px rgba(121,75,118,.12)}
+  50%{box-shadow:0 12px 60px rgba(211,142,180,.25)}
+}
+.timer-dial.focus-dial-stopwatch:not(.is-running){animation:none}
+
+/* The dial, numerals, and controls should grow with the actual Focus card,
+   not use a tiny fixed desktop diameter on a 1440p monitor. */
+.focus-card{container-type:inline-size;container-name:focus-card}
+@container focus-card (min-width:540px){
+  .focus-card .timer-dial{width:clamp(284px,42cqw,350px);height:auto;aspect-ratio:1;margin-block:34px 30px;gap:12px}
+  .focus-card .timer-dial strong{font-size:clamp(2.05rem,5cqw,2.8rem)}
+  .focus-card .dial-label{font-size:.7rem}
+  .focus-card .dial-sub{font-size:.82rem}
+  .focus-card .focus-context{gap:13px;margin-bottom:22px}
+  .focus-card .focus-context strong{font-size:1rem}
+  .focus-card .focus-settings{width:min(100%,490px);max-width:none;gap:15px;margin-bottom:24px}
+  .focus-card .focus-modes button{padding:11px 16px;font-size:.81rem}
+  .focus-card .focus-buttons{gap:13px}
+  .focus-card .focus-buttons .btn{min-width:155px;padding-block:12px;font-size:.83rem}
+  .focus-card .focus-tip{font-size:.78rem;line-height:1.65;margin-top:23px;max-width:460px}
+}
+@media(min-width:1550px) and (min-height:850px){
+  .focus-layout>.focus-card{min-height:min(700px,70dvh);display:flex;flex-direction:column;justify-content:center}
+}
+@media(max-width:810px){
+  .focus-card{container-type:normal}
+  .focus-layout>.focus-card{min-height:0;display:block}
+}
+
+/* One rounded, keyboard-visible focus treatment around each counted-time field.
+   Hide native number steppers without breaking arrow-key numeric editing. */
+.focus-duration-fields{row-gap:12px;margin-top:5px}
+.focus-duration-fields label{gap:7px;min-height:89px;padding:14px 12px 12px;transition:border-color .15s,box-shadow .15s}
+.focus-duration-fields label:focus-within{border-color:#dda1bb;box-shadow:0 0 0 3px rgba(221,161,187,.22)}
+.focus-duration-fields input,
+.focus-duration-fields input:focus,
+.focus-duration-fields input:focus-visible{
+  display:block;width:100%;min-height:32px;padding:4px 6px;border:0!important;border-radius:7px;
+  outline:0!important;outline-offset:0!important;box-shadow:none!important;
+  appearance:textfield;-moz-appearance:textfield;background:transparent;
+}
+.focus-duration-fields input::-webkit-outer-spin-button,
+.focus-duration-fields input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.focus-review-help{font-size:.77rem!important;line-height:1.6!important;color:var(--muted);margin:17px 2px 22px!important}
+.focus-review-dialog .dialog-actions{margin-top:0;gap:10px}
+.focus-review-dialog{max-height:min(88dvh,780px);overflow-y:auto}
+@media(max-width:700px){
+  .focus-duration-fields label{padding:12px 7px;min-height:82px}
+  .focus-review-help{margin-block:17px 20px!important}
+}
+
+/* The Resources search owns its focus ring; the nested browser input does not. */
+.app-shell .resources-search{gap:12px;padding-inline:15px;transition:border-color .15s,box-shadow .15s}
+.app-shell .resources-search:focus-within{
+  outline:0!important;border-color:#daa0b8;box-shadow:0 0 0 3px rgba(218,160,184,.24)
+}
+.app-shell .resources-search input,
+.app-shell .resources-search input:focus,
+.app-shell .resources-search input:focus-visible{
+  outline:0!important;outline-offset:0!important;box-shadow:none!important;border:0!important;
+  background:transparent;padding:0;font-size:.81rem
+}
+.app-shell .resources-search svg{flex-shrink:0;pointer-events:none}
+.resources-link-help{font-size:.73rem;line-height:1.6;color:var(--muted);margin:15px 2px 3px}
+.resources-link-card .resources-link-help{margin-top:16px}
+.resources-link-card .btn.full{min-height:44px}
+
+/* Search and filters remain in place while only the PDF rows scroll. The
+   right-hand linking column sticks for the full resource workspace height. */
+@media(min-width:901px){
+  .resources-link-column{position:sticky;top:82px;align-self:start;min-width:0}
+  .resources-link-card{position:static;top:auto;max-height:calc(100dvh - 96px);overflow-y:auto}
+  .resources-index-rows{
+    max-height:clamp(350px,59dvh,690px);overflow-y:auto;overscroll-behavior-y:auto;
+    padding:4px 9px 8px 3px;scrollbar-width:thin;scrollbar-color:#96768f transparent;
+  }
+  .resources-index-rows:focus-visible{
+    outline:2px solid #e0a6b6!important;outline-offset:2px;border-radius:12px;
+  }
+  .resources-index-row{padding-left:3px}
+  .resources-index-card .resources-index-toolbar{margin-bottom:12px}
+}
+@media(max-width:900px){
+  /* Keep the established single-column selected-file flow on narrow screens. */
+  .resources-link-column{position:static;top:auto}
+  .resources-index-rows{max-height:none;overflow:visible}
+  .resources-link-card{max-height:none;overflow:visible}
+}
+@media(prefers-reduced-motion:reduce){
+  .timer-dial.focus-dial-stopwatch.is-running{animation:none!important}
+  .focus-duration-fields label,.app-shell .resources-search{transition:none}
+}
+/* Show the full name on keyboard focus as well as hover (not just a mouse tooltip). */
+.sidebar-profile-copy{position:relative}
+.sidebar-profile-copy:is(:hover,:focus-visible)::after{
+  content:attr(data-full-name);position:absolute;left:0;bottom:calc(100% + 9px);z-index:40;
+  min-width:max-content;max-width:min(300px,65vw);width:max-content;
+  padding:8px 10px;border:1px solid #8e6f87;border-radius:9px;
+  background:#3c2a3b;color:#fff5fa;box-shadow:0 9px 24px #110d16a6;
+  font-size:.74rem;font-weight:650;white-space:normal;overflow-wrap:anywhere;
+}

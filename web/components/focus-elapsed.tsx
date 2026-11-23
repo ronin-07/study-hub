@@ -82,12 +82,13 @@ export const FocusDial = memo(function FocusDial({session, anchor}: {
     const timeout = window.setTimeout(() => setTargetCelebrating(false), 2100);
     return () => window.clearTimeout(timeout);
   }, [session.id, targetReached]);
-  const progress = focusClockProgress(clock, session.mode, wallMs, monoMs);
-  const style = {'--focus-progress': `${(progress * 100).toFixed(2)}%`} as CSSProperties;
-  return <div className={'timer-dial focus-dial-progress'+(targetCelebrating?' focus-target-celebrating':'')} style={style}
+  const stopwatch = session.mode === 'free';
+  const progress = stopwatch ? 0 : focusClockProgress(clock, session.mode, wallMs, monoMs);
+  const style = stopwatch ? undefined : {'--focus-progress': `${(progress * 100).toFixed(2)}%`} as CSSProperties;
+  return <div className={'timer-dial '+(stopwatch?'focus-dial-stopwatch':'focus-dial-progress')+(clock.status==='running'?' is-running':'')+(targetCelebrating?' focus-target-celebrating':'')} style={style}
     role="timer" aria-label={`Focus timer ${clock.status}, ${duration(displaySeconds)} ${session.mode === 'free' ? 'elapsed' : 'remaining'}`} >
     <span className="dial-label">{clock.status==='paused'?'PAUSED':targetReached?'TARGET REACHED':'FOCUSING'}</span>
     <strong>{duration(displaySeconds)}</strong>
-    <span className="dial-sub">{session.mode==='free'?'Count-up session':targetReached?'Target reached · finish when ready':'Time remaining'}</span>
+    <span className="dial-sub">{session.mode==='free'?'Elapsed time':targetReached?'Target reached · finish when ready':'Time remaining'}</span>
   </div>;
 });

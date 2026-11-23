@@ -102,9 +102,9 @@ export function rekeyFocusClock(clock: FocusClockAnchor, sessionId: string): Foc
   return { ...clock, sessionId };
 }
 
-/** Countdown ring drains to zero; stopwatch ring fills and loops each minute. */
+/** Countdown ring drains to zero. Stopwatch has no bounded progress. */
 export function focusClockProgress(clock: FocusClockAnchor, mode: FocusSession['mode'], wallMs: number, monoMs: number): number {
   const milliseconds = focusClockElapsedMs(clock, wallMs, monoMs);
-  if (mode === 'free') return (milliseconds % 60_000) / 60_000;
+  if (mode === 'free') return 0; // No minute-based wraparound for open-ended sessions.
   return Math.max(0, 1 - milliseconds / (Number(mode) * 60_000));
 }

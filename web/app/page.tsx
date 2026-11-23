@@ -40,7 +40,7 @@ import { type DriveEntry, type DriveList, type FocusSession, type Item,
 
 type DriveStatus = { connected: boolean; configured: boolean };
 const empty: Snapshot = {courses:[], weeks:[], items:[], resources:[], sessions:[], semesters:[]};
-const pageNames: Record<Tab,string> = {today:'Today', courses:'Study Planner', tasks:'Tasks', calendar:'Calendar', focus:'Focus', library:'Resource Library'};
+const pageNames: Record<Tab,string> = {today:'Home', courses:'Study', tasks:'Tasks', calendar:'Calendar', focus:'Focus', library:'Resources'};
 const tabs: {id:Tab; label:string; icon:typeof Home}[] = [
   {id:'today',label:'Home',icon:Home},{id:'courses',label:'Study',icon:BookOpen},
   {id:'tasks',label:'Tasks',icon:ListTodo},{id:'calendar',label:'Calendar',icon:CalendarDays},
@@ -845,15 +845,15 @@ export default function Page() {
     <aside className={'sidebar'+(sidebarCollapsed?' is-collapsed':'')} style={sidebarWidth===null?undefined:{'--sidebar-user-width':`${sidebarWidth}px`} as CSSProperties}>
       <div className="sidebar-header">
         <div className="brand"><span className="brand-mark"><BookOpen size={21}/></span><div className="sidebar-brand-copy"><strong>Study Hub</strong><small>DTU</small></div></div>
-        <button type="button" className="sidebar-collapse-button" aria-label={sidebarCollapsed?'Expand sidebar':'Collapse sidebar to icons'} title={sidebarCollapsed?'Expand sidebar':'Collapse sidebar'} aria-expanded={!sidebarCollapsed} onClick={toggleSidebar}>{sidebarCollapsed?<PanelLeftOpen size={19}/>:<PanelLeftClose size={19}/>}</button>
+        <button type="button" className="sidebar-collapse-button" aria-label={sidebarCollapsed?'Expand sidebar':'Collapse sidebar'} title={sidebarCollapsed?'Expand sidebar':'Collapse sidebar'} aria-expanded={!sidebarCollapsed} onClick={toggleSidebar}>{sidebarCollapsed?<PanelLeftOpen size={19}/>:<PanelLeftClose size={19}/>}</button>
       </div>
       <div className="nav-label">MY WORKSPACE</div>
-      <nav className="side-nav" aria-label="Main navigation">{tabs.map(t=><button key={t.id} type="button" title={sidebarCollapsed?t.label:undefined} aria-label={t.label} onClick={()=>navigate(t.id)} className={'nav-btn '+(tab===t.id?'current':'')} aria-current={tab===t.id?"page":undefined}><t.icon size={18}/><span className="nav-text">{t.label}</span>{t.id==='tasks'&&openTasks.length>0&&<span className="nav-count">{openTasks.length}</span>}</button>)}</nav>
+      <nav className="side-nav" aria-label="Main navigation">{tabs.map(t=><button key={t.id} type="button" title={sidebarCollapsed?t.label:undefined} aria-label={t.id==='tasks'&&openTasks.length>0?`${t.label}, ${openTasks.length} incomplete tasks`:t.label} onClick={()=>navigate(t.id)} className={'nav-btn '+(tab===t.id?'current':'')} aria-current={tab===t.id?"page":undefined}><t.icon size={18}/><span className="nav-text">{t.label}</span>{t.id==='tasks'&&openTasks.length>0&&<span className="nav-count" title={`${openTasks.length} incomplete tasks`} aria-hidden="true">{openTasks.length}</span>}</button>)}</nav>
       <div className="sidebar-spacer"/>
       <div className="sidebar-bottom">
         <div className="sidebar-profile">
           <span className="sidebar-profile-avatar" aria-hidden="true">{profileInitials}</span>
-          <div className="sidebar-profile-copy"><strong title={profileName}>{profileName}</strong><small>DTU student</small></div>
+          <div className="sidebar-profile-copy" title={profileName} data-full-name={profileName} aria-label={`Account: ${profileName}`} tabIndex={0}><strong>{profileName}</strong><small>DTU student</small></div>
         </div>
         <div className="sidebar-footer-row">
           <span className="sidebar-account"><span className="live-dot" aria-hidden="true"/>{useFirebase?'Private workspace':'Local development'}</span>
@@ -863,7 +863,7 @@ export default function Page() {
       {!sidebarCollapsed&&<div className="sidebar-resize-handle" role="separator" aria-label="Resize sidebar" aria-orientation="vertical" aria-valuemin={205} aria-valuemax={340} aria-valuenow={sidebarWidth??252} aria-valuetext={sidebarWidth===null?"Default width":`${sidebarWidth} pixels`} tabIndex={0} title="Drag to resize sidebar · double-click to reset" onPointerDown={onSidebarPointerDown} onPointerMove={onSidebarPointerMove} onPointerUp={onSidebarPointerEnd} onPointerCancel={onSidebarPointerEnd} onLostPointerCapture={()=>{sidebarDragRef.current=null;setSidebarResizing(false);}} onKeyDown={onSidebarResizeKey} onDoubleClick={()=>saveSidebarWidth(null)}/>}
     </aside>
     <div className="main-area">
-      <header className={'topbar'+(tab==='today'?' dashboard-topbar':'')}><div className="mobile-topbar-brand"><BookOpen size={19} aria-hidden="true"/><span>Study Hub</span></div><div className="breadcrumb"><Sparkles size={16}/> PERSONAL HUB <span>/</span> <strong>{pageNames[tab]}</strong></div><div className="topbar-right">
+      <header className={'topbar'+(tab==='today'?' dashboard-topbar':'')}><div className="mobile-topbar-brand"><BookOpen size={19} aria-hidden="true"/><span>Study Hub</span></div><div className="breadcrumb"><Sparkles size={16} aria-hidden="true"/> STUDY HUB <span>/</span> <strong>{pageNames[tab]}</strong></div><div className="topbar-right">
           <span className="topbar-datetime"><span className="topbar-date-section"><CalendarDays size={15} aria-hidden="true"/>{dateLabel}</span><span className="topbar-datetime-divider" aria-hidden="true"/><span title="Your local time (24-hour clock)" aria-label={`Local time ${timeLabel}`}><Clock3 size={15} aria-hidden="true"/><time dateTime={clockReady?new Date(now*1000).toISOString():undefined}>{timeLabel}</time></span></span>
           <div className="topbar-focus-wrap" ref={quickFocusRef}>
             {active?<>
@@ -1060,7 +1060,7 @@ export default function Page() {
                     <label className="resources-filter-label">Show <select aria-label="Filter indexed PDFs" value={indexFilter} onChange={e=>{setIndexFilter(e.target.value as typeof indexFilter);setVisibleCount(30);}}><option value="unlinked">Unlinked</option><option value="suggested">Suggested</option><option value="linked">Linked</option><option value="all">All files</option></select></label>
                     <button className="icon-btn" title="Refresh indexed PDFs" onClick={()=>void loadIndex()}><RotateCcw size={16}/></button>
                   </div>
-                  <div className="resources-index-rows">
+                  <div className="resources-index-rows" role="region" tabIndex={0} aria-label="Discovered PDF files">
                     {indexedVisible.slice(0,visibleCount).map(f=><div className={`resources-index-row${selectedPdfId===f.id?' selected':''}`} key={f.id}>
                       <button type="button" className="resources-select-pdf" onClick={()=>choosePdf(f)} aria-pressed={selectedPdfId===f.id}>
                         <span className="resource-icon"><FileText size={18}/></span><span className="resources-file-content"><strong title={f.name}>{f.name}</strong><small title={f.path}>{f.path}{f.modifiedTime?` · Updated ${new Date(f.modifiedTime).toLocaleDateString()}`:''}</small>
@@ -1086,7 +1086,7 @@ export default function Page() {
                     <FormRow label="Material type"><select value={linkKind} onChange={e=>setLinkKind(e.target.value as Resource['kind'])}>{(['handwritten','annotated','slides','textbook','exam_paper','exam_solution','other'] as const).map(k=><option key={k} value={k}>{k==='handwritten'?'Handwritten notes':k==='annotated'?'Annotated slides':k==='slides'?'Original slides':k==='textbook'?'Textbook':k==='exam_paper'?'Previous exam paper':k==='exam_solution'?'Exam solution':'Other'}</option>)}</select></FormRow>
                     {linkScope==='week'&&<FormRow label="Attach to study item (optional)"><select value={linkItem} onChange={e=>setLinkItem(e.target.value)}><option value="">Entire week</option>{data.items.filter(i=>i.course_id===linkCourse&&i.week_number===linkWeek).map(i=><option key={i.id} value={i.id}>{i.title}</option>)}</select></FormRow>}
                     <button className="btn primary full" disabled={!linkCourse||busy||!!linkingFileId} aria-busy={linkingFileId===selectedPdf.id} onClick={()=>linkDriveFile(selectedPdf)}>{linkingFileId===selectedPdf.id?<LoaderCircle size={16} className="spin"/>:<Link2 size={16}/>} {linkingFileId===selectedPdf.id?'Linking…':'Confirm link'}</button>
-                    <p className="muted compact">Nothing is linked automatically. This action links only the selected PDF.</p>
+                    <p className="resources-link-help">Only the selected PDF will be linked. Nothing is linked automatically.</p>
                   </>}
                 </>}
               </Card></div>
@@ -1094,7 +1094,7 @@ export default function Page() {
           </>}
         </>}
       </main>
-      {finishReview&&active&&<div className="dialog-backdrop" role="presentation"><div className="dialog focus-review-dialog" role="dialog" aria-modal="true" aria-label="Review focus session"><button className="dialog-close" onClick={()=>setFinishReview(false)} aria-label="Cancel and keep paused"><X size={18}/></button><h2>Review focus session</h2><p>How much of this session was focused study?</p><div className="focus-review-duration"><span>Recorded active time</span><strong>{duration(reviewLimit)}</strong></div><FocusDurationFields seconds={finishSeconds} maximum={reviewLimit} onChange={setFinishSeconds}/><p className="muted compact">Adjust for idle time if needed. The counted duration cannot exceed {formatFocusDuration(reviewLimit)}.</p><div className="dialog-actions"><button className="btn secondary" onClick={()=>setFinishReview(false)}>Keep paused</button><button className="btn primary" disabled={focusBusy||active.status!=='paused'||!Number.isInteger(Number(finishSeconds))||Number(finishSeconds)<0||Number(finishSeconds)>reviewLimit} onClick={finish}>{focusBusy?(Number(finishSeconds)===0?'Discarding…':'Saving timer…'):(Number(finishSeconds)===0?'Discard empty session':'Save session')}</button></div></div></div>}
+      {finishReview&&active&&<div className="dialog-backdrop" role="presentation"><div className="dialog focus-review-dialog" role="dialog" aria-modal="true" aria-label="Review focus session"><button className="dialog-close" onClick={()=>setFinishReview(false)} aria-label="Cancel and keep paused"><X size={18}/></button><h2>Review focus session</h2><p>How much of this session was focused study?</p><div className="focus-review-duration"><span>Recorded active time</span><strong>{duration(reviewLimit)}</strong></div><FocusDurationFields seconds={finishSeconds} maximum={reviewLimit} onChange={setFinishSeconds}/><p className="focus-review-help">Adjust for idle time if needed. Maximum: {formatFocusDuration(reviewLimit)}.</p><div className="dialog-actions"><button className="btn secondary" onClick={()=>setFinishReview(false)}>Keep paused</button><button className="btn primary" disabled={focusBusy||active.status!=='paused'||!Number.isInteger(Number(finishSeconds))||Number(finishSeconds)<0||Number(finishSeconds)>reviewLimit} onClick={finish}>{focusBusy?(Number(finishSeconds)===0?'Discarding…':'Saving timer…'):(Number(finishSeconds)===0?'Discard empty session':'Save session')}</button></div></div></div>}
     </div>
     <nav className="mobile-nav" aria-label="Mobile navigation">{tabs.map(t=><button key={t.id} className={tab===t.id?'current':''} onClick={()=>navigate(t.id)}><t.icon size={19}/><span>{t.label}</span></button>)}</nav>
     {pdf&&<PdfWorkspace pdf={pdf} items={presentedItems} pendingItems={pendingItems} completingIds={completingIds}
