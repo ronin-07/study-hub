@@ -52,12 +52,14 @@ test('Tasks are concise and Calendar remains date-first with an expandable agend
   assert.match(tasks, /onOpenResource\(i\)/);
 });
 
-test('Home uses minimal course and chapter context while preserving navigation and focus actions', () => {
-  assert.match(home, /home-course-task-reference/);
+test('Home shows course context once and reserves actionable rows for priorities', () => {
+  assert.match(home, /home-course-overview/);
+  assert.match(home, /home-course-workload/);
+  assert.doesNotMatch(home, /className=\"home-course-activities\"/);
   assert.match(home, /activityReference\(i\)/);
   assert.match(home, /onClick=\{\(\)=>openDeadlineDestination\(i\)\}/);
   assert.match(home, /onClick=\{\(\)=>startFrom\(i\)\}/);
-  assert.match(css, /\.home-course-task-reference/);
+  assert.match(css, /\.home-course-overview/);
 });
 
 test('Study typography stays aligned to v0.5.1 scale and mobile actions cannot overlap metadata', () => {

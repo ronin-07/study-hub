@@ -29,10 +29,12 @@ test('activity edit allows chapter, note, kind and visibility updates',()=>{
   assert.match(study,/Include in Tasks and Calendar/);
 });
 
-test('overview retains scrollable full library; exam categories remain in document type only',()=>{
+test('overview previews a bounded library; full resource management stays in dedicated tabs',()=>{
   assert.doesNotMatch(study,/className="planner-study-notes-card"/);
   assert.doesNotMatch(study,/shared\.slice\(0,3\)/);
-  assert.match(study,/planner-study-library-scroll/);
+  assert.match(study,/planner-resource-preview-list/);
+  assert.match(study,/sharedPreview\.map\(resourcePreviewRow\)/);
+  assert.match(study,/shared\.length\?shared\.map\(resourceRow\)/);
   assert.match(study,/exam_paper/);
   assert.match(study,/exam_solution/);
   assert.doesNotMatch(study,/planner-study-library-actions/);
@@ -42,5 +44,5 @@ test('overview retains scrollable full library; exam categories remain in docume
   assert.match(css,/\.planner-study-chapters/);
   assert.match(css,/\.planner-learning-checklist \.planner-study-task>div>small\{[^}]*font-size:\.72rem/);
   assert.match(css,/\.planner-study-chapters\{[^}]*font-size:\.82rem/);
-  assert.match(css,/\.planner-study-library-scroll\{[^}]*overflow-y:auto/);
+  assert.match(css,/\.planner-resource-preview-row\{/);
 });

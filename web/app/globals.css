@@ -1465,3 +1465,34 @@ html[data-study-hub-theme="light"]{color-scheme:light}
   .mobile-nav button{min-width:0;flex:1;padding-inline:3px}
   .app-shell .main-area>.topbar:has(.topbar-focus-session) .mobile-topbar-brand span{display:none}
 }
+
+/* v0.5.1 Overview architecture: the checklist is for work, resource cards are
+   short navigation previews. Full edit/link/unlink controls stay in their tabs. */
+.planner-resource-preview-card{min-width:0}
+.planner-resource-preview-row{display:flex;align-items:center;gap:11px;width:100%;min-width:0;padding:11px 2px;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--text);text-align:left;cursor:pointer}
+.planner-resource-preview-row:hover,.planner-resource-preview-row:focus-visible{background:var(--soft);border-radius:8px;outline-offset:2px}
+.planner-resource-preview-icon{display:grid;place-items:center;flex:0 0 34px;width:34px;height:36px;border-radius:9px;color:var(--teal);background:var(--soft)}
+.planner-resource-preview-copy{display:flex;flex-direction:column;gap:3px;flex:1;min-width:0}
+.planner-resource-preview-copy strong{font-size:.77rem;line-height:1.4;overflow-wrap:anywhere}
+.planner-resource-preview-copy small{font-size:.65rem;line-height:1.35;color:var(--muted);overflow-wrap:anywhere}
+.planner-resource-preview-open{flex-shrink:0;color:var(--muted);opacity:.75}
+.planner-resource-preview-caption,.planner-resource-preview-count{display:block;margin:4px 0 5px;color:var(--muted);font-size:.67rem;line-height:1.45}
+.planner-resource-preview-count{margin-top:9px}
+.planner-classic-overview .planner-study-shared-library-card.planner-resource-preview-card{height:auto;min-height:0}
+.planner-resource-preview-list{min-height:0}
+.planner-study-hero .planner-progress-scope{display:block;margin-bottom:3px;color:#ffe1d0;font-size:.58rem;letter-spacing:.08em;font-weight:780;text-transform:uppercase}
+.planner-activity-pill.checklist-only{opacity:.72}
+
+/* Home course cards summarize courses; Today's priorities owns task actions. */
+.home-course-overview{display:flex;flex-direction:column;align-items:flex-start;gap:7px;min-width:0}
+.home-course-topic{margin:0;color:var(--home-text);font-size:.73rem;line-height:1.4;overflow-wrap:anywhere}
+.home-course-workload{display:inline-flex;border-radius:8px;background:var(--home-plate);padding:5px 9px;color:var(--home-muted);font-size:.65rem;font-weight:700}
+.home-course-grid.course-count-1{grid-auto-columns:min(100%,430px)}
+.home-course-grid.course-count-2{grid-auto-columns:min(calc((100% - 14px)/2),430px)}
+.home-course-tile{min-height:185px}
+.home-course-progress{margin-top:auto}
+@media(max-width:650px){.home-course-grid.course-count-1,.home-course-grid.course-count-2{grid-auto-columns:100%}}
+/* Slightly wider Study workspace on large monitors, without stretching text or buttons. */
+@media(min-width:1800px){.page-content:has(.planner-study-shell){max-width:1780px}.page-content:has(.planner-study-shell) .planner-classic-overview{grid-template-columns:minmax(0,1.35fr) minmax(340px,.85fr)}}
+/* Laptop height: keep the course context, but get to the actual checklist sooner. */
+@media(min-width:811px) and (max-width:1599px){.planner-study-heading{margin-bottom:8px}.planner-study-course-header{padding-bottom:0}.planner-study-hero{margin-top:10px;margin-bottom:9px}.planner-study-tabs{margin-bottom:9px}}

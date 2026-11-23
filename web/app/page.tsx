@@ -900,18 +900,21 @@ export default function Page() {
                 <section className="home-panel home-course-panel" aria-labelledby="home-courses-title">
                   <div className="home-panel-heading"><div className="home-heading-icon"><BookOpen size={21}/></div><div><h2 id="home-courses-title">Today’s study courses</h2></div><span className="home-count-pill">{studyGroups.length} {studyGroups.length===1?'course':'courses'}</span></div>
                   {studyGroups.length?<>
-                    <div className="home-course-grid" ref={courseScrollerRef} onScroll={syncCourseScroll} role="region" aria-label="Today’s study course cards" tabIndex={0}>
+                    <div className={`home-course-grid course-count-${Math.min(studyGroups.length,3)}`} ref={courseScrollerRef} onScroll={syncCourseScroll} role="region" aria-label="Today’s study course cards" tabIndex={0}>
                       {studyGroups.map((group,index)=>{
                         const weekLabel=group.weekNumbers.length===1?`Week ${group.weekNumbers[0]}`:group.weekNumbers.length?`Weeks ${group.weekNumbers.join(', ')}`:'Course tasks';
                         const doneCount=visibleCourseDoneCount(group.doneCount,group.activityCount,group.tasks,completingIds,completedItemIds);
                         const progress=group.activityCount?Math.round(100*doneCount/group.activityCount):0;
+                        const todayCount=group.tasks.filter(item=>item.planned_date===today||item.due_date===today).length;
+                        const primaryWeek=group.weekNumbers.length===1?group.weekNumbers[0]:null;
+                        const weekTopic=primaryWeek!=null?data.weeks.find(w=>w.course_id===group.course.id&&w.number===primaryWeek)?.title:null;
                         return <div key={group.course.id} className={'home-course-tile tile-'+(index%4)}>
                           <div className="home-course-heading"><div className="home-course-icon"><BookOpen size={24}/></div><div className="home-course-title"><h3>{group.course.code} · {group.course.title}</h3><span>{weekLabel}</span></div>{group.overdueCount?<span className="home-overdue-pill">{group.overdueCount} overdue</span>:<span className="home-today-pill">Today</span>}</div>
-                          <div className="home-course-progress"><span>{doneCount} / {group.activityCount} activities · <ProgressValue value={progress}/></span><ProgressTrack className="home-progress-track" identity={group.course.id} label={`${group.course.title} selected week activity progress`} value={progress}/></div>
-                          <div className="home-course-activities">
-                            {group.tasks.slice(0,2).map(i=><div className={'home-course-task task-completion-row'+(isOverdue(i,today)?' late':'')+(completingIds.has(i.id)?' is-completing':'')+(exitingIds.has(i.id)?' is-exiting':'')} key={i.id}><input type="checkbox" aria-label={`Complete ${i.title}`} disabled={busy||pendingItems.has(i.id)||completingIds.has(i.id)} className="task-completion-check" checked={i.done||completingIds.has(i.id)} onChange={()=>toggle(i)}/><button className="home-course-task-title" title={`Open ${i.title} in course`} onClick={()=>openCourse(group.course.id,i.week_number||undefined)}>{i.title}{group.weekNumbers.length>1&&i.week_number&&<small>W{i.week_number}</small>}{activityReference(i)&&<span className="home-course-task-reference">{activityReference(i)}</span>}</button>{isOverdue(i,today)&&<span className="home-overdue-pill compact">Overdue</span>}{i.resource_id&&<button className="home-task-resource" disabled={busy} onClick={()=>openTaskResource(i)} aria-label={`Open resource for ${i.title}`} title="Open linked resource"><BookOpen size={15}/></button>}</div>)}
-                            {group.tasks.length>2&&<button className="home-extra-items" onClick={()=>navigate('tasks')}>+ {group.tasks.length-2} more tasks <ArrowRight size={13}/></button>}
+                          <div className="home-course-overview">
+                            {weekTopic&&<p className="home-course-topic" title={weekTopic}>{weekTopic}</p>}
+                            <span className="home-course-workload">{todayCount>0?`${todayCount} ${todayCount===1?'activity':'activities'} today`:`${group.tasks.length} ${group.tasks.length===1?'activity':'activities'} to catch up on`}</span>
                           </div>
+                          <div className="home-course-progress"><span>{weekLabel} progress · {doneCount}/{group.activityCount} complete · <ProgressValue value={progress}/></span><ProgressTrack className="home-progress-track" identity={group.course.id} label={`${group.course.title} ${weekLabel} activity progress`} value={progress}/></div>
                           <div className="home-course-actions"><button className="home-open-course" onClick={()=>openCourse(group.course.id,group.tasks[0]?.week_number||undefined)}>Open course <ArrowRight size={16}/></button><CourseActionsMenu courseId={group.course.id} courseTitle={group.course.title} onViewTasks={()=>openCourse(group.course.id,undefined,undefined,'tasks')} onFocus={()=>focusOnCourse(group.course.id)} onLibrary={()=>openCourse(group.course.id,undefined,undefined,'course-library')}/></div>
                         </div>;
                       })}

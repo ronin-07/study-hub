@@ -27,18 +27,19 @@ test('topbar session badge reveals session controls and global end-session revie
   assert.match(css,/\.active-focus-menu\{/);
 });
 
-test('approved classic Study layout has hero, direct actions, checklist, week resources and shared library',()=>{
+test('approved classic Study layout retains the checklist and uses quick resource previews',()=>{
   assert.match(study,/planner-study-add-semester/);
   assert.match(study,/Edit semester/);
   assert.match(study,/planner-study-hero/);
   assert.match(study,/planner-hero-progress/);
   assert.match(study,/planner-study-week-toolbar/);
   assert.match(study,/Weekly learning checklist/);
-  assert.match(study,/Link lecture slides/);
-  assert.match(study,/Shared course library/);
+  assert.match(study,/Link week material/);
+  assert.match(study,/This week’s files/);
+  assert.match(study,/Course library/);
   assert.match(study,/Open Course Library/);
   assert.doesNotMatch(study,/className="planner-study-notes-card"/);
-  assert.match(study,/planner-study-library-scroll/);
+  assert.match(study,/planner-resource-preview-list/);
   assert.match(study,/aria-label="Teaching week"/);
   assert.match(study,/planner-study-filters/);
   assert.doesNotMatch(study,/study-create-menu|planner-icon-menu/);

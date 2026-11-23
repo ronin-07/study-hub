@@ -128,6 +128,10 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
   const items = data.items.filter(i => i.course_id === selectedId && i.week_number === weekNumber);
   const shared = data.resources.filter(r => r.course_id === selectedId && (r.week_number === null || r.week_number === undefined));
   const weekResources = data.resources.filter(r => r.course_id === selectedId && r.week_number === weekNumber);
+  // Overview previews are navigational, not a second resource editor. Keep one
+  // underlying resource per file and prioritize reusable references by type.
+  const libraryKinds: ResourceKind[] = ['textbook', 'handwritten', 'annotated', 'exam_paper', 'exam_solution', 'slides', 'other'];
+  const sharedPreview = [...shared].sort((a,b) => libraryKinds.indexOf(a.kind) - libraryKinds.indexOf(b.kind)).slice(0,3);
   const courseItems = data.items.filter(i => i.course_id === selectedId);
   const examItems = courseItems.filter(i => i.week_number === null && i.kind === 'revision');
   // UI1 holds a completed row visibly for 900ms; progress must use the canonical
@@ -306,6 +310,11 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
   };
   const sourceLabel=(r:Resource)=>r.source==='drive'?'Goodnotes / Google Drive':r.source==='dtu'?'DTU Learn':'Web link';
   const resourceKindLabel=(kind:ResourceKind)=>kind==='exam_paper'?'Previous exam paper':kind==='exam_solution'?'Exam solution':kind==='textbook'?'Textbook':kind==='handwritten'?'Handwritten notes':kind==='annotated'?'Annotated slides':kind==='slides'?'Slides':'Other';
+  const resourcePreviewRow = (r:Resource) => <button type="button" className="planner-resource-preview-row" key={r.id} onClick={()=>openResource(r)} title={`Open ${r.title}`}>
+    <span className="planner-resource-preview-icon">{r.kind==='textbook'?<BookOpen size={18}/>:r.kind==='handwritten'?<NotebookPen size={18}/>:<FileText size={18}/>}</span>
+    <span className="planner-resource-preview-copy"><strong>{r.title}</strong><small>{resourceKindLabel(r.kind)} · {sourceLabel(r)}</small></span>
+    {r.source==='drive'?<BookOpen size={15} className="planner-resource-preview-open" aria-hidden="true"/>:<ExternalLink size={14} className="planner-resource-preview-open" aria-hidden="true"/>}
+  </button>;
   const resourceRow = (r:Resource) => <div className="planner-file-row" key={r.id}>
     <div className="planner-file-symbol">{r.kind==='textbook'?<BookOpen size={19}/>:r.kind==='handwritten'?<NotebookPen size={19}/>:<FileText size={19}/>}</div>
     <div className="planner-file-details"><strong>{r.title}</strong><small>{sourceLabel(r)} · {resourceKindLabel(r.kind)}{r.chapter?` · ${r.chapter}`:''}</small></div>
@@ -384,7 +393,7 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
           </div>
           <div className="planner-hero planner-study-hero">
             <div><span>WEEK {weekNumber} · CONTINUE LEARNING</span><h3>{week?.title||`Continue with Week ${weekNumber}`}</h3>{week?.objectives&&<p>{week.objectives}</p>}</div>
-            <div className="planner-hero-progress"><strong><ProgressValue key={selectedId} value={courseCompletion}/></strong><small>{courseDoneCount}/{progressCourseItems.length} complete</small><ProgressTrack key={selectedId} identity={selectedId} value={courseCompletion} label="Course completion"/></div>
+            <div className="planner-hero-progress"><span className="planner-progress-scope">Course progress</span><strong><ProgressValue key={selectedId} value={courseCompletion}/></strong><small>{courseDoneCount}/{progressCourseItems.length} course activities</small><ProgressTrack key={selectedId} identity={selectedId} value={courseCompletion} label="Course completion"/></div>
           </div>
           <div className="planner-week-toolbar planner-study-week-toolbar">{weekPicker}{weekEditButton}</div>
           <nav className="planner-tabbar planner-study-tabs" aria-label="Course workspace sections">{([
@@ -399,7 +408,7 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
                 {!isReadOnly&&<button className="btn secondary small" onClick={()=>openActivityForm()}><Plus size={15}/> Add activity</button>}
               </div></div>
               {progressWeekItems.length>0&&<div className="planner-weekly-progress">
-                <span>Week {weekNumber}: {weekDoneCount}/{progressWeekItems.length} complete · <ProgressValue key={`${selectedId}-${weekNumber}`} value={weekCompletion}/></span>
+                <span>Week {weekNumber} progress · {weekDoneCount}/{progressWeekItems.length} complete · <ProgressValue key={`${selectedId}-${weekNumber}`} value={weekCompletion}/></span>
                 <ProgressTrack key={`${selectedId}-${weekNumber}`} identity={`${selectedId}-${weekNumber}`} value={weekCompletion} label={`Week ${weekNumber} completion`}/>
               </div>}
               {filtersOpen&&<div id="study-activity-filters" className="planner-study-filters" aria-label="Filter weekly activities">{(['all','planned','due','completed'] as const).map(filter=><button key={filter} type="button" className={activityFilter===filter?'active':''} aria-pressed={activityFilter===filter} onClick={()=>setActivityFilter(filter)}>{filter[0].toUpperCase()+filter.slice(1)}</button>)}</div>}
@@ -431,17 +440,22 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
               }):<EmptyState icon={<CheckCircle2 size={23}/>} title={items.length?'No activities in this filter':'A fresh week'} detail={items.length?'Choose All to see every weekly activity.':'Add a lecture, reading, question set, or revision activity to begin.'}/>}
             </Card>
             <div className="stack planner-study-side-cards">
-              <Card className="planner-study-week-resources-card"><div className="planner-classic-card-title"><h3>Week resources</h3><button className="planner-inline-link" onClick={()=>setWorkspaceTab('week-resources')}>View all <ArrowRight size={15}/></button></div>
-                {weekResources.slice(0,2).map(resourceRow)}
-                {!weekResources.length&&<p className="planner-study-hint">No slides linked for this week yet.</p>}
-                {!isReadOnly&&<button className="btn secondary full planner-resource-footer" onClick={()=>openResourceForm('week')}><Plus size={15}/> Link lecture slides</button>}
+              <Card className="planner-study-week-resources-card planner-resource-preview-card">
+                <div className="planner-classic-card-title"><h3>This week’s files</h3><button type="button" className="planner-inline-link" onClick={()=>setWorkspaceTab('week-resources')}>View all <ArrowRight size={15}/></button></div>
+                {weekResources.slice(0,2).map(resourcePreviewRow)}
+                {!weekResources.length&&<p className="planner-study-hint">No files linked to Week {weekNumber} yet.</p>}
+                {weekResources.length>2&&<span className="planner-resource-preview-count">Showing 2 of {weekResources.length} week files</span>}
+                {!isReadOnly&&<button type="button" className="btn secondary full planner-resource-footer" onClick={()=>openResourceForm('week')}><Plus size={15}/> Link week material</button>}
               </Card>
-              <Card className="planner-study-shared-library-card"><div className="planner-classic-card-title"><h3>Shared course library</h3><Badge>{shared.length} {shared.length===1?'file':'files'}</Badge></div>
-                <div className="planner-study-library-scroll" role="region" aria-label="Shared course library files" tabIndex={shared.length?0:undefined}>
-                  {shared.map(resourceRow)}
-                  {!shared.length&&<p className="planner-study-hint">No shared textbooks, past exams, or Goodnotes notebooks linked yet.</p>}
+              <Card className="planner-study-shared-library-card planner-resource-preview-card">
+                <div className="planner-classic-card-title"><h3>Course library</h3><Badge>{shared.length} {shared.length===1?'file':'files'}</Badge></div>
+                {shared.length>0&&<p className="planner-resource-preview-caption">Reference files for all teaching weeks</p>}
+                <div className="planner-resource-preview-list">
+                  {sharedPreview.map(resourcePreviewRow)}
+                  {!shared.length&&<p className="planner-study-hint">No course-wide references yet. Add textbooks, notebooks, or exam papers in Course Library.</p>}
                 </div>
-                <button className="btn secondary full planner-resource-footer" onClick={()=>setWorkspaceTab('course-library')}><Library size={15}/> Open Course Library</button>
+                {shared.length>sharedPreview.length&&<span className="planner-resource-preview-count">Showing {sharedPreview.length} of {shared.length} files</span>}
+                <button type="button" className="btn secondary full planner-resource-footer" onClick={()=>setWorkspaceTab('course-library')}><Library size={15}/> Open Course Library</button>
               </Card>
             </div>
           </div>}
