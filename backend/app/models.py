@@ -34,7 +34,7 @@ class Week(BaseDocument):
     objectives: str = Field(default='', max_length=3000)
 
 
-ItemKind = Literal['lecture', 'notes', 'reading', 'revision', 'assignment', 'personal']
+ItemKind = Literal['lecture', 'notes', 'reading', 'questions', 'revision', 'assignment', 'personal']
 
 
 class Item(BaseDocument):

@@ -71,3 +71,38 @@ def test_cannot_hide_a_personal_task_without_a_weekly_home(client):
     assert response.status_code == 422
     unchanged = next(i for i in client.get('/api/snapshot').json()['items'] if i['id']==personal['id'])
     assert unchanged['hidden_from_tasks'] is False
+
+
+def test_questions_kind_creates_edits_and_roundtrips_reference_numbers(client):
+    course = create_course(client, {'code':'02456','title':'Deep learning'}).json()
+    item = client.post('/api/items', json={
+        'course_id':course['id'], 'week_number':1, 'kind':'questions',
+        'title':'Exam questions', 'chapter':'3,4,5.6,4.2.1', 'is_task':False,
+    })
+    assert item.status_code == 201, item.text
+    row = item.json()
+    assert row['kind'] == 'questions'
+    assert row['chapter'] == '3,4,5.6,4.2.1'  # Stored text is not reformatted.
+    assert row['is_task'] is False
+    changed = client.patch('/api/items/'+row['id'], json={
+        'chapter':'3, 4, 5.6, 4.2.1', 'is_task':True,
+    })
+    assert changed.status_code == 200, changed.text
+    assert changed.json()['kind'] == 'questions'
+    assert changed.json()['is_task'] is True
+    saved = next(i for i in client.get('/api/snapshot').json()['items'] if i['id'] == row['id'])
+    assert saved['chapter'] == '3, 4, 5.6, 4.2.1'
+    assert saved['kind'] == 'questions'
+
+
+def test_existing_reading_kind_remains_valid_after_adding_questions(client):
+    course = create_course(client, {'code':'02516','title':'Computer Vision'}).json()
+    reading = client.post('/api/items', json={
+        'course_id':course['id'], 'week_number':1, 'kind':'reading',
+        'title':'Reading', 'chapter':'3.1,4.2',
+    })
+    assert reading.status_code == 201, reading.text
+    assert reading.json()['kind'] == 'reading'
+    changed = client.patch('/api/items/'+reading.json()['id'], json={'kind':'questions'})
+    assert changed.status_code == 200, changed.text
+    assert changed.json()['chapter'] == '3.1,4.2'

@@ -1187,6 +1187,7 @@ html{font-size:18px}
 .planner-learning-checklist .planner-study-task>div>small{display:block;font-size:.72rem;line-height:1.48;margin-top:4px}
 .planner-study-chapters{display:flex;flex-direction:column;gap:2px;font-size:.82rem;line-height:1.5;color:var(--text);margin-top:5px;overflow-wrap:anywhere}
 .planner-study-chapters b{color:var(--muted);font-weight:750}
+.planner-study-ref-value{font-variant-numeric:tabular-nums;letter-spacing:.035em}
 .planner-classic-overview .planner-file-row{gap:8px}
 .planner-classic-overview .planner-file-details{min-width:0}
 .planner-classic-overview .planner-file-details strong{font-size:.8rem;line-height:1.38;overflow-wrap:anywhere}
@@ -1195,5 +1196,5 @@ html{font-size:18px}
 .planner-study-library-scroll{min-height:0;flex:1;overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable;overscroll-behavior:contain;padding-right:7px}
 .planner-study-library-scroll:focus-visible{outline-offset:-3px}
 .planner-classic-overview .planner-study-shared-library-card>.planner-resource-footer{flex:0 0 auto;margin-top:12px}
-.planner-task-visibility-hint{font-size:.75rem;color:var(--muted);line-height:1.5;margin:-3px 0 12px}
+.planner-dialog .inline-check{line-height:1.4;margin:11px 0 14px}
 @media(max-width:560px){html{font-size:17px}.planner-classic-overview .planner-study-shared-library-card{height:390px}}
