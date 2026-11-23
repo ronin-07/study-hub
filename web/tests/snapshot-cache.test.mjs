@@ -69,5 +69,6 @@ test('PDF bookmarks are debounced and serialized instead of blocking the global 
   assert.match(page,/pdfBookmarkPendingRef/);
   assert.match(page,/setTimeout\(flushPdfBookmark,650\)/);
   assert.match(page,/pdfBookmarkWriteRef\.current=pdfBookmarkWriteRef\.current\.catch/);
-  assert.match(page,/const closePdf=\(\)=>\{flushPdfBookmark\(\)/);
+  assert.match(page,/const closePdf=\(\)=>\{/);
+  assert.match(page,/const closePdf=[\s\S]*?flushPdfBookmark\(\)/);
 });

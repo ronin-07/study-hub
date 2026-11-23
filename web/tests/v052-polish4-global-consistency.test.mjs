@@ -58,6 +58,6 @@ test('sidebar labels, task badge and breadcrumb use Study Hub terminology',()=>{
   assert.match(page,/library:'Resources'/);
   assert.match(page,/incomplete tasks/);
   assert.match(page,/sidebarCollapsed\?'Expand sidebar':'Collapse sidebar'/);
-  assert.match(page,/data-full-name=\{profileName\}/);
-  assert.match(css,/\.sidebar-profile-copy:is\(:hover,:focus-visible\)::after/);
+  assert.match(page,/<ProfileName name=\{profileName\}\/>/);
+  assert.match(css,/\.sidebar-profile-tooltip/);
 });

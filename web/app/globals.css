@@ -1905,3 +1905,87 @@ html[data-study-hub-theme="light"]{color-scheme:light}
   background:#3c2a3b;color:#fff5fa;box-shadow:0 9px 24px #110d16a6;
   font-size:.74rem;font-weight:650;white-space:normal;overflow-wrap:anywhere;
 }
+
+/* v0.5.2 Polish 5 — responsive, safe PDF reading and final interaction fixes. */
+/* A readable sidebar brand must not compete with the collapse hit target. */
+.app-shell .sidebar-header{align-items:flex-start;gap:8px}
+.app-shell .sidebar-header .brand{gap:7px;min-width:0;padding-bottom:40px}
+.app-shell .sidebar-header .brand-mark{width:36px;height:36px;flex-basis:36px}
+.app-shell .sidebar-header .sidebar-brand-copy strong{font-size:clamp(.82rem,.95vw,.97rem);overflow:hidden;text-overflow:ellipsis}
+.app-shell .sidebar .sidebar-collapse-button{flex:0 0 40px;width:40px;min-width:40px;height:42px;min-height:42px;margin:0;padding:8px;border-radius:11px}
+.app-shell .sidebar.is-collapsed .sidebar-header{gap:11px}
+.app-shell .sidebar.is-collapsed .sidebar-collapse-button{width:42px;min-width:42px;height:42px}
+/* Profile names are shown in a portal, never beneath a clipped sidebar edge. */
+.sidebar-profile-copy:is(:hover,:focus-visible)::after{content:none!important;display:none!important}
+.sidebar-profile-tooltip{
+  position:fixed;z-index:1000;transform:translateY(-100%);pointer-events:none;
+  max-width:min(320px,calc(100vw - 24px));padding:10px 13px;
+  border:1px solid #9c7d91;border-radius:10px;
+  background:#3c2a3b;color:#fff5fa;box-shadow:0 10px 26px #110d16a6;
+  font-family:'DM Sans','Segoe UI',sans-serif;font-size:.77rem;line-height:1.5;font-weight:650;
+  white-space:normal;overflow-wrap:anywhere;
+}
+/* Sage means keyboard/text-entry focus across the app. Selected navigation
+   remains mauve, and completion/urgency retains its own semantic styling. */
+.app-shell :is(input:not([type='checkbox']),textarea,select):focus-visible{
+  outline:2px solid #9ed3b2!important;outline-offset:2px!important;
+}
+.app-shell .planner-dialog .form-row :is(input,select,textarea):focus{
+  box-shadow:0 0 0 3px rgba(136,194,160,.20)!important;
+}
+.app-shell .focus-duration-fields label:focus-within{
+  border-color:#9ed3b2;box-shadow:0 0 0 3px rgba(136,194,160,.25);
+}
+.app-shell .resources-search:focus-within{
+  border-color:#9ed3b2!important;box-shadow:0 0 0 3px rgba(136,194,160,.25)!important;
+}
+.app-shell .resources-search :is(input:focus,input:focus-visible),
+.app-shell .focus-duration-fields :is(input:focus,input:focus-visible){
+  outline:0!important;outline-offset:0!important;box-shadow:none!important;
+}
+/* Loading starts in the same click that requests a PDF; never fake a % indicator. */
+.pdf-opening{background:rgba(25,19,31,.96);display:grid;place-items:center;padding:24px;z-index:110}
+.pdf-opening-card{
+  background:#302531;border:1px solid #685062;border-radius:21px;
+  display:flex;flex-direction:column;align-items:center;text-align:center;
+  gap:13px;padding:clamp(24px,4vw,42px);width:min(96vw,500px);
+  box-shadow:0 25px 70px rgba(5,3,8,.35);
+}
+.pdf-opening-icon{width:60px;height:60px;border-radius:18px;display:grid;place-items:center;background:#405347;color:#badfc4}
+.pdf-opening-card h2{font-size:1.32rem;color:#fff5fb;margin:4px 0 0}
+.pdf-opening-filename{display:block;max-width:100%;font-size:.9rem;color:#fae4f0;overflow-wrap:anywhere}
+.pdf-opening-card p{font-size:.82rem;line-height:1.6;color:#d8bfcf;margin:0;max-width:38ch}
+.pdf-opening-actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:7px}
+.pdf-opening-indicator{display:block;position:relative;overflow:hidden;height:5px;width:min(100%,280px);background:#534354;border-radius:999px}
+.pdf-opening-indicator:after{content:'';position:absolute;inset:0 auto 0 0;width:34%;border-radius:999px;background:#a2d2b4;animation:pdf-opening-slide 1.5s ease-in-out infinite alternate}
+@keyframes pdf-opening-slide{from{transform:translateX(-30%)}to{transform:translateX(230%)}}
+/* A single concise toolbar: Chrome's native reader owns zoom/search/print. */
+.pdf-workspace .pdf-topbar{padding:12px 17px;min-height:64px;flex-wrap:wrap;gap:10px}
+.pdf-workspace .pdf-file-title{max-width:min(47%,560px)}
+.pdf-workspace .pdf-file-title strong{font-size:.83rem}
+.pdf-workspace .pdf-file-title span{color:var(--muted);font-size:.68rem}
+.pdf-workspace .pdf-actions{flex-wrap:wrap;justify-content:flex-end;gap:8px}
+.pdf-workspace .pdf-actions input{width:65px;padding:9px 7px;border-radius:9px;text-align:center}
+.pdf-workspace .pdf-actions :is(input:focus,input:focus-visible){outline:2px solid #9ed3b2!important;outline-offset:2px!important}
+.pdf-workspace .pdf-toggle-study{gap:7px}
+.pdf-workspace .pdf-document-scroll{overflow:hidden;position:relative}
+.pdf-workspace .pdf-frame-wrap{position:relative;height:100%;min-height:0;overflow:hidden;background:#262428}
+.pdf-workspace .pdf-frame{height:100%;min-height:0;display:block;width:100%;border:0;background:#fff}
+.pdf-frame-loading{position:absolute;inset:0;z-index:2;background:#29232d;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:20px;color:#e1c2d4;text-align:center}
+.pdf-frame-loading strong{color:#fff3fa;font-size:1rem}
+.pdf-frame-loading p{color:#d0b7c7;max-width:38ch;font-size:.79rem;line-height:1.6}
+.pdf-frame-loading-actions{display:flex;justify-content:center;gap:10px;flex-wrap:wrap}
+.pdf-study-side{scrollbar-width:thin;scrollbar-color:#9a7790 transparent}
+@media(max-width:950px){.pdf-workspace .pdf-file-title{max-width:40%}}
+@media(max-width:690px){
+  .pdf-workspace .pdf-topbar{padding:max(10px,env(safe-area-inset-top)) 12px 10px;gap:8px}
+  .pdf-workspace .pdf-file-title{max-width:100%;width:100%}
+  .pdf-workspace .pdf-actions{justify-content:flex-start;width:100%}
+  .pdf-workspace .pdf-reading-layout{grid-template-rows:minmax(0,1fr) auto}
+  .pdf-workspace .pdf-document-panel{min-height:0}
+  .pdf-workspace .pdf-document-scroll{min-height:0}
+  .pdf-workspace .pdf-frame-wrap{min-height:0}
+  .pdf-workspace .pdf-study-side{max-height:min(40dvh,320px)}
+  .pdf-opening{padding:14px}
+}
+@media(prefers-reduced-motion:reduce){.pdf-opening-indicator:after{animation:none;transform:translateX(100%)}}

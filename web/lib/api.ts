@@ -31,11 +31,19 @@ export async function api<T>(route: string, user: User | null, options?: { metho
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
-export async function pdfBlob(route: string, user: User | null): Promise<string> {
+/** Download a Drive PDF for the native browser viewer. Aborting also stops blob reading.
+ * The blob URL is owned by the caller, which must revoke it when no longer used.
+ */
+export async function pdfBlob(route: string, user: User | null, signal?: AbortSignal): Promise<string> {
   const token = user ? await user.getIdToken() : null;
-  const res = await fetch(BASE + route, { headers: token ? {Authorization: `Bearer ${token}`} : {} });
+  if (signal?.aborted) throw new DOMException('PDF opening cancelled', 'AbortError');
+  const res = await fetch(BASE + route, {
+    headers: token ? {Authorization: `Bearer ${token}`} : {},
+    cache: 'no-store', signal,
+  });
   if (!res.ok) throw new Error(`PDF retrieval failed (${res.status})`);
   const body = await res.blob();
-  if (body.type !== 'application/pdf') throw new Error('Unexpected file type');
+  if (signal?.aborted) throw new DOMException('PDF opening cancelled', 'AbortError');
+  if (!body.type.toLowerCase().startsWith('application/pdf')) throw new Error('Unexpected file type');
   return URL.createObjectURL(body);
 }

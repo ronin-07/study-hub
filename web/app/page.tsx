@@ -13,7 +13,9 @@ import { formatLocalClock, formatLocalDate } from '@/lib/clock';
 import { applyMutation, type MutationHint } from '@/lib/snapshot-cache';
 import { describeSnapshotFailure, fetchSnapshotWithRetry, type SnapshotLoadProblem } from '@/lib/snapshot-loading';
 import { Badge, Card, EmptyState, FormRow, SectionTitle } from '@/components/common';
-import { PdfWorkspace } from '@/components/pdf-workspace';
+import { PdfWorkspace, PdfOpeningOverlay } from '@/components/pdf-workspace';
+import { createPdfRequestGate } from '@/lib/pdf-preview';
+import { ProfileName } from '@/components/profile-name';
 import { CoursePlanner } from '@/components/course-planner';
 import { ProgressTrack, ProgressValue } from '@/components/progress-motion';
 import { visibleCourseDoneCount } from '@/lib/progress-presentation';
@@ -40,6 +42,8 @@ import { type DriveEntry, type DriveList, type FocusSession, type Item,
 
 type DriveStatus = { connected: boolean; configured: boolean };
 const empty: Snapshot = {courses:[], weeks:[], items:[], resources:[], sessions:[], semesters:[]};
+type PdfOpening = {requestId:number;fileId:string;title:string;resourceId?:string;page:number;status:'loading'|'error';message?:string};
+const PDF_FETCH_TIMEOUT_MS = 120_000;
 const pageNames: Record<Tab,string> = {today:'Home', courses:'Study', tasks:'Tasks', calendar:'Calendar', focus:'Focus', library:'Resources'};
 const tabs: {id:Tab; label:string; icon:typeof Home}[] = [
   {id:'today',label:'Home',icon:Home},{id:'courses',label:'Study',icon:BookOpen},
@@ -130,6 +134,10 @@ export default function Page() {
   const [now,setNow] = useState(Math.floor(Date.now()/1000));
   const [clockReady,setClockReady] = useState(false);
   const [pdf,setPdf] = useState<{url:string;title:string;page:number;resourceId?:string;courseId?:string;weekNumber?:number}|null>(null);
+  const [pdfOpening,setPdfOpening] = useState<PdfOpening|null>(null);
+  const pdfRequestGateRef = useRef(createPdfRequestGate());
+  const pdfPendingFileRef = useRef<string|null>(null);
+  const pdfObjectUrlRef = useRef<string|null>(null);
   const pdfBookmarkTimerRef=useRef<ReturnType<typeof setTimeout>|null>(null);
   const pdfBookmarkPendingRef=useRef<{id:string;page:number}|null>(null);
   const pdfBookmarkWriteRef=useRef<Promise<void>>(Promise.resolve());
@@ -205,6 +213,12 @@ export default function Page() {
       completionTimersRef.current.clear();setCompletionPhases({});
       focusBusyRef.current=false;focusRevisionRef.current++;setFocusBusy(false);setFocusPreview(null);setFocusClock(null);
       setFinishReview(false);setQuickFocusOpen(false);
+      // A previous account's pending PDF must never appear after an auth switch.
+      pdfRequestGateRef.current.cancel();pdfPendingFileRef.current=null;
+      if(pdfBookmarkTimerRef.current){clearTimeout(pdfBookmarkTimerRef.current);pdfBookmarkTimerRef.current=null;}
+      pdfBookmarkPendingRef.current=null;
+      if(pdfObjectUrlRef.current)URL.revokeObjectURL(pdfObjectUrlRef.current);
+      pdfObjectUrlRef.current=null;setPdf(null);setPdfOpening(null);
       clearFeedback();
       setUser(u);setAuthReady(true);
     });
@@ -747,12 +761,43 @@ export default function Page() {
   const openFolder=(folder:DriveEntry)=>{setFolderPath(p=>[...p,{id:folder.id,name:folder.name}]);void browseDrive(folder.id);};
   const backFolder=()=>{if(folderPath.length===1)return;const next=folderPath.slice(0,-1);setFolderPath(next);void browseDrive(next.at(-1)!.id);};
   const connectDrive=()=>void act(async()=>{const result=await api<{authorization_url:string}>('/api/drive/connect',user);window.location.assign(result.authorization_url);},{collection:'none'});
-  const previewPdf=(fileId:string,title:string,resourceId?:string,lastPage=1)=>void act(async()=>{
-    const url=await pdfBlob(`/api/drive/files/${fileId}/pdf`,user);
-    if (pdf) URL.revokeObjectURL(pdf.url);
-    const r=data.resources.find(entry=>entry.id===resourceId);
-    setPdf({url,title,resourceId,courseId:r?.course_id,weekNumber:r?.week_number??weekNumber,page:lastPage||1});
-  },{collection:'none'});
+  // Opening a document is a read, not a mutation. Show feedback immediately, and
+  // keep it independent of the global save lock. Only the newest request can win.
+  const previewPdf=(fileId:string,title:string,resourceId?:string,lastPage=1)=>{
+    // Avoid unnecessary repeated downloads when the identical file is loading.
+    if(pdfPendingFileRef.current===fileId)return;
+    pdfPendingFileRef.current=fileId;
+    const {requestId,controller}=pdfRequestGateRef.current.begin();
+    if(pdfObjectUrlRef.current){URL.revokeObjectURL(pdfObjectUrlRef.current);pdfObjectUrlRef.current=null;}
+    if(pdf)flushPdfBookmark();
+    setPdf(null);
+    const page=Math.max(1,Math.floor(lastPage)||1);
+    setPdfOpening({requestId,fileId,title,resourceId,page,status:'loading'});
+    void (async()=>{
+      let timedOut=false;
+      const timeout=window.setTimeout(()=>{timedOut=true;controller.abort();},PDF_FETCH_TIMEOUT_MS);
+      try{
+        const url=await pdfBlob(`/api/drive/files/${encodeURIComponent(fileId)}/pdf`,user,controller.signal);
+        // Cancellation can race with blob creation: revoke any unused object URL.
+        if(controller.signal.aborted||!pdfRequestGateRef.current.isCurrent(requestId)){URL.revokeObjectURL(url);return;}
+        const resource=data.resources.find(entry=>entry.id===resourceId);
+        pdfObjectUrlRef.current=url;
+        setPdf({url,title,resourceId,courseId:resource?.course_id,weekNumber:resource?.week_number??weekNumber,page});
+        setPdfOpening(null);
+      }catch(e){
+        if(!pdfRequestGateRef.current.isCurrent(requestId))return;
+        const cancelled=controller.signal.aborted&&!timedOut;
+        if(cancelled)return;
+        const message=timedOut?'The PDF took too long to download. Try again, or open it from Google Drive.':
+          e instanceof Error?e.message:'Could not open this PDF.';
+        setPdfOpening({requestId,fileId,title,resourceId,page,status:'error',message});
+      }finally{
+        window.clearTimeout(timeout);
+        if(pdfRequestGateRef.current.isCurrent(requestId))pdfPendingFileRef.current=null;
+        pdfRequestGateRef.current.release(requestId,controller);
+      }
+    })();
+  };
   const flushPdfBookmark=useCallback(()=>{
     if(pdfBookmarkTimerRef.current){clearTimeout(pdfBookmarkTimerRef.current);pdfBookmarkTimerRef.current=null;}
     const latest=pdfBookmarkPendingRef.current;
@@ -764,7 +809,18 @@ export default function Page() {
       catch(e){setError(`Page bookmark could not be saved. ${e instanceof Error?e.message:''}`);}
     });
   },[user]);
-  const closePdf=()=>{flushPdfBookmark();if(pdf)URL.revokeObjectURL(pdf.url);setPdf(null);};
+  const closePdf=()=>{
+    pdfRequestGateRef.current.cancel();pdfPendingFileRef.current=null;
+    setPdfOpening(null);
+    flushPdfBookmark();
+    if(pdfObjectUrlRef.current)URL.revokeObjectURL(pdfObjectUrlRef.current);
+    pdfObjectUrlRef.current=null;setPdf(null);
+  };
+  // Prevent old requests and blob URLs surviving page unmount.
+  useEffect(()=>()=>{
+    pdfRequestGateRef.current.cancel();pdfPendingFileRef.current=null;
+    if(pdfObjectUrlRef.current)URL.revokeObjectURL(pdfObjectUrlRef.current);
+  },[]);
   const openTaskResource=(item:Item)=>{
     const r=data.resources.find(entry=>entry.id===item.resource_id);
     if(!r){setError('The linked document is no longer available. Check the Course Library.');return;}
@@ -853,7 +909,7 @@ export default function Page() {
       <div className="sidebar-bottom">
         <div className="sidebar-profile">
           <span className="sidebar-profile-avatar" aria-hidden="true">{profileInitials}</span>
-          <div className="sidebar-profile-copy" title={profileName} data-full-name={profileName} aria-label={`Account: ${profileName}`} tabIndex={0}><strong>{profileName}</strong><small>DTU student</small></div>
+          <ProfileName name={profileName}/>
         </div>
         <div className="sidebar-footer-row">
           <span className="sidebar-account"><span className="live-dot" aria-hidden="true"/>{useFirebase?'Private workspace':'Local development'}</span>
@@ -1097,6 +1153,9 @@ export default function Page() {
       {finishReview&&active&&<div className="dialog-backdrop" role="presentation"><div className="dialog focus-review-dialog" role="dialog" aria-modal="true" aria-label="Review focus session"><button className="dialog-close" onClick={()=>setFinishReview(false)} aria-label="Cancel and keep paused"><X size={18}/></button><h2>Review focus session</h2><p>How much of this session was focused study?</p><div className="focus-review-duration"><span>Recorded active time</span><strong>{duration(reviewLimit)}</strong></div><FocusDurationFields seconds={finishSeconds} maximum={reviewLimit} onChange={setFinishSeconds}/><p className="focus-review-help">Adjust for idle time if needed. Maximum: {formatFocusDuration(reviewLimit)}.</p><div className="dialog-actions"><button className="btn secondary" onClick={()=>setFinishReview(false)}>Keep paused</button><button className="btn primary" disabled={focusBusy||active.status!=='paused'||!Number.isInteger(Number(finishSeconds))||Number(finishSeconds)<0||Number(finishSeconds)>reviewLimit} onClick={finish}>{focusBusy?(Number(finishSeconds)===0?'Discarding…':'Saving timer…'):(Number(finishSeconds)===0?'Discard empty session':'Save session')}</button></div></div></div>}
     </div>
     <nav className="mobile-nav" aria-label="Mobile navigation">{tabs.map(t=><button key={t.id} className={tab===t.id?'current':''} onClick={()=>navigate(t.id)}><t.icon size={19}/><span>{t.label}</span></button>)}</nav>
+    {pdfOpening&&<PdfOpeningOverlay title={pdfOpening.title} status={pdfOpening.status} error={pdfOpening.message}
+      requestId={pdfOpening.requestId} onCancel={closePdf}
+      onRetry={()=>previewPdf(pdfOpening.fileId,pdfOpening.title,pdfOpening.resourceId,pdfOpening.page)}/>}
     {pdf&&<PdfWorkspace pdf={pdf} items={presentedItems} pendingItems={pendingItems} completingIds={completingIds}
       related={data.resources.filter(r=>r.course_id===pdf.courseId&&(r.week_number===pdf.weekNumber||r.week_number===null))}
       onClose={closePdf} onPage={changePdfPage} onToggleItem={toggle}

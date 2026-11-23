@@ -42,10 +42,10 @@ test('Resource browsing has query, status filters, sticky editor and no silent a
   assert.match(page,/aria-label="Search indexed PDFs"/);
   assert.match(page,/onClick=\{\(\)=>choosePdf\(f\)\}/);
 });
-test('Existing PDF viewer continues to expose bookmark, zoom, search guidance and close',()=>{
+test('PDF viewer keeps saved-page navigation and native reader controls without duplicate zoom',()=>{
   assert.match(pdf,/Bookmarked PDF page/);
-  assert.match(pdf,/Increase zoom/);
-  assert.match(pdf,/Decrease zoom/);
-  assert.match(pdf,/onPage\(pdf\.page \+ 1\)/);
+  assert.match(pdf,/Chrome's PDF toolbar handles zoom, search and print/);
+  assert.doesNotMatch(pdf,/Increase zoom|Decrease zoom/);
+  assert.match(pdf,/onPage\(pdf\.page\+1\)/);
   assert.match(pdf,/onClose/);
 });
