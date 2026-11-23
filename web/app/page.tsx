@@ -1,11 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
 import type { User } from 'firebase/auth';
 import {
   ArrowLeft, ArrowRight, BookOpen, CalendarDays, Check, CheckCircle2, ChevronDown, Clock3,
   Cloud, ExternalLink, FileText, Folder, GraduationCap, Home, Link2, ListTodo, LoaderCircle, FolderCheck, ScanSearch,
-  Pause, Play, Plus, RotateCcw, Square, Timer, X, Sparkles, Sun, Moon, Target, AlertTriangle, BarChart3, LogOut
+  Pause, Play, Plus, RotateCcw, Square, Timer, X, Sparkles, Sun, Moon, Target, AlertTriangle, BarChart3, LogOut, PanelLeftClose, PanelLeftOpen
 } from 'lucide-react';
 import { api, pdfBlob } from '@/lib/api';
 import { formatLocalClock, formatLocalDate } from '@/lib/clock';
@@ -49,6 +50,10 @@ export default function Page() {
   const [authReady,setAuthReady] = useState(!useFirebase);
   const [tab,setTab] = useState<Tab>('today');
   const [theme,setTheme] = useState<'light'|'dark'>('dark');
+  const [sidebarCollapsed,setSidebarCollapsed] = useState(false);
+  const [sidebarWidth,setSidebarWidth] = useState<number|null>(null);
+  const [sidebarResizing,setSidebarResizing] = useState(false);
+  const sidebarDragRef = useRef<{pointerId:number;startX:number;startWidth:number}|null>(null);
   const [data,setData] = useState<Snapshot>(empty);
   const [loading,setLoading] = useState(true);
   const [snapshotReady,setSnapshotReady] = useState(false);
@@ -209,6 +214,60 @@ export default function Page() {
     if(preference==='dark'||preference==='light')setTheme(preference);
   },[]);
   const toggleTheme=()=>setTheme(previous=>{const next=previous==='light'?'dark':'light';window.localStorage.setItem('studyhub-theme',next);return next;});
+  // Apply the active theme to the document too: iOS Safari can expose the root
+  // canvas behind the app during overscroll and around the safe areas.
+  useEffect(()=>{
+    document.documentElement.dataset.studyHubTheme=theme;
+    document.documentElement.style.colorScheme=theme;
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content',theme==='dark'?'#211a28':'#f7f8fc');
+  },[theme]);
+  useEffect(()=>{
+    try {
+      setSidebarCollapsed(window.localStorage.getItem('studyhub-sidebar-collapsed')==='true');
+      const saved=Number(window.localStorage.getItem('studyhub-sidebar-width'));
+      if(Number.isFinite(saved)&&saved>=205&&saved<=340)setSidebarWidth(saved);
+    }catch{ /* Browser storage may be disabled. Keep sensible defaults. */ }
+  },[]);
+  const clampSidebarWidth=(width:number)=>Math.max(205,Math.min(340,Math.round(width)));
+  const toggleSidebar=()=>{
+    const next=!sidebarCollapsed;
+    setSidebarCollapsed(next);
+    try{window.localStorage.setItem('studyhub-sidebar-collapsed',String(next));}catch{}
+  };
+  const saveSidebarWidth=(width:number|null)=>{
+    setSidebarWidth(width);
+    try{
+      if(width===null)window.localStorage.removeItem('studyhub-sidebar-width');
+      else window.localStorage.setItem('studyhub-sidebar-width',String(width));
+    }catch{}
+  };
+  const onSidebarPointerDown=(event:ReactPointerEvent<HTMLDivElement>)=>{
+    if(event.button!==0)return;
+    const width=event.currentTarget.parentElement?.getBoundingClientRect().width??252;
+    sidebarDragRef.current={pointerId:event.pointerId,startX:event.clientX,startWidth:width};
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setSidebarResizing(true);
+    event.preventDefault();
+  };
+  const onSidebarPointerMove=(event:ReactPointerEvent<HTMLDivElement>)=>{
+    const drag=sidebarDragRef.current;
+    if(drag&&drag.pointerId===event.pointerId)setSidebarWidth(clampSidebarWidth(drag.startWidth+event.clientX-drag.startX));
+  };
+  const onSidebarPointerEnd=(event:ReactPointerEvent<HTMLDivElement>)=>{
+    const drag=sidebarDragRef.current;
+    if(!drag||drag.pointerId!==event.pointerId)return;
+    if(event.type==='pointerup')saveSidebarWidth(clampSidebarWidth(drag.startWidth+event.clientX-drag.startX));
+    else saveSidebarWidth(clampSidebarWidth(drag.startWidth));
+    sidebarDragRef.current=null;
+    setSidebarResizing(false);
+  };
+  const onSidebarResizeKey=(event:ReactKeyboardEvent<HTMLDivElement>)=>{
+    if(event.key==='Home'){event.preventDefault();saveSidebarWidth(null);return;}
+    if(event.key!=='ArrowLeft'&&event.key!=='ArrowRight')return;
+    event.preventDefault();
+    const current=sidebarWidth??event.currentTarget.parentElement?.getBoundingClientRect().width??252;
+    saveSidebarWidth(clampSidebarWidth(current+(event.key==='ArrowRight'?10:-10)));
+  };
   useEffect(()=>{
     const stored=window.localStorage.getItem('studyhub-focus-goal');
     if (stored && Number(stored)>=1 && Number(stored)<=80) setWeeklyGoal(Number(stored));
@@ -746,26 +805,30 @@ export default function Page() {
   if (useFirebase&&!authReady) return <div className="boot"><LoaderCircle className="spin"/><p>Checking sign-in…</p></div>;
   if (useFirebase&&!user) return <main className="login-shell"><Card className="login-card"><span className="brand-mark"><GraduationCap/></span><h1>Study Hub</h1><p>Sign in to continue.</p><button className="btn primary" onClick={()=>void signIn()}>Sign in with Google</button></Card></main>;
 
-  return <div className={`app-shell ${theme==='dark'?'theme-dark':''}`}>
+  return <div className={`app-shell ${theme==='dark'?'theme-dark':''}${sidebarResizing?' sidebar-is-resizing':''}`}>
     <FeedbackToasts messages={feedbackMessages} dismiss={dismissFeedback}/>
-    <aside className="sidebar">
-      <div className="brand"><span className="brand-mark"><BookOpen size={21}/></span><div><strong>Study Hub</strong><small>DTU</small></div></div>
+    <aside className={'sidebar'+(sidebarCollapsed?' is-collapsed':'')} style={sidebarWidth===null?undefined:{'--sidebar-user-width':`${sidebarWidth}px`} as CSSProperties}>
+      <div className="sidebar-header">
+        <div className="brand"><span className="brand-mark"><BookOpen size={21}/></span><div className="sidebar-brand-copy"><strong>Study Hub</strong><small>DTU</small></div></div>
+        <button type="button" className="sidebar-collapse-button" aria-label={sidebarCollapsed?'Expand sidebar':'Collapse sidebar to icons'} title={sidebarCollapsed?'Expand sidebar':'Collapse sidebar'} aria-expanded={!sidebarCollapsed} onClick={toggleSidebar}>{sidebarCollapsed?<PanelLeftOpen size={19}/>:<PanelLeftClose size={19}/>}</button>
+      </div>
       <div className="nav-label">MY WORKSPACE</div>
-      <nav className="side-nav" aria-label="Main navigation">{tabs.map(t=><button key={t.id} type="button" onClick={()=>navigate(t.id)} className={'nav-btn '+(tab===t.id?'current':'')} aria-current={tab===t.id?"page":undefined}><t.icon size={18}/>{t.label}{t.id==='tasks'&&openTasks.length>0&&<span className="nav-count">{openTasks.length}</span>}</button>)}</nav>
+      <nav className="side-nav" aria-label="Main navigation">{tabs.map(t=><button key={t.id} type="button" title={sidebarCollapsed?t.label:undefined} aria-label={t.label} onClick={()=>navigate(t.id)} className={'nav-btn '+(tab===t.id?'current':'')} aria-current={tab===t.id?"page":undefined}><t.icon size={18}/><span className="nav-text">{t.label}</span>{t.id==='tasks'&&openTasks.length>0&&<span className="nav-count">{openTasks.length}</span>}</button>)}</nav>
       <div className="sidebar-spacer"/>
       <div className="sidebar-bottom">
         <div className="sidebar-profile">
           <span className="sidebar-profile-avatar" aria-hidden="true">{profileInitials}</span>
-          <div><strong title={profileName}>{profileName}</strong><small>DTU student</small></div>
+          <div className="sidebar-profile-copy"><strong title={profileName}>{profileName}</strong><small>DTU student</small></div>
         </div>
         <div className="sidebar-footer-row">
           <span className="sidebar-account"><span className="live-dot" aria-hidden="true"/>{useFirebase?'Private workspace':'Local development'}</span>
-          {useFirebase&&<button type="button" className="sidebar-signout" aria-label="Sign out of Study Hub" onClick={()=>void signOutUser()}><LogOut size={15}/> Sign out</button>}
+          {useFirebase&&<button type="button" className="sidebar-signout" title="Sign out" aria-label="Sign out of Study Hub" onClick={()=>void signOutUser()}><LogOut size={15}/><span className="sidebar-signout-label">Sign out</span></button>}
         </div>
       </div>
+      {!sidebarCollapsed&&<div className="sidebar-resize-handle" role="separator" aria-label="Resize sidebar" aria-orientation="vertical" aria-valuemin={205} aria-valuemax={340} aria-valuenow={sidebarWidth??252} aria-valuetext={sidebarWidth===null?"Default width":`${sidebarWidth} pixels`} tabIndex={0} title="Drag to resize sidebar · double-click to reset" onPointerDown={onSidebarPointerDown} onPointerMove={onSidebarPointerMove} onPointerUp={onSidebarPointerEnd} onPointerCancel={onSidebarPointerEnd} onLostPointerCapture={()=>{sidebarDragRef.current=null;setSidebarResizing(false);}} onKeyDown={onSidebarResizeKey} onDoubleClick={()=>saveSidebarWidth(null)}/>}
     </aside>
     <div className="main-area">
-      <header className={'topbar'+(tab==='today'?' dashboard-topbar':'')}><div className="breadcrumb"><Sparkles size={16}/> PERSONAL HUB <span>/</span> <strong>{pageNames[tab]}</strong></div><div className="topbar-right">
+      <header className={'topbar'+(tab==='today'?' dashboard-topbar':'')}><div className="mobile-topbar-brand"><BookOpen size={19} aria-hidden="true"/><span>Study Hub</span></div><div className="breadcrumb"><Sparkles size={16}/> PERSONAL HUB <span>/</span> <strong>{pageNames[tab]}</strong></div><div className="topbar-right">
           <span className="topbar-datetime"><span className="topbar-date-section"><CalendarDays size={15} aria-hidden="true"/>{dateLabel}</span><span className="topbar-datetime-divider" aria-hidden="true"/><span title="Your local time (24-hour clock)" aria-label={`Local time ${timeLabel}`}><Clock3 size={15} aria-hidden="true"/><time dateTime={clockReady?new Date(now*1000).toISOString():undefined}>{timeLabel}</time></span></span>
           <div className="topbar-focus-wrap" ref={quickFocusRef}>
             {active?<>

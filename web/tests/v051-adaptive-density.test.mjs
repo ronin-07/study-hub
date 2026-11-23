@@ -5,7 +5,8 @@ import { readFileSync } from 'node:fs';
 const css = readFileSync(new URL('../app/globals.css', import.meta.url), 'utf8');
 
 function blockAfter(marker) {
-  const from = css.lastIndexOf(`${marker}{`);
+  // Read the original density rule; later focused overrides are tested separately.
+  const from = css.indexOf(`${marker}{`);
   assert.ok(from >= 0, `Expected CSS block: ${marker}`);
   const start = css.indexOf('{', from);
   let depth = 0;

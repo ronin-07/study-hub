@@ -9,7 +9,7 @@ test('the account footer is identical on Home and every other tab',()=>{
   assert.match(page,/<div className="sidebar-bottom">/);
   assert.match(page,/className="sidebar-profile"/);
   assert.match(page,/className="sidebar-footer-row"/);
-  assert.match(page,/<aside className="sidebar">/);
+  assert.match(page,/<aside className=\{'sidebar'\+\(sidebarCollapsed\?/);
   assert.match(page,/<small>DTU<\/small>/);
   assert.doesNotMatch(page,/RepLap stays in its own project/);
   assert.doesNotMatch(page,/tab==='today'\?<div className="sidebar-profile"/);

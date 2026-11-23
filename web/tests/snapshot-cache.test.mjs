@@ -55,8 +55,8 @@ test('only repeating completions fetch tasks to reconcile their successor',()=>{
 
 test('the top-right noninteractive avatar is gone and sign-out is a real button',()=>{
   assert.doesNotMatch(page,/<span className="avatar"/);
-  assert.match(page,/className="sidebar-signout" aria-label="Sign out of Study Hub"/);
-  assert.match(page,/<LogOut size=\{15\}\/> Sign out/);
+  assert.match(page,/className="sidebar-signout"[^>]*aria-label="Sign out of Study Hub"/);
+  assert.match(page,/<LogOut size=\{15\}\/><span className="sidebar-signout-label">Sign out<\/span>/);
 });
 
 test('clock rerenders are limited when no focus timer is running',()=>{

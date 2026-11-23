@@ -1,5 +1,7 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import './globals.css';
+
+export const viewport: Viewport = { width: 'device-width', initialScale: 1, viewportFit: 'cover', themeColor: '#211a28' };
 
 export const metadata: Metadata = {
   title: 'Study Hub | Personal learning workspace',
