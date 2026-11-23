@@ -43,6 +43,7 @@ class Item(BaseDocument):
     course_id: str | None = None
     week_number: int | None = Field(default=None, ge=1, le=30)
     is_task: bool = False
+    hidden_from_tasks: bool = False  # Explicit opt-out; preserves week activity and its references.
     done: bool = False
     submitted: bool = False
     planned_date: date | None = None
@@ -67,6 +68,8 @@ class Item(BaseDocument):
             self.course_id = None
             self.week_number = None
             self.is_task = True
+        if self.hidden_from_tasks and (not self.course_id or self.week_number is None):
+            raise ValueError('Only course-week activities can be removed from Tasks without deletion')
         if self.week_number is not None and self.course_id is None:
             raise ValueError('A week must belong to a course')
         if self.repeat != 'none':
@@ -85,6 +88,8 @@ class ItemPatch(BaseModel):
     done: bool | None = None
     submitted: bool | None = None
     is_task: bool | None = None
+    hidden_from_tasks: bool | None = None
+    kind: ItemKind | None = None
     planned_date: date | None = None
     due_date: date | None = None
     priority: Literal['low', 'medium', 'high'] | None = None
@@ -100,7 +105,7 @@ class Resource(BaseDocument):
     course_id: str
     week_number: int | None = Field(default=None, ge=1, le=30)  # None = shared Course Library.
     title: str = Field(min_length=1, max_length=240)
-    kind: Literal['slides', 'annotated', 'handwritten', 'textbook', 'other'] = 'other'
+    kind: Literal['slides', 'annotated', 'handwritten', 'textbook', 'exam_paper', 'exam_solution', 'other'] = 'other'
     source: Literal['drive', 'dtu', 'link']
     url: HttpUrl | None = None
     drive_file_id: str | None = Field(default=None, pattern=r'^[A-Za-z0-9_-]{5,200}$')

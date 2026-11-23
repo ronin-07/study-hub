@@ -1,6 +1,6 @@
 /** Read-only projections for the v0.5 Home dashboard. No duplicated task records. */
 import type { Course, Item } from './types';
-import { isOverdue, todayPriorities } from './task-view.ts';
+import { isActionable, isOverdue, todayPriorities } from './task-view.ts';
 
 export type TodayCourse = {
   course: Course;
@@ -14,7 +14,7 @@ export type TodayCourse = {
 /** One card per active course, even when today's items span several teaching weeks. */
 export function todayStudyCourses(courses: Course[], items: Item[], today: string): TodayCourse[] {
   const active = new Map(courses.filter(c => !c.archived).map(c => [c.id, c]));
-  const work = todayPriorities(items, today);
+  const work = todayPriorities(items.filter(isActionable), today);
   const grouped = new Map<string, Item[]>();
   for (const task of work) {
     if (!task.course_id || !active.has(task.course_id)) continue;

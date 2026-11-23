@@ -857,19 +857,11 @@
 .planner-study-hint{margin:10px 0 0;color:var(--muted);font-size:.72rem;line-height:1.6;}
 .planner-study-resource-links{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-top:14px;}
 .planner-study-resource-links .planner-inline-link{font-size:.7rem;}
-.planner-study-note{display:flex;align-items:flex-start;gap:8px;padding:9px 0;border-bottom:1px solid var(--line);}
-.planner-study-note:last-child{border-bottom:0;}
-.planner-study-note>div{flex:1;min-width:0;}
-.planner-study-note strong{display:block;font-size:.74rem;overflow-wrap:anywhere;}
-.planner-study-note p{font-size:.7rem;color:var(--muted);white-space:pre-wrap;overflow-wrap:anywhere;margin:6px 0 0;line-height:1.5;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;}
-.planner-study-note-empty{border:1px solid var(--line);background:var(--soft);padding:14px;border-radius:11px;color:var(--muted);font-size:.73rem;}
 .planner-aux-week-toolbar{margin-bottom:16px;}
 .app-shell:not(.theme-dark) .planner-study-tabs button.active{color:white;}
 .app-shell:not(.theme-dark) .planner-study-task.overdue{background:#ffe1e9;}
 .app-shell:not(.theme-dark) .planner-study-task.overdue:hover{background:#fcd1dc;}
 @media(max-width:1420px){.planner-study-overview{grid-template-columns:minmax(0,1fr) minmax(235px,.7fr)}.planner-study-task .planner-study-remove{display:none;}}
-@media(max-width:1190px){.planner-study-overview{grid-template-columns:minmax(0,1fr)}.planner-study-side-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));}.planner-study-notes-card{grid-column:1/-1;}}
-@media(max-width:820px){.planner-study-shell{display:block}.planner-study-rail{border-right:0;border-bottom:1px solid var(--line)}.planner-study-overview{grid-template-columns:1fr}.planner-study-side-cards{grid-template-columns:1fr}.planner-study-notes-card{grid-column:auto;}}
 @media(prefers-reduced-motion:reduce){.planner-semester-row-action,.planner-study-tabs button{transition:none;}}
 
 /* Consistent desktop header: date and time form a single balanced control. */
@@ -941,12 +933,8 @@
 .planner-classic-overview .planner-file-row{padding:12px 0}
 .planner-resource-footer{margin-top:13px;min-height:35px;justify-content:center}
 .planner-classic-overview .planner-study-hint{margin:7px 0 10px}
-.planner-classic-overview .planner-study-notes-card{margin-top:1px}
-.planner-classic-overview .planner-study-notes-card .section-title{margin-bottom:11px}
 .app-shell:not(.theme-dark) .planner-study-hero{background:linear-gradient(105deg,#ae7593,#bc91a4 58%,#a684a0)}
 @media(max-width:1330px){.planner-classic-overview{grid-template-columns:minmax(0,1fr) minmax(270px,.92fr)}}
-@media(max-width:1160px){.planner-classic-overview{grid-template-columns:minmax(0,1fr)}.planner-classic-overview .planner-study-side-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));}.planner-classic-overview .planner-study-notes-card{grid-column:1/-1}}
-@media(max-width:820px){.planner-study-shell{display:block}.planner-classic-overview .planner-study-side-cards{grid-template-columns:1fr}.planner-classic-overview .planner-study-notes-card{grid-column:auto}.planner-study-hero>div:first-child{max-width:70%}}
 @media(max-width:560px){.planner-study-hero{padding:16px;gap:11px}.planner-study-hero .planner-hero-progress{min-width:80px}.planner-study-hero .planner-hero-progress strong{font-size:1.4rem}.planner-study-hero h3{font-size:1rem}.planner-classic-card-title{align-items:flex-start;flex-wrap:wrap}.planner-classic-heading-actions{margin-left:auto}.active-focus-menu{right:-38px}}
 
 /* Phase A: use one accessible native select with an aligned, browser-independent chevron. */
@@ -1192,3 +1180,22 @@
 .app-shell:not(.theme-dark) .study-feedback-dismiss{color:#756174}
 .app-shell:not(.theme-dark) .study-feedback-dismiss:hover{background:#4d284813;color:#3e2b3d}
 .app-shell:not(.theme-dark) .study-feedback-action{color:#874e75;background:#e1a6c021}
+
+/* v0.5.1 readability hotfix — scale the existing rem-based type system for laptop use. */
+html{font-size:18px}
+.planner-learning-checklist .planner-study-task>div>strong{font-size:.88rem;line-height:1.48}
+.planner-learning-checklist .planner-study-task>div>small{display:block;font-size:.76rem;line-height:1.5;margin-top:4px}
+.planner-study-chapters{display:flex;flex-direction:column;gap:2px;font-size:.82rem;line-height:1.5;color:var(--text);margin-top:5px;overflow-wrap:anywhere}
+.planner-study-chapters b{color:var(--muted);font-weight:750}
+.planner-classic-overview .planner-file-row{gap:8px}
+.planner-classic-overview .planner-file-details{min-width:0}
+.planner-classic-overview .planner-file-details strong{font-size:.8rem;line-height:1.38;overflow-wrap:anywhere}
+.planner-classic-overview .planner-file-details small{font-size:.72rem;line-height:1.4;overflow-wrap:anywhere}
+.planner-classic-overview .planner-study-shared-library-card{height:clamp(360px,48vh,500px);display:flex;flex-direction:column;min-height:0}
+.planner-study-library-scroll{min-height:0;flex:1;overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable;overscroll-behavior:contain;padding-right:7px}
+.planner-study-library-scroll:focus-visible{outline-offset:-3px}
+.planner-study-library-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.planner-study-library-actions .btn{flex:1;min-width:110px;white-space:normal}
+.planner-classic-overview .planner-study-shared-library-card>.planner-resource-footer{flex:0 0 auto;margin-top:12px}
+.planner-task-visibility-hint{font-size:.75rem;color:var(--muted);line-height:1.5;margin:-3px 0 12px}
+@media(max-width:560px){html{font-size:17px}.planner-classic-overview .planner-study-shared-library-card{height:390px}}
