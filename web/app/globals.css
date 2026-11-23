@@ -1498,3 +1498,71 @@ html[data-study-hub-theme="light"]{color-scheme:light}
 @media(min-width:1800px){.page-content{max-width:1780px}.page-content:has(.planner-study-shell) .planner-classic-overview{grid-template-columns:minmax(0,1.35fr) minmax(340px,.85fr)}}
 /* Laptop height: keep the course context, but get to the actual checklist sooner. */
 @media(min-width:811px) and (max-width:1599px){.planner-study-heading{margin-bottom:8px}.planner-study-course-header{padding-bottom:0}.planner-study-hero{margin-top:10px;margin-bottom:9px}.planner-study-tabs{margin-bottom:9px}}
+
+.planner-resource-preview-copy small{color:color-mix(in srgb,var(--text) 27%,var(--muted))}
+
+/* v0.5.2 Polish 1 — Home is a two-column overview below the shared metrics.
+   Preserve existing course navigation and horizontal browsing for many courses. */
+@media (min-width:1121px){
+  .home-layout{grid-template-columns:minmax(0,1.65fr) minmax(305px,.85fr);gap:clamp(15px,1.35vw,24px)}
+  .home-course-panel{grid-column:1;grid-row:2}
+  .home-priorities{grid-column:1;grid-row:3}
+  .home-side-column{grid-column:2;grid-row:2 / span 2}
+}
+.home-course-grid.course-count-1{grid-auto-columns:100%}
+.home-course-grid.course-count-2{grid-auto-columns:calc((100% - 14px)/2)}
+.home-course-panel .home-course-tile{min-height:0}
+.home-course-panel .home-course-heading{gap:11px}
+.home-course-panel .home-course-progress>span{text-align:left}
+.home-course-panel .home-course-overview{gap:5px}
+.home-priority-row:not(.overdue) .home-priority-tag{display:none}
+.home-stat:not(.danger) .home-stat-icon.purple{color:#bb9aff}
+@media (min-width:1121px) and (max-width:1360px){
+  .home-layout{grid-template-columns:minmax(0,1.5fr) minmax(285px,.85fr)}
+  .home-course-grid.course-count-2{grid-auto-columns:100%}
+}
+
+/* Course Study Tasks and Exam Prep use one readable, compact row treatment. */
+.planner-course-task-summary{margin:0 0 12px;color:var(--muted);font-size:.72rem;line-height:1.5}
+.planner-course-task-filters{display:flex;gap:5px;flex-wrap:wrap;margin:0 0 13px;padding:4px;width:max-content;max-width:100%;background:var(--soft);border:1px solid var(--line);border-radius:11px}
+.planner-course-task-filters button{border:0;border-radius:8px;background:transparent;color:var(--muted);padding:8px 12px;font-size:.72rem;font-weight:750;cursor:pointer}
+.planner-course-task-filters button.active{color:var(--text);background:var(--paper);box-shadow:0 2px 8px #07081722}
+.planner-course-task-filters button:hover:not(.active){color:var(--text)}
+.planner-course-task-row{display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:12px;align-items:start;padding:13px 4px;position:relative}
+.planner-course-task-row>.task-completion-check{margin-top:5px;min-width:17px;min-height:17px}
+.planner-course-task-row .planner-course-task-info{min-width:0;flex:initial;line-height:1.5}
+.planner-course-task-info strong{font-size:.84rem;line-height:1.4}
+.planner-course-task-reference{display:block;color:#f0b69e;font-size:.77rem;font-weight:700;line-height:1.5;margin-top:2px;overflow-wrap:anywhere;font-variant-numeric:tabular-nums;letter-spacing:.012em}
+.planner-course-task-info small{font-size:.69rem;line-height:1.5;margin-top:3px;overflow-wrap:anywhere}
+.planner-course-task-actions{display:flex;gap:4px;align-items:flex-start;flex:0 0 auto!important}
+.planner-course-task-actions .icon-btn{width:34px;min-height:34px;display:grid;place-items:center;cursor:pointer}
+.planner-task-more{position:relative;flex-shrink:0}
+.planner-task-more>summary{list-style:none}
+.planner-task-more>summary::-webkit-details-marker{display:none}
+.planner-task-more[open]{z-index:5}
+.planner-task-more-panel{position:absolute;right:0;top:calc(100% + 5px);width:max-content;min-width:196px;max-width:min(300px,80vw);padding:6px;display:flex;flex-direction:column;gap:2px;background:var(--paper);color:var(--text);border:1px solid var(--line);border-radius:11px;box-shadow:0 13px 30px #08071650}
+.planner-task-more-panel button{display:flex;align-items:center;gap:9px;width:100%;text-align:left;border:0;background:transparent;color:var(--text);border-radius:7px;padding:9px 11px;font-size:.74rem;cursor:pointer}
+.planner-task-more-panel button:hover:not(:disabled),.planner-task-more-panel button:focus-visible{background:var(--soft)}
+.planner-task-more-panel button.danger{color:var(--urgent)}
+.planner-task-more-panel button:disabled{opacity:.5;cursor:not-allowed}
+.planner-exam-progress{margin:5px 0 14px;height:7px}
+.planner-exam-add{display:inline-flex;align-items:center;gap:7px;margin-top:15px}
+.planner-exam-card .exam-task-form{align-items:center;flex-wrap:wrap;margin-top:15px}
+.planner-exam-card .exam-task-form input{min-width:min(100%,210px)}
+@media(max-width:540px){
+  .planner-course-task-row{grid-template-columns:18px minmax(0,1fr);gap:9px}
+  .planner-course-task-actions{grid-column:2;justify-content:flex-end}
+  .planner-task-more-panel{right:0}
+}
+
+/* Course creation follows content length: code/weeks, full-width title,
+   semester/date, full-width goals. Keep scrollable dialogs for short laptops. */
+.planner-dialog .planner-course-form-grid{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}
+.planner-course-form-grid .planner-form-full{grid-column:1/-1;min-width:0}
+.planner-course-form-grid .planner-form-full .form-row{width:100%}
+.planner-course-form-grid textarea{min-height:90px}
+.planner-dialog .form-row input:focus,.planner-dialog .form-row select:focus,.planner-dialog .form-row textarea:focus{outline:2px solid transparent;outline-offset:0;box-shadow:0 0 0 2px color-mix(in srgb,#cf9fc0 50%,transparent)}
+@media(max-width:560px){.planner-dialog .planner-course-form-grid{grid-template-columns:minmax(0,1fr)}}
+@media(max-height:760px){.planner-dialog{max-height:calc(100dvh - 28px);overflow-y:auto;overscroll-behavior:contain}}
+
+.app-shell:not(.theme-dark) .planner-course-task-reference{color:#91566d}

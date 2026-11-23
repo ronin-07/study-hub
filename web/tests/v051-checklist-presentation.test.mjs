@@ -19,7 +19,7 @@ test('Study checklist keeps full context but removes duplicate kind labels', () 
   assert.match(study, /shortStudyDate\(i\.due_date\)/);
   assert.match(study, /document\.title/);
   assert.match(study, /<details className="planner-activity-notes">/);
-  assert.match(study, /!isActionable\(i\).*Checklist only/);
+  assert.doesNotMatch(study, /planner-activity-pill checklist-only/);
   assert.doesNotMatch(study, /Open document <ExternalLink/);
 });
 
