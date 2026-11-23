@@ -50,9 +50,11 @@ test('Home course tiles summarize without duplicating priority action lists',()=
   assert.match(home,/onClick=\{\(\)=>startFrom\(i\)\}/);
 });
 
-test('responsive styles widen only large Study workspaces and avoid new global font scale',()=>{
-  assert.match(css,/@media\(min-width:1800px\)/);
-  assert.match(css,/page-content:has\(\.planner-study-shell\)\{max-width:1780px/);
+test('responsive styles share the Study width across tabs without changing fonts',()=>{
+  assert.match(css,/\.page-content\{width:100%;max-width:1430px/);
+  assert.match(css,/@media\(min-width:1800px\)\{\.page-content\{max-width:1780px\}/);
+  assert.doesNotMatch(css,/\.dashboard-page\{max-width:/);
+  assert.match(css,/page-content:has\(\.planner-study-shell\) \.planner-classic-overview/);
   assert.match(css,/@media\(min-width:811px\) and \(max-width:1599px\)/);
   assert.match(css,/home-course-grid\.course-count-1/);
   assert.match(css,/planner-resource-preview-copy/);
