@@ -6,7 +6,7 @@ import type { User } from 'firebase/auth';
 import {
   ArrowLeft, ArrowRight, BookOpen, CalendarDays, Check, CheckCircle2, ChevronDown, Clock3,
   Cloud, ExternalLink, FileText, Folder, GraduationCap, Home, Link2, ListTodo, LoaderCircle, FolderCheck, ScanSearch,
-  Pause, Play, Plus, RotateCcw, Square, Timer, X, Sparkles, Sun, Moon, Target, AlertTriangle, BarChart3, LogOut, PanelLeftClose, PanelLeftOpen
+  Pause, Play, Plus, RotateCcw, Square, Timer, X, Sparkles, Sun, Moon, Target, AlertTriangle, BarChart3, LogOut, PanelLeftClose, PanelLeftOpen, Pencil, Search
 } from 'lucide-react';
 import { api, pdfBlob } from '@/lib/api';
 import { formatLocalClock, formatLocalDate } from '@/lib/clock';
@@ -18,6 +18,9 @@ import { CoursePlanner } from '@/components/course-planner';
 import { ProgressTrack, ProgressValue } from '@/components/progress-motion';
 import { visibleCourseDoneCount } from '@/lib/progress-presentation';
 import { FocusElapsed, FocusDial } from '@/components/focus-elapsed';
+import { FocusDurationFields } from '@/components/focus-duration-fields';
+import { formatFocusDuration } from '@/lib/focus-display';
+import { filterIndexedPdfs, type IndexedPdfFilter } from '@/lib/resource-view';
 import {
   previewPause, previewResume, recoverFocusClock, startFocusClock, pauseFocusClock,
   resumeFocusClock, focusClockSeconds, rekeyFocusClock, type FocusClockAnchor,
@@ -155,6 +158,7 @@ export default function Page() {
   const [finishSeconds,setFinishSeconds] = useState('0');
   const [reviewLimit,setReviewLimit] = useState(0);
   const [weeklyGoal,setWeeklyGoal] = useState(20);
+  const [editingFocusGoal,setEditingFocusGoal] = useState(false);
   useEffect(()=>{
     if(!quickFocusOpen)return;
     const onKey=(event:KeyboardEvent)=>{if(event.key==='Escape')setQuickFocusOpen(false);};
@@ -175,7 +179,13 @@ export default function Page() {
   const [driveIndex,setDriveIndex] = useState<DriveIndexed[]>([]);
   const [scanBusy,setScanBusy] = useState(false);
   const scanBusyRef = useRef(false);
-  const [indexFilter,setIndexFilter] = useState<'unlinked'|'all'|'needs-review'>('unlinked');
+  const [indexFilter,setIndexFilter] = useState<IndexedPdfFilter>('unlinked');
+  const [indexSearch,setIndexSearch] = useState('');
+  const [selectedPdfId,setSelectedPdfId] = useState<string|null>(null);
+  const linkIntentRef=useRef<{courseId:string;week:number;scope:'course'|'week';kind:Resource['kind']}|null>(null);
+  const [recentlyLinkedIds,setRecentlyLinkedIds]=useState<Set<string>>(()=>new Set());
+  const linkPanelRef=useRef<HTMLDivElement|null>(null);
+  const [foldersExpanded,setFoldersExpanded] = useState(false);
   const [visibleCount,setVisibleCount] = useState(30);
   const [linkCourse,setLinkCourse] = useState('');
   const [linkWeek,setLinkWeek] = useState(1);
@@ -556,6 +566,8 @@ export default function Page() {
     if(target==='calendar'){openCalendarDate(today);return;}
     if(target==='tasks'){setTaskLandingMode('today');setTaskJump(null);}
     if(target==='courses')setCourseLandingItem(null);
+    // Sidebar Resources is an independent browser, not an earlier course's linking context.
+    linkIntentRef.current=null;
     setTaskForm(false);
     setTab(target);
   };
@@ -778,12 +790,13 @@ export default function Page() {
     }
   };
   const linkDriveFile=(file:DriveEntry)=>{
-    if(mutationBusyRef.current)return;
+    if(mutationBusyRef.current||selectedPdfId!==file.id||recentlyLinkedIds.has(file.id))return;
     setLinkingFileId(file.id);
     void act(async()=>{
     if(!linkCourse)throw new Error('Select a course before linking a PDF');
     const saved=await api<Resource>('/api/resources',user,{method:'POST',body:{course_id:linkCourse,week_number:linkScope==='course'?null:linkWeek,title:file.name,kind:linkKind,source:'drive',drive_file_id:file.id,item_id:linkScope==='course'?null:(linkItem||null)}});
     // Reindex in the background; the returned resource updates the course immediately.
+    setRecentlyLinkedIds(previous=>new Set(previous).add(file.id));
     void loadIndex();
     return saved;
     },{collection:'resources'},{title:'PDF linked',detail:`${file.name} added to your course.`}).finally(()=>setLinkingFileId(null));
@@ -791,34 +804,36 @@ export default function Page() {
   const selectBackupFolder=()=>void act(async()=>{
     if(currentFolder.id==='root')throw new Error('Choose the Goodnotes backup folder, not the root of your Drive');
     const result=await api<{folder:DriveSource}>('/api/drive/source-folder',user,{method:'POST',body:{folder_id:currentFolder.id}});
-    setSourceFolder(result.folder);setDriveIndex([]);
+    setSourceFolder(result.folder);setDriveIndex([]);setSelectedPdfId(null);setRecentlyLinkedIds(new Set());
   },{collection:'none'},{title:'Backup folder selected',detail:'Ready to scan Goodnotes PDFs.'});
   const scanBackup=async()=>{
     if(scanBusyRef.current)return;
     scanBusyRef.current=true;setScanBusy(true);setError('');
     try {
       const result=await api<DriveScanResponse>('/api/drive/scan',user,{method:'POST'});
-      setDriveIndex(result.files);
+      setDriveIndex(result.files);setRecentlyLinkedIds(new Set(result.files.filter(file=>file.links.length>0).map(file=>file.id)));
       setSourceFolder(f=>f?{...f,scanned_at:result.scanned_at}:f);
       setVisibleCount(30);
       notify({kind:'success',title:'Drive scan completed',detail:`${result.count} PDFs indexed.`});
     }catch(e){notify({kind:'error',title:'Drive scan failed',detail:e instanceof Error?e.message:'Try again.',action:{label:'Retry scan',onClick:()=>{void scanBackup();}}});}
     finally{scanBusyRef.current=false;setScanBusy(false);}
   };
-  const confirmSuggestion=(entry:DriveIndexed)=>{
-    if(mutationBusyRef.current)return;
-    setLinkingFileId(entry.id);
-    void act(async()=>{
-    if (!entry.suggestion)throw new Error('This PDF needs manual course/week selection');
-    const suggestion=entry.suggestion;
-    const saved=await api<Resource>('/api/resources',user,{method:'POST',body:{course_id:suggestion.course_id,
-      week_number:['textbook','handwritten'].includes(suggestion.kind)?null:suggestion.week_number,title:entry.name,kind:suggestion.kind,source:'drive',drive_file_id:entry.id}});
-    // Reindex in the background; the returned resource updates the course immediately.
-    void loadIndex();
-    return saved;
-    },{collection:'resources'},{title:'PDF linked',detail:`${entry.name} added to your course.`}).finally(()=>setLinkingFileId(null));
+  const selectedIndexed=driveIndex.find(f=>f.id===selectedPdfId);
+  const selectedBrowsePdf=driveFiles.find(f=>f.id===selectedPdfId&&f.mimeType==='application/pdf');
+  const selectedPdf=selectedIndexed??selectedBrowsePdf;
+  const choosePdf=(entry:DriveEntry|DriveIndexed)=>{
+    // Never carry course/week selections from a different file into a new link.
+    setSelectedPdfId(entry.id);
+    const suggestion='suggestion' in entry ? entry.suggestion : null;
+    const intended=linkIntentRef.current;
+    setLinkCourse(suggestion?.course_id||intended?.courseId||'');
+    setLinkWeek(suggestion?.week_number||intended?.week||1);
+    setLinkScope(suggestion?( ['textbook','handwritten'].includes(suggestion.kind)?'course':'week'):(intended?.scope||'week'));
+    setLinkKind(suggestion?.kind||intended?.kind||'handwritten');
+    setLinkItem('');
+    if(window.innerWidth<=900){window.requestAnimationFrame(()=>linkPanelRef.current?.scrollIntoView({behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'}));}
   };
-  const indexedVisible=driveIndex.filter(f=>indexFilter==='all'||(indexFilter==='unlinked'?f.links.length===0:(!f.suggestion&&f.links.length===0)));
+  const indexedVisible=filterIndexedPdfs(driveIndex,indexFilter,indexSearch);
   const currentFolder=folderPath.at(-1)!;
   useEffect(()=>{if(tab==='library'&&drive.connected&&driveFiles.length===0)void browseDrive(currentFolder.id);},[tab,drive.connected]); // initial browse only
 
@@ -959,7 +974,7 @@ export default function Page() {
             courseId={courseId} weekNumber={weekNumber} landingItem={courseLandingItem} sectionJump={courseSectionJump} selectCourse={rememberCourse} selectWeek={rememberWeek}
             run={act} toggleItem={toggle} focusOn={startFrom}
             openResource={r=>{if(r.source==='drive'&&r.drive_file_id)previewPdf(r.drive_file_id,r.title,r.id,r.last_page);else if(r.url)window.open(r.url,'_blank','noopener,noreferrer');}}
-            openDrive={(id,week,kind,scope)=>{setLinkCourse(id);setLinkWeek(week);setLinkScope(scope);setLinkKind(kind);setLinkItem('');setTab('library');}}
+            openDrive={(id,week,kind,scope)=>{linkIntentRef.current={courseId:id,week,kind,scope};setSelectedPdfId(null);setLinkCourse(id);setLinkWeek(week);setLinkScope(scope);setLinkKind(kind);setLinkItem('');setTab('library');}}
           />}
 
           {tab==='tasks'&&<TasksPlanner items={tasks} courses={data.courses} user={user} busy={busy} pendingItems={pendingItems} completingIds={completingIds} exitingIds={exitingIds}
@@ -973,56 +988,113 @@ export default function Page() {
           {tab==='focus'&&<>
             <div className="page-heading"><div><span className="eyebrow"><Target size={13}/> DEEP WORK</span><h1>Find your flow.</h1><p>Settle into a distraction-free session. Every minute counts.</p></div></div>
             <div className="focus-layout"><Card className="focus-card">
-              {!active&&<div className="focus-settings"><FormRow label="Course (optional)"><select value={focusCourse} onChange={e=>{setFocusCourse(e.target.value);setFocusItem('');}}><option value="">General / personal</option>{data.courses.filter(c=>!c.archived).map(c=><option key={c.id} value={c.id}>{c.code} · {c.title}</option>)}</select></FormRow><FormRow label="Focus task (optional)"><select value={focusItem} onChange={e=>setFocusItem(e.target.value)}><option value="">No linked task</option>{focusTasksForContext(data.items,focusCourse).map(i=><option key={i.id} value={i.id}>{i.title}</option>)}</select></FormRow></div>}
-              {active&&<div className="focus-context"><Badge tone="good">Active session</Badge><strong>{data.items.find(i=>i.id===active.item_id)?.title||data.courses.find(c=>c.id===active.course_id)?.title||'General focus'}</strong></div>}
-              <div className="focus-modes">{(['25','50','90','free'] as const).map(m=><button key={m} disabled={!!active} className={focusMode===m?'current':''} onClick={()=>setFocusMode(m)}>{m==='free'?'Stopwatch':`${m} min`}</button>)}</div>
+              {!active&&<div className="focus-settings">
+                <FormRow label="Course (optional)"><select value={focusCourse} onChange={e=>{setFocusCourse(e.target.value);setFocusItem('');}}><option value="">General / personal</option>{data.courses.filter(c=>!c.archived).map(c=><option key={c.id} value={c.id}>{c.code} · {c.title}</option>)}</select></FormRow>
+                <FormRow label="Focus task (optional)"><select value={focusItem} onChange={e=>setFocusItem(e.target.value)}><option value="">No linked task</option>{focusTasksForContext(data.items,focusCourse).map(i=><option key={i.id} value={i.id}>{i.title}</option>)}</select></FormRow>
+              </div>}
+              {active&&<div className="focus-context">
+                <Badge tone={active.status==='paused'?'warning':'good'}>{active.status==='paused'?'Paused':'Focusing'}</Badge>
+                <strong>{data.items.find(i=>i.id===active.item_id)?.title||data.courses.find(c=>c.id===active.course_id)?.title||'General focus'}</strong>
+              </div>}
+              {active?<div className="focus-target-summary">{active.mode==='free'?'Stopwatch session':`${active.mode}-minute target`}</div>
+                :<div className="focus-modes">{(['25','50','90','free'] as const).map(m=><button key={m} className={focusMode===m?'current':''} onClick={()=>setFocusMode(m)}>{m==='free'?'Stopwatch':`${m} min`}</button>)}</div>}
               {active?<FocusDial session={active} anchor={focusClock}/>:<div className="timer-dial"><span className="dial-label">{focusMode==='free'?'STOPWATCH':'FOCUS TARGET'}</span><strong>{focusMode==='free'?'00:00:00':duration(Number(focusMode)*60)}</strong><span className="dial-sub">Ready when you are</span></div>}
-              {active? <div className="focus-buttons"><button className="btn secondary" onClick={()=>sessionAction(active.status==='running'?'pause':'resume')} disabled={focusBusy}>{active.status==='running'?<Pause size={17}/>:<Play size={17}/>} {active.status==='running'?'Pause':'Resume'}</button><button className="btn primary" disabled={focusBusy} onClick={reviewFinish}><Square size={15}/> Finish & review</button></div>:<button className="btn primary focus-start" disabled={busy||focusBusy} onClick={beginFocus}><Play size={18}/> Start focusing</button>}
-              <p className="focus-tip">Timed sessions end manually. Your timer continues if you close this tab.</p>
-            </Card><div className="stack"><Card><SectionTitle title="Your focus statistics"/><div className="focus-stat"><span>This week</span><strong><ProgressValue value={weekSeconds/3600} decimals={1} suffix=" hours"/></strong></div><div className="focus-stat"><span>All time</span><strong><ProgressValue value={totalSeconds/3600} decimals={1} suffix=" hours"/></strong></div><div className="focus-stat"><span>Completed sessions</span><strong>{data.focus_stats?.completed_sessions ?? data.sessions.filter(s=>s.status==='finished'&&(s.focus_seconds||0)>0).length}</strong></div></Card>
-              <Card className="focus-week-goal"><SectionTitle title="Weekly focus goal" aside={<Badge>{(weekSeconds/3600).toFixed(1)} / {weeklyGoal} h</Badge>}/>
+              {active?<div className="focus-buttons"><button className="btn secondary" onClick={()=>sessionAction(active.status==='running'?'pause':'resume')} disabled={focusBusy}>{active.status==='running'?<Pause size={17}/>:<Play size={17}/>} {active.status==='running'?'Pause':'Resume'}</button><button className="btn primary" disabled={focusBusy} onClick={reviewFinish}><Square size={15}/> Finish & review</button></div>
+                :<button className="btn primary focus-start" disabled={busy||focusBusy} onClick={beginFocus}><Play size={18}/> Start focusing</button>}
+              <p className="focus-tip">{active?.status==='paused'?'Paused time is excluded from your focus total.':active?'Keep this session open or return when you are ready to review it.':'Timed sessions end manually. Pause or review a session whenever you need.'}</p>
+            </Card><div className="stack">
+              <Card><SectionTitle title="Your focus statistics"/>
+                <div className="focus-stat"><span>This week</span><strong>{formatFocusDuration(weekSeconds)}</strong></div>
+                <div className="focus-stat"><span>All time</span><strong>{formatFocusDuration(totalSeconds)}</strong></div>
+                <div className="focus-stat"><span>Completed sessions</span><strong>{data.focus_stats?.completed_sessions ?? data.sessions.filter(s=>s.status==='finished'&&(s.focus_seconds||0)>0).length}</strong></div>
+              </Card>
+              <Card className="focus-week-goal"><SectionTitle title="Weekly focus goal" aside={<div className="focus-goal-aside"><span>{formatFocusDuration(weekSeconds)} / {weeklyGoal}h</span><button className="icon-btn" type="button" aria-label={editingFocusGoal?'Done editing weekly goal':'Edit weekly focus goal'} aria-expanded={editingFocusGoal} onClick={()=>setEditingFocusGoal(v=>!v)}>{editingFocusGoal?<Check size={16}/>:<Pencil size={16}/>}</button></div>}/>
                 <ProgressTrack className="home-progress-track" label="Weekly focus goal progress" value={weekPct} identity="focus-weekly-goal"/>
-                <div className="focus-week-goal-footer"><span><ProgressValue value={weekPct}/> of your weekly goal</span><label>Target <input type="number" min={1} max={80} aria-label="Weekly focus target in hours" value={weeklyGoal} onChange={e=>{const n=Math.max(1,Math.min(80,Number(e.target.value)||1));setWeeklyGoal(n);localStorage.setItem('studyhub-focus-goal',String(n));}}/> h/week</label></div>
-                <small>Target preference is stored on this device.</small>
-              </Card><Card><SectionTitle title="Recent sessions"/>{data.sessions.filter(s=>s.status==='finished'&&(s.focus_seconds||0)>0).sort((a,b)=>(b.ended_at||0)-(a.ended_at||0)).slice(0,5).map(s=><div className="session-row" key={s.id}><span><Check size={15}/></span><div><strong>{data.items.find(i=>i.id===s.item_id)?.title||'Focus session'}</strong><small>{new Date(s.started_at*1000).toLocaleDateString()} · {(s.focus_seconds||0)<60?`${s.focus_seconds} sec`:`${Math.round((s.focus_seconds||0)/60)} min`}</small></div></div>)}{!data.sessions.some(s=>s.status==='finished'&&(s.focus_seconds||0)>0)&&<p className="muted">Your finished sessions will appear here.</p>}</Card></div></div>
-
+                <div className="focus-week-goal-footer"><span><ProgressValue value={weekPct}/> of your weekly goal</span><span>This week</span></div>
+                {editingFocusGoal&&<div className="focus-goal-editor"><label>Target <input type="number" min={1} max={80} aria-label="Weekly focus target in hours" value={weeklyGoal} onChange={e=>{const n=Math.max(1,Math.min(80,Number(e.target.value)||1));setWeeklyGoal(n);localStorage.setItem('studyhub-focus-goal',String(n));}}/> hours/week</label><small>Saved on this device.</small></div>}
+              </Card>
+              <Card><SectionTitle title="Recent sessions"/>
+                {data.sessions.filter(s=>s.status==='finished'&&(s.focus_seconds||0)>0).sort((a,b)=>(b.ended_at||0)-(a.ended_at||0)).slice(0,5).map(s=><div className="session-row" key={s.id}>
+                  <span><Check size={15}/></span><div className="session-main"><strong>{data.items.find(i=>i.id===s.item_id)?.title||'Focus session'}</strong><small>{data.courses.find(c=>c.id===s.course_id)?`${data.courses.find(c=>c.id===s.course_id)?.code} · ${data.courses.find(c=>c.id===s.course_id)?.title} · `:''}{new Date(s.started_at*1000).toLocaleDateString()}</small></div><b className="session-duration">{formatFocusDuration(s.focus_seconds||0)}</b>
+                </div>)}
+                {!data.sessions.some(s=>s.status==='finished'&&(s.focus_seconds||0)>0)&&<p className="muted">Your finished sessions will appear here.</p>}
+              </Card>
+            </div></div>
           </>}
 
           {tab==='library'&&<>
-            <div className="page-heading"><div><span className="eyebrow"><Folder size={13}/> CONNECTED MATERIALS</span><h1>Resources</h1><p>Browse and link Goodnotes PDFs.</p></div><Badge tone={drive.connected?'good':'muted'}>{drive.connected?'Drive connected':'Drive not connected'}</Badge></div>
-            <div className="two-col-layout course-layout"><div className="stack">
-              {!drive.connected&&data.resources.length===0&&<PhotoEmptyState compact scene="resources" title="No resources yet" detail="Link slides, books, and notes from your courses." actionLabel="Open Study" onAction={()=>navigate('courses')}/>}
-              <Card><SectionTitle title="Google Drive connection"/>
-                <p className="muted">Use the PDF backup you already have in Goodnotes. Study Hub indexes file names and folder paths without copying the notes.</p>
-                {drive.connected?<div className="connection-status"><span className="live-dot"/> Connected privately <button className="text-button" onClick={()=>{if(confirm('Disconnect Google Drive and erase the local folder index? Existing linked resources will remain.'))void act(async()=>{await api('/api/drive/disconnect',user,{method:'DELETE'});setDrive({connected:false,configured:drive.configured});setDriveFiles([]);setSourceFolder(null);setDriveIndex([]);},{collection:'none'},{title:'Google Drive disconnected',detail:'Existing linked resources are kept.'});}}>Disconnect</button></div>:<button className="btn primary" disabled={!drive.configured||busy} onClick={connectDrive}><Cloud size={16}/> Connect my Drive</button>}
-                {!drive.configured&&<div className="subtle-notice">First add your own Google OAuth credentials to <code>backend/.env</code>. The rest of Study Hub works offline.</div>}
-              </Card>
-              {drive.connected&&<Card><SectionTitle title="Your Goodnotes backup folder" aside={sourceFolder?<Badge tone="good"><FolderCheck size={13}/> Selected</Badge>:<Badge>Not selected</Badge>}/>
-                {sourceFolder?<div className="backup-source"><div><strong><FolderCheck size={16}/> {sourceFolder.name}</strong><small>{sourceFolder.scanned_at?`Last scanned ${new Date(sourceFolder.scanned_at*1000).toLocaleString()}`:'Not scanned yet'}</small></div><button className="btn primary small" disabled={scanBusy||busy} onClick={()=>void scanBackup()}>{scanBusy?<LoaderCircle size={15} className="spin"/>:<ScanSearch size={15}/>} {scanBusy?'Scanning…':'Scan for PDFs'}</button></div>:<p className="subtle-notice">Browse below to open your Goodnotes backup folder, then choose <strong>Use this folder</strong>. Scanning is manual, so nothing happens in the background.</p>}
-                <div className="folder-picker-heading"><strong>Browse Drive folders</strong><button className="icon-btn" title="Refresh folder" disabled={driveBusy} onClick={()=>void browseDrive(currentFolder.id)}><RotateCcw size={16}/></button></div>
-                <div className="folder-path"><button onClick={()=>{setFolderPath([{id:'root',name:'My Drive'}]);void browseDrive('root');}}>My Drive</button>{folderPath.slice(1).map(f=><span key={f.id}> / {f.name}</span>)}</div>
-                <div className="folder-picker-actions">{folderPath.length>1&&<button className="btn secondary small" onClick={backFolder}><ArrowLeft size={14}/> Back</button>}{currentFolder.id!=='root'&&<button className="btn secondary small" disabled={busy} onClick={selectBackupFolder}><FolderCheck size={14}/> Use this folder</button>}</div>
-                {driveBusy&&<p className="muted"><LoaderCircle size={15} className="spin"/> Loading Drive folders…</p>}
-                {driveFiles.map(f=><div className="drive-row" key={f.id}><span className="resource-icon">{f.mimeType==='application/pdf'?<FileText size={18}/>:<Folder size={18}/>}</span><div className="task-content"><strong>{f.name}</strong><small>{f.mimeType==='application/pdf'?'PDF document':'Folder'}{f.modifiedTime?' · '+new Date(f.modifiedTime).toLocaleDateString():''}</small></div>{f.mimeType==='application/pdf'?<><button className="icon-btn" title="Read PDF" onClick={()=>previewPdf(f.id,f.name)}><BookOpen size={16}/></button><button className="btn secondary small" disabled={!linkCourse||busy} aria-busy={linkingFileId===f.id} onClick={()=>linkDriveFile(f)}>{linkingFileId===f.id?<><LoaderCircle size={14} className="spin"/> Linking…</>:'Link'}</button></>:<button className="icon-btn" title="Open folder" onClick={()=>openFolder(f)}><ArrowRight size={17}/></button>}</div>)}
-                {!driveBusy&&driveFiles.length===0&&<p className="muted">No PDFs or subfolders here.</p>}
-                {driveNext&&<button className="btn secondary full" onClick={()=>void browseDrive(currentFolder.id,true,driveNext)}>Load more</button>}
-              </Card>}
-              {drive.connected&&sourceFolder&&<Card><SectionTitle title="Discovered backup PDFs" aside={<Badge tone="good">{driveIndex.length} indexed</Badge>}/>
-                <p className="muted compact">Matches are suggestions only. Confirm them before linking.</p>
-                <div className="index-controls"><label>Show <select value={indexFilter} onChange={e=>{setIndexFilter(e.target.value as typeof indexFilter);setVisibleCount(30);}}><option value="unlinked">Unlinked files</option><option value="needs-review">Need manual matching</option><option value="all">All files</option></select></label><button className="btn secondary small" onClick={()=>void loadIndex()}><RotateCcw size={14}/> Refresh</button></div>
-                {indexedVisible.slice(0,visibleCount).map(f=><div className="indexed-pdf" key={f.id}><div className="indexed-pdf-head"><span className="resource-icon"><FileText size={18}/></span><div className="task-content"><strong>{f.name}</strong><small title={f.path}>{f.path}{f.modifiedTime?` · Updated ${new Date(f.modifiedTime).toLocaleDateString()}`:''}</small></div>{f.links.length>0?<Badge tone="good">Linked</Badge>:null}</div>
-                  {f.suggestion?<div className="match-recommendation"><span><Sparkles size={14}/> Suggested: {f.suggestion.course_code} · Week {f.suggestion.week_number} · {f.suggestion.kind}</span><Badge tone={f.suggestion.confidence==='high'?'good':'warning'}>{f.suggestion.confidence} confidence</Badge></div>:<p className="match-missing">No clear course/week match — select the fields on the right to link manually.</p>}
-                  <div className="indexed-actions"><button className="btn secondary small" onClick={()=>previewPdf(f.id,f.name)}><BookOpen size={14}/> Preview</button>{f.links.length===0&&f.suggestion&&<button className="btn primary small" disabled={busy} aria-busy={linkingFileId===f.id} onClick={()=>confirmSuggestion(f)}>{linkingFileId===f.id?<LoaderCircle size={14} className="spin"/>:<Check size={14}/>} {linkingFileId===f.id?'Linking…':'Confirm match'}</button>}{f.links.length===0&&<button className="btn secondary small" disabled={!linkCourse||busy} aria-busy={linkingFileId===f.id} onClick={()=>linkDriveFile(f)}>{linkingFileId===f.id?<LoaderCircle size={14} className="spin"/>:<Link2 size={14}/>} {linkingFileId===f.id?'Linking…':'Link manually'}</button>}</div>
-                </div>)}
-                {indexedVisible.length===0&&(driveIndex.length===0?<PhotoEmptyState compact scene="resources" title="No backup PDFs yet" detail="Scan your Goodnotes folder to discover PDF files." actionLabel="Scan folder" onAction={()=>void scanBackup()}/>:<EmptyState icon={<FileText size={23}/>} title="No files in this filter" detail="Try All files to view your indexed PDFs."/>)}
-                {indexedVisible.length>visibleCount&&<button className="btn secondary full" onClick={()=>setVisibleCount(n=>n+30)}>Show more ({indexedVisible.length-visibleCount} remaining)</button>}
-              </Card>}
-            </div><div className="stack"><Card><SectionTitle title="Link to a course or teaching week"/><FormRow label="Course"><select value={linkCourse} onChange={e=>{setLinkCourse(e.target.value);setLinkWeek(1);setLinkItem('');}}><option value="">Select course</option>{data.courses.filter(c=>!c.archived).map(c=><option key={c.id} value={c.id}>{c.code} · {c.title}</option>)}</select></FormRow><FormRow label="Resource belongs to"><select value={linkScope} onChange={e=>setLinkScope(e.target.value as 'course'|'week')}><option value="course">Course Library (all weeks)</option><option value="week">One teaching week</option></select></FormRow>{linkScope==='week'&&<FormRow label="Week"><select value={linkWeek} onChange={e=>{setLinkWeek(Number(e.target.value));setLinkItem('');}}>{Array.from({length:data.courses.find(c=>c.id===linkCourse)?.week_count||13},(_,n)=><option key={n+1} value={n+1}>Week {n+1}</option>)}</select></FormRow>}<FormRow label="Material type"><select value={linkKind} onChange={e=>setLinkKind(e.target.value as Resource['kind'])}>{(['handwritten','annotated','slides','textbook','exam_paper','exam_solution','other'] as const).map(k=><option key={k} value={k}>{k==='handwritten'?'Handwritten notes':k==='annotated'?'Annotated slides':k==='slides'?'Original slides':k==='textbook'?'Textbook':k==='exam_paper'?'Previous exam paper':k==='exam_solution'?'Exam solution':'Other'}</option>)}</select></FormRow>{linkScope==='week'&&<FormRow label="Attach to study item (optional)"><select value={linkItem} onChange={e=>setLinkItem(e.target.value)}><option value="">Entire week</option>{data.items.filter(i=>i.course_id===linkCourse&&i.week_number===linkWeek).map(i=><option key={i.id} value={i.id}>{i.title}</option>)}</select></FormRow>}</Card>
-            </div></div>
+            <div className="page-heading"><div><span className="eyebrow"><Folder size={13}/> CONNECTED MATERIALS</span><h1>Resources</h1><p>Find Goodnotes PDFs and link them to your coursework.</p></div></div>
+            <div className="resources-layout">
+              <div className="stack resources-list-column">
+                {!drive.connected&&data.resources.length===0&&<PhotoEmptyState compact scene="resources" title="No resources yet" detail="Link slides, books, and notes from your courses." actionLabel="Open Study" onAction={()=>navigate('courses')}/>}
+                <Card className="resources-source-card">
+                  <div className="resources-source-header"><div><strong><Cloud size={17}/> Google Drive source</strong><small>{sourceFolder?`Goodnotes backup · ${sourceFolder.name}`:'Choose your Goodnotes backup folder'}</small></div>
+                    <Badge tone={drive.connected?'good':'muted'}>{drive.connected?'Connected':'Not connected'}</Badge>
+                  </div>
+                  {drive.connected?<>
+                    <div className="resources-source-actions"><span className="resources-index-count"><FileText size={14}/> {driveIndex.length} indexed PDFs · {driveIndex.filter(f=>f.links.length>0).length} linked</span>
+                      <button className="btn secondary small" type="button" onClick={()=>setFoldersExpanded(v=>!v)} aria-expanded={foldersExpanded}>{foldersExpanded?'Hide Drive folders':'Change / browse folder'}</button>
+                      {sourceFolder&&<button className="btn primary small" disabled={scanBusy||busy} onClick={()=>void scanBackup()}>{scanBusy?<LoaderCircle size={14} className="spin"/>:<ScanSearch size={14}/>} {scanBusy?'Scanning…':'Scan PDFs'}</button>}
+                    </div>
+                    <div className="resources-connection-line"><span className="live-dot"/> Connected privately <button className="text-button" onClick={()=>{if(confirm('Disconnect Google Drive and erase the local folder index? Existing linked resources will remain.'))void act(async()=>{await api('/api/drive/disconnect',user,{method:'DELETE'});setDrive({connected:false,configured:drive.configured});setDriveFiles([]);setSourceFolder(null);setDriveIndex([]);setSelectedPdfId(null);setRecentlyLinkedIds(new Set());},{collection:'none'},{title:'Google Drive disconnected',detail:'Existing linked resources are kept.'});}}>Disconnect</button></div>
+                    {(foldersExpanded||!sourceFolder)&&<div className="resources-folder-browser">
+                      <div className="folder-picker-heading"><strong>Browse Drive folders</strong><button className="icon-btn" title="Refresh folder" disabled={driveBusy} onClick={()=>void browseDrive(currentFolder.id)}><RotateCcw size={16}/></button></div>
+                      <div className="folder-path"><button onClick={()=>{setFolderPath([{id:'root',name:'My Drive'}]);void browseDrive('root');}}>My Drive</button>{folderPath.slice(1).map(f=><span key={f.id}> / {f.name}</span>)}</div>
+                      <div className="folder-picker-actions">{folderPath.length>1&&<button className="btn secondary small" onClick={backFolder}><ArrowLeft size={14}/> Back</button>}{currentFolder.id!=='root'&&<button className="btn secondary small" disabled={busy} onClick={selectBackupFolder}><FolderCheck size={14}/> Use this folder</button>}</div>
+                      {driveBusy&&<p className="muted"><LoaderCircle size={15} className="spin"/> Loading Drive folders…</p>}
+                      {driveFiles.map(f=><div className="drive-row" key={f.id}><span className="resource-icon">{f.mimeType==='application/pdf'?<FileText size={18}/>:<Folder size={18}/>}</span><div className="task-content"><strong title={f.name}>{f.name}</strong><small>{f.mimeType==='application/pdf'?'PDF document':'Folder'}{f.modifiedTime?' · '+new Date(f.modifiedTime).toLocaleDateString():''}</small></div>{f.mimeType==='application/pdf'?<><button className="icon-btn" title="Preview PDF" onClick={()=>previewPdf(f.id,f.name)}><BookOpen size={16}/></button><button className="btn secondary small" onClick={()=>choosePdf(f)}>Select</button></>:<button className="icon-btn" title="Open folder" onClick={()=>openFolder(f)}><ArrowRight size={17}/></button>}</div>)}
+                      {!driveBusy&&driveFiles.length===0&&<p className="muted">No PDFs or subfolders here.</p>}
+                      {driveNext&&<button className="btn secondary full" onClick={()=>void browseDrive(currentFolder.id,true,driveNext)}>Load more</button>}
+                    </div>}
+                  </>:<>
+                    <p className="muted compact">Use your existing Goodnotes PDF backup. Only file names and folder paths are indexed, not copied notes.</p>
+                    <button className="btn primary" disabled={!drive.configured||busy} onClick={connectDrive}><Cloud size={16}/> Connect my Drive</button>
+                    {!drive.configured&&<div className="subtle-notice">First configure Google OAuth in the backend environment. The rest of Study Hub remains available.</div>}
+                  </>}
+                </Card>
+                {drive.connected&&sourceFolder&&<Card className="resources-index-card">
+                  <SectionTitle title="Discovered backup PDFs" aside={<Badge>{driveIndex.length} indexed</Badge>}/>
+                  <p className="muted compact">Suggestions are based on filenames. Review each course and week before linking.</p>
+                  <div className="resources-index-toolbar">
+                    <label className="resources-search"><Search size={16}/><input type="search" aria-label="Search indexed PDFs" placeholder="Search filenames or folders" value={indexSearch} onChange={e=>{setIndexSearch(e.target.value);setVisibleCount(30);}}/></label>
+                    <label className="resources-filter-label">Show <select aria-label="Filter indexed PDFs" value={indexFilter} onChange={e=>{setIndexFilter(e.target.value as typeof indexFilter);setVisibleCount(30);}}><option value="unlinked">Unlinked</option><option value="suggested">Suggested</option><option value="linked">Linked</option><option value="all">All files</option></select></label>
+                    <button className="icon-btn" title="Refresh indexed PDFs" onClick={()=>void loadIndex()}><RotateCcw size={16}/></button>
+                  </div>
+                  <div className="resources-index-rows">
+                    {indexedVisible.slice(0,visibleCount).map(f=><div className={`resources-index-row${selectedPdfId===f.id?' selected':''}`} key={f.id}>
+                      <button type="button" className="resources-select-pdf" onClick={()=>choosePdf(f)} aria-pressed={selectedPdfId===f.id}>
+                        <span className="resource-icon"><FileText size={18}/></span><span className="resources-file-content"><strong title={f.name}>{f.name}</strong><small title={f.path}>{f.path}{f.modifiedTime?` · Updated ${new Date(f.modifiedTime).toLocaleDateString()}`:''}</small>
+                          {f.links.length>0?<span className="resources-suggestion-label">Linked</span>:f.suggestion?<span className="resources-suggestion-label"><Sparkles size={13}/> Suggested: {f.suggestion.course_code} · Week {f.suggestion.week_number} · {f.suggestion.kind}</span>:<span className="resources-suggestion-label">Needs manual matching</span>}
+                        </span>
+                      </button>
+                      <button className="icon-btn" title={`Preview ${f.name}`} aria-label={`Preview ${f.name}`} onClick={()=>previewPdf(f.id,f.name)}><BookOpen size={16}/></button>
+                    </div>)}
+                  </div>
+                  {indexedVisible.length===0&&(driveIndex.length===0?<PhotoEmptyState compact scene="resources" title="No backup PDFs yet" detail="Scan your Goodnotes folder to discover PDF files." actionLabel="Scan folder" onAction={()=>void scanBackup()}/>:<EmptyState icon={<FileText size={23}/>} title="No matching files" detail="Try another search or filter."/>)}
+                  {indexedVisible.length>visibleCount&&<button className="btn secondary full" onClick={()=>setVisibleCount(n=>n+30)}>Show more ({indexedVisible.length-visibleCount} remaining)</button>}
+                </Card>}
+              </div>
+              <div className={`resources-link-column${selectedPdf?'':' is-empty'}`} ref={linkPanelRef}><Card className="resources-link-card">
+                <SectionTitle title="Link document"/>
+                {!selectedPdf?<div className="resources-no-selection"><FileText size={25}/><strong>Select a PDF to link</strong><p>Choose a file from Discovered PDFs or the Drive folder browser. You'll review its course and week here before confirming.</p></div>:<>
+                  <div className="resources-selected-file"><FileText size={18}/><div><strong title={selectedPdf.name}>{selectedPdf.name}</strong><small>Selected PDF · {selectedIndexed?.path||'Drive folder'}</small></div><button className="icon-btn" aria-label="Clear selected PDF" onClick={()=>setSelectedPdfId(null)}><X size={16}/></button></div>
+                  {(selectedIndexed?.links.length||recentlyLinkedIds.has(selectedPdf.id)) ? <div className="subtle-notice">This PDF is already linked. Open it from its course library, or select another document.</div>:<>
+                    {selectedIndexed?.suggestion&&<div className="resources-match-context"><Sparkles size={16}/><div><strong>Suggested: {selectedIndexed.suggestion.course_code} · Week {selectedIndexed.suggestion.week_number}</strong><small>{selectedIndexed.suggestion.confidence} confidence · Review before linking</small></div></div>}
+                    <FormRow label="Course"><select value={linkCourse} onChange={e=>{setLinkCourse(e.target.value);setLinkWeek(1);setLinkItem('');}}><option value="">Select course</option>{data.courses.filter(c=>!c.archived).map(c=><option key={c.id} value={c.id}>{c.code} · {c.title}</option>)}</select></FormRow>
+                    <FormRow label="Resource belongs to"><select value={linkScope} onChange={e=>setLinkScope(e.target.value as 'course'|'week')}><option value="course">Course Library (all weeks)</option><option value="week">One teaching week</option></select></FormRow>
+                    {linkScope==='week'&&<FormRow label="Week"><select value={linkWeek} onChange={e=>{setLinkWeek(Number(e.target.value));setLinkItem('');}}>{Array.from({length:data.courses.find(c=>c.id===linkCourse)?.week_count||13},(_,n)=><option key={n+1} value={n+1}>Week {n+1}</option>)}</select></FormRow>}
+                    <FormRow label="Material type"><select value={linkKind} onChange={e=>setLinkKind(e.target.value as Resource['kind'])}>{(['handwritten','annotated','slides','textbook','exam_paper','exam_solution','other'] as const).map(k=><option key={k} value={k}>{k==='handwritten'?'Handwritten notes':k==='annotated'?'Annotated slides':k==='slides'?'Original slides':k==='textbook'?'Textbook':k==='exam_paper'?'Previous exam paper':k==='exam_solution'?'Exam solution':'Other'}</option>)}</select></FormRow>
+                    {linkScope==='week'&&<FormRow label="Attach to study item (optional)"><select value={linkItem} onChange={e=>setLinkItem(e.target.value)}><option value="">Entire week</option>{data.items.filter(i=>i.course_id===linkCourse&&i.week_number===linkWeek).map(i=><option key={i.id} value={i.id}>{i.title}</option>)}</select></FormRow>}
+                    <button className="btn primary full" disabled={!linkCourse||busy||!!linkingFileId} aria-busy={linkingFileId===selectedPdf.id} onClick={()=>linkDriveFile(selectedPdf)}>{linkingFileId===selectedPdf.id?<LoaderCircle size={16} className="spin"/>:<Link2 size={16}/>} {linkingFileId===selectedPdf.id?'Linking…':'Confirm link'}</button>
+                    <p className="muted compact">Nothing is linked automatically. This action links only the selected PDF.</p>
+                  </>}
+                </>}
+              </Card></div>
+            </div>
           </>}
         </>}
       </main>
-      {finishReview&&active&&<div className="dialog-backdrop" role="presentation"><div className="dialog" role="dialog" aria-modal="true" aria-label="Review focus session"><button className="dialog-close" onClick={()=>setFinishReview(false)} aria-label="Cancel"><X size={18}/></button><h2>Review session</h2><p>Paused at {duration(reviewLimit)}. Adjust for idle time if needed.</p><FormRow label={`Actual focus seconds (maximum ${reviewLimit})`}><input type="number" min={0} max={reviewLimit} value={finishSeconds} onChange={e=>setFinishSeconds(e.target.value)}/></FormRow><div className="dialog-actions"><button className="btn secondary" onClick={()=>setFinishReview(false)}>Keep paused</button><button className="btn primary" disabled={focusBusy||active.status!=='paused'||!Number.isInteger(Number(finishSeconds))||Number(finishSeconds)<0||Number(finishSeconds)>reviewLimit} onClick={finish}>{focusBusy?(Number(finishSeconds)===0?'Discarding…':'Saving timer…'):(Number(finishSeconds)===0?'Discard empty session':'Save session')}</button></div></div></div>}
+      {finishReview&&active&&<div className="dialog-backdrop" role="presentation"><div className="dialog focus-review-dialog" role="dialog" aria-modal="true" aria-label="Review focus session"><button className="dialog-close" onClick={()=>setFinishReview(false)} aria-label="Cancel and keep paused"><X size={18}/></button><h2>Review focus session</h2><p>How much of this session was focused study?</p><div className="focus-review-duration"><span>Recorded active time</span><strong>{duration(reviewLimit)}</strong></div><FocusDurationFields seconds={finishSeconds} maximum={reviewLimit} onChange={setFinishSeconds}/><p className="muted compact">Adjust for idle time if needed. The counted duration cannot exceed {formatFocusDuration(reviewLimit)}.</p><div className="dialog-actions"><button className="btn secondary" onClick={()=>setFinishReview(false)}>Keep paused</button><button className="btn primary" disabled={focusBusy||active.status!=='paused'||!Number.isInteger(Number(finishSeconds))||Number(finishSeconds)<0||Number(finishSeconds)>reviewLimit} onClick={finish}>{focusBusy?(Number(finishSeconds)===0?'Discarding…':'Saving timer…'):(Number(finishSeconds)===0?'Discard empty session':'Save session')}</button></div></div></div>}
     </div>
     <nav className="mobile-nav" aria-label="Mobile navigation">{tabs.map(t=><button key={t.id} className={tab===t.id?'current':''} onClick={()=>navigate(t.id)}><t.icon size={19}/><span>{t.label}</span></button>)}</nav>
     {pdf&&<PdfWorkspace pdf={pdf} items={presentedItems} pendingItems={pendingItems} completingIds={completingIds}

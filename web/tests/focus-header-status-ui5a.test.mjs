@@ -15,5 +15,5 @@ test('Focus page hero has no redundant Running or Paused status badge', () => {
 test('active session state is still shown by the timer and accessible global control', () => {
   assert.match(page, /<FocusDial session=\{active\} anchor=\{focusClock\}\/>/);
   assert.match(page, /className="topbar-focus-session"/);
-  assert.match(page, /<Badge tone="good">Active session<\/Badge>/);
+  assert.match(page, /active\.status==='paused'\?'Paused':'Focusing'/);
 });
