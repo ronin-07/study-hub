@@ -29,13 +29,18 @@ test('activity edit allows chapter, note, kind and visibility updates',()=>{
   assert.match(study,/Include in Tasks and Calendar/);
 });
 
-test('overview replaces quick notes with a scrollable full library and past-exam actions',()=>{
+test('overview retains scrollable full library; exam categories remain in document type only',()=>{
   assert.doesNotMatch(study,/className="planner-study-notes-card"/);
   assert.doesNotMatch(study,/shared\.slice\(0,3\)/);
   assert.match(study,/planner-study-library-scroll/);
   assert.match(study,/exam_paper/);
   assert.match(study,/exam_solution/);
+  assert.doesNotMatch(study,/planner-study-library-actions/);
+  assert.doesNotMatch(study,/<Plus size=\{14\}\/> Past paper/);
+  assert.doesNotMatch(study,/<Plus size=\{14\}\/> Solution/);
   assert.match(css,/html\{font-size:18px\}/);
   assert.match(css,/\.planner-study-chapters/);
+  assert.match(css,/\.planner-learning-checklist \.planner-study-task>div>small\{[^}]*font-size:\.72rem/);
+  assert.match(css,/\.planner-study-chapters\{[^}]*font-size:\.82rem/);
   assert.match(css,/\.planner-study-library-scroll\{[^}]*overflow-y:auto/);
 });

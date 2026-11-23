@@ -429,10 +429,6 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
                   {shared.map(resourceRow)}
                   {!shared.length&&<p className="planner-study-hint">No shared textbooks, past exams, or Goodnotes notebooks linked yet.</p>}
                 </div>
-                {!isReadOnly&&<div className="planner-study-library-actions">
-                  <button className="btn secondary small" onClick={()=>openResourceForm('course',undefined,'exam_paper')}><Plus size={14}/> Past paper</button>
-                  <button className="btn secondary small" onClick={()=>openResourceForm('course',undefined,'exam_solution')}><Plus size={14}/> Solution</button>
-                </div>}
                 <button className="btn secondary full planner-resource-footer" onClick={()=>setWorkspaceTab('course-library')}><Library size={15}/> Open Course Library</button>
               </Card>
             </div>
