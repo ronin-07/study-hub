@@ -5,6 +5,7 @@ const read=p=>readFileSync(new URL(`../${p}`,import.meta.url),'utf8');
 const home=read('app/page.tsx');
 const study=read('components/course-planner.tsx');
 const css=read('app/globals.css');
+const menu=read('components/task-actions-menu.tsx');
 
 test('Home keeps all four metrics while giving courses/priorities the left column',()=>{
   for(const heading of ['Tasks today','Overdue','Upcoming deadlines','Focus this week','Today’s study courses','Today’s priorities','Next 7 days']) assert.ok(home.includes(heading));
@@ -32,8 +33,8 @@ test('Study Tasks has correct current-week and exam filters without duplicating 
   assert.match(study,/filteredCourseTasks\.map\(renderCourseTask\)/);
   assert.match(study,/All':filter==='week'\?'This week':'Exam prep'/);
   assert.match(study,/activityReference\(i\)/);
-  assert.match(study,/Remove from Tasks/);
-  assert.match(study,/Delete permanently/);
+  assert.match(menu,/Remove from Tasks/);
+  assert.match(menu,/Delete permanently/);
   assert.match(study,/toggleItem\(i\)/);
 });
 test('Exam Prep keeps one shared row style and uses on-demand creation with progress',()=>{

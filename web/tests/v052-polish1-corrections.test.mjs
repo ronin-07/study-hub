@@ -7,16 +7,17 @@ const read = name => readFileSync(new URL(`../${name}`, import.meta.url),'utf8')
 const planner = read('components/course-planner.tsx');
 const home = read('app/page.tsx');
 const css = read('app/globals.css');
+const taskMenu=read('components/task-actions-menu.tsx');
 
 test('Exam Prep editor presents course-wide revision records as Exam preparation, preserving the old data kind',()=>{
   assert.match(planner,/setEditingExamPrep\(Boolean\(item && item\.week_number === null && item\.kind === 'revision'\)\)/);
   assert.match(planner,/editingExamPrep\?<><input value="Exam preparation" readOnly/);
-  assert.match(planner,/Weekly Revision activities remain separate/);
+  assert.doesNotMatch(planner,/Weekly Revision activities remain separate/);
   assert.match(planner,/kind:'revision',is_task:true,title:examTitle\.trim\(\)/);
 });
 
 test('Exam Prep completion totals use canonical state, not held animation rows',()=>{
-  assert.match(planner,/const examProgressItems = progressItems\.filter/);
+  assert.match(planner,/const examProgressItems = examPreparationItems\(progressItems,selectedId\)/);
   assert.match(planner,/const examDoneCount = examProgressItems\.filter\(i => i\.done\)\.length/);
   assert.match(planner,/<Badge>\{examDoneCount\}\/\{examProgressItems\.length\} completed<\/Badge>/);
   assert.match(css,/\.planner-exam-card \.planner-course-task-row\.is-done:not\(\.is-completing\)/);
@@ -24,11 +25,12 @@ test('Exam Prep completion totals use canonical state, not held animation rows',
 
 test('action menus portal outside the clipped card and flip up near bottom of viewport',()=>{
   assert.match(planner,/function CourseTaskActionMenu/);
-  assert.match(planner,/createPortal\(/);
-  assert.match(planner,/rect\.top-menuHeight-gap/);
-  assert.match(planner,/below\+menuHeight<=window\.innerHeight-edge/);
-  assert.match(planner,/window\.addEventListener\('scroll',close,true\)/);
-  assert.match(planner,/event\.key==='Escape'/);
+  assert.match(planner,/TaskActionsMenu/);
+  assert.match(taskMenu,/createPortal\(/);
+  assert.match(taskMenu,/rect\.top-menuHeight-gap/);
+  assert.match(taskMenu,/below\+menuHeight<=window\.innerHeight-edge/);
+  assert.match(taskMenu,/window\.addEventListener\('scroll',close,true\)/);
+  assert.match(taskMenu,/event\.key==='Escape'/);
   assert.match(css,/\.planner-task-floating-menu\{position:fixed/);
   assert.doesNotMatch(planner,/<details className="planner-task-more">/);
 });

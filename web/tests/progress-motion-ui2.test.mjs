@@ -43,7 +43,7 @@ test('progress transitions are scoped to the progress components and not whole d
 
 test('Study course and weekly progress use canonical optimistic items, not the held checkbox projection', () => {
   assert.match(page,/progressItems=\{data\.items\}/);
-  assert.match(study,/progressItems\.filter\(i=>i\.course_id===selectedId\)/);
+  assert.match(study,/const progressCourseItems=courseLearningItems\(progressItems,selectedId\)/);
   assert.match(study,/progressWeekItems=progressCourseItems\.filter/);
   assert.match(study,/ProgressTrack key=\{selectedId\}/);
   assert.match(study,/ProgressValue key=\{`\$\{selectedId\}-\$\{weekNumber\}`\}/);

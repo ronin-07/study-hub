@@ -44,7 +44,7 @@ test('Tasks are concise and Calendar remains date-first with an expandable agend
   assert.match(tasks, /planner-v05-task-reference/);
   assert.match(tasks, /planner-v05-task-primary-date/);
   assert.match(tasks, /<details className="planner-v05-task-extra">/);
-  assert.match(tasks, /calendarRole==='due'\?'Deadline':i\.due_date===selectedDay\?'Planned and due':'Planned work'/);
+  assert.match(tasks, /calendarRole==='due'\?'Deadline':i\.due_date===selectedDay\?'Planned and due':'Planned'/);
   assert.match(tasks, /scheduled\.map\(i=>showRow\(i,true,false,'planned'\)\)/);
   assert.match(tasks, /due\.map\(i=>showRow\(i,false,false,'due'\)\)/);
   assert.match(tasks, /i\.due_date===selectedDay&&i\.planned_date!==selectedDay/);

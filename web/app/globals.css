@@ -1567,3 +1567,82 @@ html[data-study-hub-theme="light"]{color-scheme:light}
 @media(max-height:760px){.planner-dialog{max-height:calc(100dvh - 28px);overflow-y:auto;overscroll-behavior:contain}}
 
 .app-shell:not(.theme-dark) .planner-course-task-reference{color:#91566d}
+
+/* v0.5.2 Polish 2 — compact, consistent task management and date-first calendar. */
+.planner-v05-summary>div{padding:12px 16px;gap:2px}
+.planner-v05-summary strong{font-size:1.42rem}
+.planner-v05-list-heading{margin-bottom:8px}
+.planner-v052-subsection{margin-top:22px;padding-top:16px;border-top:1px solid var(--line)}
+.app-shell .planner-v05-task.task-completion-row{gap:12px;padding-block:12px;align-items:center}
+.planner-v05-taskbody{max-width:72ch}
+.planner-v05-row-actions{gap:4px;flex:0 0 auto}
+.planner-v05-row-actions .icon-btn{min-width:34px;min-height:34px}
+.planner-v052-plan{display:inline-flex;gap:6px;align-items:center}
+.planner-v05-list .planner-v05-task:hover,.planner-v05-list .planner-v05-task:focus-within{
+  background:var(--soft);border-radius:11px;
+}
+.planner-v052-calendar-workspace{display:grid;gap:15px}
+.planner-v052-calendar-summary{display:flex;gap:18px;align-items:center;flex-wrap:wrap;padding:3px 1px 11px;border-bottom:1px solid var(--line);font-size:.73rem;color:var(--muted)}
+.planner-v052-calendar-summary>span{display:inline-flex;align-items:center;gap:7px}
+.planner-v052-calendar-summary .overdue{color:var(--urgent)}
+.planner-v052-dot{width:9px;height:9px;flex:none;display:inline-block;border-radius:50%}
+.planner-v052-dot.planned{background:#b98ac8}
+.planner-v052-dot.due{background:#e9a17d}
+.planner-v052-dot.overdue{background:#e46b80}
+.planner-v052-unscheduled{border-top:1px solid var(--line);padding-top:7px}
+.planner-v052-unscheduled .planner-v05-inbox-toggle{display:inline-flex;align-items:center;min-height:34px;gap:6px;padding:8px 10px;border-radius:9px}
+.planner-v052-unscheduled .planner-v05-inbox-toggle:hover,.planner-v052-unscheduled .planner-v05-inbox-toggle:focus-visible{background:var(--soft)}
+.planner-v052-unscheduled .planner-v05-inbox{margin-top:5px}
+.planner-v05-calendar-layout{grid-template-columns:minmax(0,1.27fr) minmax(285px,.88fr)}
+.planner-v05-day{min-height:70px;gap:5px;padding:9px}
+.planner-v05-day.selected{box-shadow:inset 0 0 0 2px color-mix(in srgb,var(--teal) 75%,transparent)}
+.planner-v05-agenda .photo-empty-state.compact{min-height:190px;max-height:none}
+.planner-v05-agenda .photo-empty-state.compact .photo-empty-content{padding:34px 12px 14px}
+.planner-v05-agenda .planner-v05-taskbody{max-width:none}
+.planner-v05-calendar-role{margin-top:3px}
+.planner-no-learning-activities{display:block;max-width:170px;text-align:right;line-height:1.4;color:var(--muted)}
+/* Inset emphasis: identical row geometry before and after highlighting.
+   Keep the border inside the card instead of flush against the checkbox or PDF. */
+.app-shell .planner-learning-checklist .planner-activity-detail,
+.app-shell .planner-learning-checklist .planner-activity-detail.overdue{
+  margin:4px 0;padding:15px 13px;border-radius:12px;border:1px solid transparent;
+  border-bottom-color:var(--line);
+}
+.app-shell .planner-learning-checklist .planner-activity-detail:last-of-type{border-bottom-color:transparent}
+.app-shell .planner-learning-checklist .planner-activity-detail:hover,
+.app-shell .planner-learning-checklist .planner-activity-detail:focus-within{
+  background:var(--soft);border-color:color-mix(in srgb,var(--teal) 28%,transparent);
+}
+.app-shell .planner-learning-checklist .planner-activity-detail.planner-target-item{
+  padding:15px 13px;border-color:#edab9a!important;
+  background:linear-gradient(90deg,#f2a08020,#c39ae012);
+  box-shadow:inset 3px 0 0 #ffc09d;
+}
+.app-shell .planner-course-task-row{padding-inline:13px;border-radius:11px;border:1px solid transparent}
+.app-shell .planner-course-task-row:hover,.app-shell .planner-course-task-row:focus-within{
+  background:var(--soft);border-color:color-mix(in srgb,var(--teal) 22%,transparent);
+}
+.app-shell .planner-course-task-row.planner-target-item{padding-inline:13px;border-color:#edab9a!important}
+.app-shell .planner-v05-task.planner-target-item{padding-inline:16px;border-color:#edab9a!important}
+.app-shell .home-priority-row:focus-within,.app-shell .home-priority-row:hover{border-radius:12px}
+/* Form, resource and navigation focus remains visually inset without obscuring content. */
+.planner-resource-preview-card:focus-within,.planner-study-side-cards .card:focus-within{outline-offset:3px}
+@media(min-width:811px) and (max-width:1599px){
+  .planner-v05-day{min-height:64px;padding:7px}
+  .planner-v05-summary>div{padding:11px 14px}
+}
+@media(max-width:1200px){.planner-v05-calendar-layout{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:810px){
+  .app-shell .planner-learning-checklist .planner-activity-detail,
+  .app-shell .planner-learning-checklist .planner-activity-detail.overdue,
+  .app-shell .planner-learning-checklist .planner-activity-detail.planner-target-item{padding:13px 11px;gap:9px}
+  .planner-v052-calendar-summary{gap:11px}
+}
+@media(max-width:540px){
+  .planner-v05-day{padding:5px;min-height:57px}
+  .planner-v05-row-actions{flex-wrap:wrap;justify-content:flex-end}
+  .planner-v052-plan{padding:7px 9px}
+}
+@media(prefers-reduced-motion:reduce){
+  .planner-v05-list .planner-v05-task,.planner-course-task-row,.planner-activity-detail{transition:none!important}
+}

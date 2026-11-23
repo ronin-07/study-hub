@@ -39,6 +39,15 @@ export function upcomingWork(items: Item[], today: string): Item[] {
   return items.filter(i => !i.done && !belongsToToday(i, today));
 }
 
+/** Within Upcoming, planned work is separate from work with no planned date.
+ * A due date is still shown on an unscheduled task but does not imply a study plan. */
+export function upcomingSections(items: Item[], today: string): { scheduled: Item[]; unscheduled: Item[] } {
+  const future=upcomingWork(items,today);
+  const sort=(a:Item,b:Item)=>(a.planned_date||a.due_date||'9999').localeCompare(b.planned_date||b.due_date||'9999') || a.title.localeCompare(b.title);
+  return {scheduled:future.filter(i=>Boolean(i.planned_date)).sort(sort),
+    unscheduled:future.filter(i=>!i.planned_date).sort(sort)};
+}
+
 /** Does not include overdue deadlines; those appear in Today's priorities. */
 export function upcomingDeadlines(items: Item[], today: string): Item[] {
   return items.filter(i => !i.done && !!i.due_date && i.due_date >= today)

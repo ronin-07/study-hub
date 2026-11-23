@@ -30,7 +30,7 @@ test('resource previews navigate to documents but leave destructive controls in 
 });
 
 test('Study progress clarifies scope without altering optimistic completion counts',()=>{
-  assert.match(study,/const progressCourseItems=progressItems\.filter/);
+  assert.match(study,/const progressCourseItems=courseLearningItems\(progressItems,selectedId\)/);
   assert.match(study,/const progressWeekItems=progressCourseItems\.filter/);
   assert.match(study,/Course progress<\/span>/);
   assert.match(study,/course activities<\/small>/);

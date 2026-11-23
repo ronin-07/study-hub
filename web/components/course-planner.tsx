@@ -1,20 +1,21 @@
 'use client';
 
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { createPortal } from 'react-dom';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import type { User } from 'firebase/auth';
 import {
   Archive, ArrowRight, BookMarked, BookOpen, CalendarDays, CheckCircle2,
   ChevronDown, ChevronLeft, ChevronRight, Cloud, ExternalLink, FileText, FolderOpen, GraduationCap,
-  Library, ListChecks, ListFilter, LoaderCircle, MoreHorizontal, NotebookPen, Pencil, Plus, RotateCcw, Timer, Trash2, X
+  Library, ListChecks, ListFilter, LoaderCircle, NotebookPen, Pencil, Plus, RotateCcw, Timer, Trash2, X
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { MutationHint } from '@/lib/snapshot-cache';
 import { Badge, Card, EmptyState, FormRow, SectionTitle } from '@/components/common';
 import { ProgressTrack, ProgressValue } from '@/components/progress-motion';
+import { TaskActionsMenu } from '@/components/task-actions-menu';
 import { PhotoEmptyState } from '@/components/photo-empty-state';
 import type { FeedbackMessage } from '@/components/feedback-toasts';
 import { isActionable } from '@/lib/task-view';
+import { courseLearningItems, examPreparationItems } from '@/lib/study-progress';
 import { activityKindFallback, activityReference, activityStatus, activityStatusLabel, shortStudyDate } from '@/lib/activity-display';
 import { resolveWorkspaceSemester } from '@/lib/course-navigation';
 import { type Course, type Item, type Resource, type Semester, type Snapshot, formatDate, kindLabels, localToday } from '@/lib/types';
@@ -61,72 +62,10 @@ interface Props {
   openDrive: (courseId: string, weekNumber: number, kind: ResourceKind, scope: 'course' | 'week') => void;
 }
 
-/** A viewport-positioned menu stays visible even for the last row in a card.
- * The portal also avoids clipping from an ancestor's overflow boundary. */
-function CourseTaskActionMenu({item,busy,onEdit,onPlan,onRemove,onDelete}: {
+/** Study and Global Tasks share one accessible, viewport-aware action menu. */
+function CourseTaskActionMenu(props: {
   item:Item;busy:boolean;onEdit:()=>void;onPlan:()=>void;onRemove?:()=>void;onDelete:()=>void;
-}) {
-  const [open,setOpen]=useState(false);
-  const [coordinates,setCoordinates]=useState<{top:number;left:number}|null>(null);
-  const triggerRef=useRef<HTMLButtonElement|null>(null);
-  const menuRef=useRef<HTMLDivElement|null>(null);
-  const menuId=useId();
-  useLayoutEffect(()=>{
-    if(!open)return;
-    const trigger=triggerRef.current,menu=menuRef.current;
-    if(!trigger||!menu)return;
-    const rect=trigger.getBoundingClientRect();
-    const menuWidth=menu.offsetWidth,menuHeight=menu.offsetHeight;
-    const gap=6,edge=8;
-    const left=Math.max(edge,Math.min(rect.right-menuWidth,window.innerWidth-menuWidth-edge));
-    const below=rect.bottom+gap;
-    const above=rect.top-menuHeight-gap;
-    const top=below+menuHeight<=window.innerHeight-edge?below:
-      above>=edge?above:Math.max(edge,window.innerHeight-menuHeight-edge);
-    setCoordinates({top,left});
-  },[open]);
-  useEffect(()=>{
-    if(open&&coordinates)menuRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
-  },[open,coordinates]);
-  useEffect(()=>{
-    if(!open)return;
-    const close=()=>setOpen(false);
-    const onOutside=(event:PointerEvent)=>{
-      if(!menuRef.current?.contains(event.target as Node)&&
-         !triggerRef.current?.contains(event.target as Node))close();
-    };
-    const onKey=(event:KeyboardEvent)=>{
-      if(event.key==='Escape'){event.preventDefault();close();triggerRef.current?.focus();}
-    };
-    document.addEventListener('pointerdown',onOutside);
-    document.addEventListener('keydown',onKey);
-    window.addEventListener('resize',close);
-    // Capture scrolls inside the Study panel as well as the document.
-    window.addEventListener('scroll',close,true);
-    return ()=>{
-      document.removeEventListener('pointerdown',onOutside);
-      document.removeEventListener('keydown',onKey);
-      window.removeEventListener('resize',close);
-      window.removeEventListener('scroll',close,true);
-    };
-  },[open]);
-  const action=(handler:()=>void)=>()=>{setOpen(false);handler();};
-  return <>
-    <button type="button" ref={triggerRef} className="icon-btn" disabled={busy}
-      aria-label={`More actions for ${item.title}`} aria-haspopup="menu" aria-expanded={open}
-      aria-controls={open?menuId:undefined} title="More actions" onClick={()=>{setCoordinates(null);setOpen(v=>!v);}}>
-      <MoreHorizontal size={17}/>
-    </button>
-    {open&&typeof document!=='undefined'&&createPortal(<div id={menuId} ref={menuRef}
-      className="planner-task-floating-menu" role="menu" aria-label={`Actions for ${item.title}`}
-      style={{top:coordinates?.top??0,left:coordinates?.left??0,visibility:coordinates?'visible':'hidden'}}>
-      <button type="button" role="menuitem" disabled={busy} onClick={action(onEdit)}><Pencil size={14}/> Edit task</button>
-      <button type="button" role="menuitem" disabled={busy} onClick={action(onPlan)}><CalendarDays size={14}/> Plan or reschedule</button>
-      {onRemove&&<button type="button" role="menuitem" disabled={busy} onClick={action(onRemove)}><ListChecks size={14}/> Remove from Tasks</button>}
-      <button type="button" role="menuitem" className="danger" disabled={busy} onClick={action(onDelete)}><Trash2 size={14}/> Delete permanently</button>
-    </div>,document.querySelector('.app-shell')??document.body)}
-  </>;
-}
+}) { return <TaskActionsMenu {...props}/>; }
 
 /** Single registered semester -> course -> week navigation source of truth. */
 export function CoursePlanner({ data, progressItems, user, busy, pendingItems, completingIds, exitingIds, courseId, weekNumber, selectCourse, selectWeek, run, toggleItem, focusOn, openResource, openDrive, landingItem, sectionJump }: Props) {
@@ -206,14 +145,16 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
   const libraryKinds: ResourceKind[] = ['textbook', 'handwritten', 'annotated', 'exam_paper', 'exam_solution', 'slides', 'other'];
   const sharedPreview = [...shared].sort((a,b) => libraryKinds.indexOf(a.kind) - libraryKinds.indexOf(b.kind)).slice(0,3);
   const courseItems = data.items.filter(i => i.course_id === selectedId);
-  const examItems = courseItems.filter(i => i.week_number === null && i.kind === 'revision');
-  const examProgressItems = progressItems.filter(i => i.course_id === selectedId && i.week_number === null && i.kind === 'revision');
+  const examItems = examPreparationItems(courseItems,selectedId);
+  const examProgressItems = examPreparationItems(progressItems,selectedId);
   const examDoneCount = examProgressItems.filter(i => i.done).length;
   const actionableCourseItems = courseItems.filter(isActionable);
   const filteredCourseTasks = actionableCourseItems.filter(i=>courseTaskFilter==='all'||(courseTaskFilter==='week'?i.week_number===weekNumber:i.week_number===null));
   // UI1 holds a completed row visibly for 900ms; progress must use the canonical
   // optimistic state rather than that presentation-only checklist projection.
-  const progressCourseItems=progressItems.filter(i=>i.course_id===selectedId);
+  // Course learning progress is restricted to week-linked checklist activities.
+  // Course-wide Exam Prep has its own count and must not inflate this metric.
+  const progressCourseItems=courseLearningItems(progressItems,selectedId);
   const courseDoneCount=progressCourseItems.filter(i=>i.done).length;
   const courseCompletion=progressCourseItems.length?Math.round(100*courseDoneCount/progressCourseItems.length):0;
   const progressWeekItems=progressCourseItems.filter(i=>i.week_number===weekNumber);
@@ -504,7 +445,7 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
           </div>
           <div className="planner-hero planner-study-hero">
             <div><span>WEEK {weekNumber} · CONTINUE LEARNING</span><h3>{week?.title||`Continue with Week ${weekNumber}`}</h3>{week?.objectives&&<p>{week.objectives}</p>}</div>
-            <div className="planner-hero-progress"><span className="planner-progress-scope">Course progress</span><strong><ProgressValue key={selectedId} value={courseCompletion}/></strong><small>{courseDoneCount}/{progressCourseItems.length} course activities</small><ProgressTrack key={selectedId} identity={selectedId} value={courseCompletion} label="Course completion"/></div>
+            <div className="planner-hero-progress"><span className="planner-progress-scope">Course progress</span>{progressCourseItems.length?<><strong><ProgressValue key={selectedId} value={courseCompletion}/></strong><small>{courseDoneCount}/{progressCourseItems.length} course activities</small><ProgressTrack key={selectedId} identity={selectedId} value={courseCompletion} label="Course completion"/></>:<small className="planner-no-learning-activities">No learning activities yet</small>}</div>
           </div>
           <div className="planner-week-toolbar planner-study-week-toolbar">{weekPicker}{weekEditButton}</div>
           <nav className="planner-tabbar planner-study-tabs" aria-label="Course workspace sections">{([
@@ -607,7 +548,7 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
         {planItem.due_date&&<p className="planner-plan-note">This activity must be planned no later than {formatDate(planItem.due_date)}.</p>}
         {planItem.planned_date&&<p className="planner-plan-note">Clearing the date keeps this activity in the Tasks inbox as unscheduled work.</p>}
       </>}
-      {dialog==='item'&&<><h2>{editActivityId?'Edit study activity':'New study activity'}</h2><p>Reading, notes, and questions can reference a shared book or notebook.</p><form onSubmit={e=>void saveItem(e)}><FormRow label="Title"><input required value={itemDraft.title} onChange={e=>setItemDraft(p=>({...p,title:e.target.value}))}/></FormRow><div className="form-grid"><FormRow label="Activity type">{editingExamPrep?<><input value="Exam preparation" readOnly aria-readonly="true"/><small className="planner-exam-kind-note">Course-wide Exam Prep task. Weekly Revision activities remain separate.</small></>:<select value={itemDraft.kind} onChange={e=>setItemDraft(p=>({...p,kind:e.target.value as Item['kind']}))}>{(['lecture','notes','reading','questions','revision','assignment'] as const).map(kind=><option key={kind} value={kind}>{kindLabels[kind]}</option>)}</select>}</FormRow><FormRow label="Reference a shared book or notebook"><select value={itemDraft.resource_id} onChange={e=>setItemDraft(p=>({...p,resource_id:e.target.value}))}><option value="">No linked document</option>{[...shared,...weekResources].map(r=><option value={r.id} key={r.id}>{r.title}{r.week_number!==null?` (Week ${r.week_number})`:""}</option>)}</select></FormRow><FormRow label={itemDraft.kind==='questions'?'Question numbers':'Chapter / section'}><input value={itemDraft.chapter} placeholder={itemDraft.kind==='questions'?'3, 4, 5.6, 4.2.1':undefined} onChange={e=>setItemDraft(p=>({...p,chapter:e.target.value}))}/></FormRow><FormRow label="Pages from"><input type="number" min={1} value={itemDraft.page_start} onChange={e=>setItemDraft(p=>({...p,page_start:e.target.value}))}/></FormRow><FormRow label="Pages to"><input type="number" min={1} value={itemDraft.page_end} onChange={e=>setItemDraft(p=>({...p,page_end:e.target.value}))}/></FormRow><FormRow label="Planned date"><input type="date" max={itemDraft.due_date||undefined} value={itemDraft.planned_date} onChange={e=>setItemDraft(p=>({...p,planned_date:e.target.value}))}/></FormRow><FormRow label="Due date"><input type="date" min={itemDraft.planned_date||undefined} value={itemDraft.due_date} onChange={e=>setItemDraft(p=>({...p,due_date:e.target.value}))}/></FormRow></div><FormRow label="Notes (optional)"><textarea rows={3} maxLength={5000} placeholder="Quick notes, lecture takeaways or reference details" value={itemDraft.notes} onChange={e=>setItemDraft(p=>({...p,notes:e.target.value}))}/></FormRow><label className="inline-check"><input type="checkbox" checked={!itemDraft.hidden_from_tasks&&(itemDraft.kind==='assignment'||itemDraft.is_task||!!itemDraft.planned_date||!!itemDraft.due_date)} onChange={e=>setItemDraft(p=>({...p,is_task:e.target.checked,hidden_from_tasks:!e.target.checked}))}/> Include in Tasks and Calendar</label><div className="form-actions"><button type="button" className="btn secondary" disabled={busy} onClick={()=>setDialog(null)}>Cancel</button><button className="btn primary" disabled={busy||!itemDraft.title.trim()||Boolean(itemDraft.planned_date&&itemDraft.due_date&&itemDraft.planned_date>itemDraft.due_date)} aria-busy={busy}>{busy?<><LoaderCircle size={15} className="spin"/> Saving…</>:editActivityId?'Save activity':'Add activity'}</button></div></form></>}
+      {dialog==='item'&&<><h2>{editActivityId?'Edit study activity':'New study activity'}</h2><p>Reading, notes, and questions can reference a shared book or notebook.</p><form onSubmit={e=>void saveItem(e)}><FormRow label="Title"><input required value={itemDraft.title} onChange={e=>setItemDraft(p=>({...p,title:e.target.value}))}/></FormRow><div className="form-grid"><FormRow label="Activity type">{editingExamPrep?<><input value="Exam preparation" readOnly aria-readonly="true"/></>:<select value={itemDraft.kind} onChange={e=>setItemDraft(p=>({...p,kind:e.target.value as Item['kind']}))}>{(['lecture','notes','reading','questions','revision','assignment'] as const).map(kind=><option key={kind} value={kind}>{kindLabels[kind]}</option>)}</select>}</FormRow><FormRow label="Reference a shared book or notebook"><select value={itemDraft.resource_id} onChange={e=>setItemDraft(p=>({...p,resource_id:e.target.value}))}><option value="">No linked document</option>{[...shared,...weekResources].map(r=><option value={r.id} key={r.id}>{r.title}{r.week_number!==null?` (Week ${r.week_number})`:""}</option>)}</select></FormRow><FormRow label={itemDraft.kind==='questions'?'Question numbers':'Chapter / section'}><input value={itemDraft.chapter} placeholder={itemDraft.kind==='questions'?'3, 4, 5.6, 4.2.1':undefined} onChange={e=>setItemDraft(p=>({...p,chapter:e.target.value}))}/></FormRow><FormRow label="Pages from"><input type="number" min={1} value={itemDraft.page_start} onChange={e=>setItemDraft(p=>({...p,page_start:e.target.value}))}/></FormRow><FormRow label="Pages to"><input type="number" min={1} value={itemDraft.page_end} onChange={e=>setItemDraft(p=>({...p,page_end:e.target.value}))}/></FormRow><FormRow label="Planned date"><input type="date" max={itemDraft.due_date||undefined} value={itemDraft.planned_date} onChange={e=>setItemDraft(p=>({...p,planned_date:e.target.value}))}/></FormRow><FormRow label="Due date"><input type="date" min={itemDraft.planned_date||undefined} value={itemDraft.due_date} onChange={e=>setItemDraft(p=>({...p,due_date:e.target.value}))}/></FormRow></div><FormRow label="Notes (optional)"><textarea rows={3} maxLength={5000} placeholder="Quick notes, lecture takeaways or reference details" value={itemDraft.notes} onChange={e=>setItemDraft(p=>({...p,notes:e.target.value}))}/></FormRow><label className="inline-check"><input type="checkbox" checked={!itemDraft.hidden_from_tasks&&(itemDraft.kind==='assignment'||itemDraft.is_task||!!itemDraft.planned_date||!!itemDraft.due_date)} onChange={e=>setItemDraft(p=>({...p,is_task:e.target.checked,hidden_from_tasks:!e.target.checked}))}/> Include in Tasks and Calendar</label><div className="form-actions"><button type="button" className="btn secondary" disabled={busy} onClick={()=>setDialog(null)}>Cancel</button><button className="btn primary" disabled={busy||!itemDraft.title.trim()||Boolean(itemDraft.planned_date&&itemDraft.due_date&&itemDraft.planned_date>itemDraft.due_date)} aria-busy={busy}>{busy?<><LoaderCircle size={15} className="spin"/> Saving…</>:editActivityId?'Save activity':'Add activity'}</button></div></form></>}
       {dialog==='resource'&&<><h2>{resourceEditId?'Edit resource':'Link a resource'}</h2><p>Keep whole-course books and notebooks shared; use weekly links for lecture slides.</p><form onSubmit={e=>void saveResource(e)}><FormRow label="Resource title"><input required value={resourceDraft.title} onChange={e=>setResourceDraft(p=>({...p,title:e.target.value}))}/></FormRow><FormRow label="Available in"><select value={resourceScope} onChange={e=>setResourceScope(e.target.value as 'course'|'week')}><option value="course">Course Library — all weeks</option><option value="week">Only Week {weekNumber}</option></select></FormRow>{!editingResource&&<FormRow label="Document URL (HTTPS)"><input type="url" required value={resourceDraft.url} placeholder="https://..." onChange={e=>setResourceDraft(p=>({...p,url:e.target.value}))}/></FormRow>}<div className="form-grid"><FormRow label="Document type"><select value={resourceDraft.kind} onChange={e=>setResourceDraft(p=>({...p,kind:e.target.value as ResourceKind}))}>{(['textbook','handwritten','slides','annotated','exam_paper','exam_solution','other'] as const).map(k=><option key={k} value={k}>{resourceKindLabel(k)}</option>)}</select></FormRow>{!editingResource&&<FormRow label="Source"><select value={resourceDraft.source} onChange={e=>setResourceDraft(p=>({...p,source:e.target.value as 'dtu'|'link'}))}><option value="dtu">DTU Learn</option><option value="link">Other link</option></select></FormRow>}{resourceScope==='week'&&<FormRow label="Attach to study activity"><select value={resourceDraft.item_id} onChange={e=>setResourceDraft(p=>({...p,item_id:e.target.value}))}><option value="">Whole week</option>{items.map(i=><option value={i.id} key={i.id}>{i.title}</option>)}</select></FormRow>}<FormRow label="Chapter"><input value={resourceDraft.chapter} onChange={e=>setResourceDraft(p=>({...p,chapter:e.target.value}))}/></FormRow><FormRow label="Page start"><input type="number" min={1} value={resourceDraft.page_start} onChange={e=>setResourceDraft(p=>({...p,page_start:e.target.value}))}/></FormRow><FormRow label="Page end"><input type="number" min={1} value={resourceDraft.page_end} onChange={e=>setResourceDraft(p=>({...p,page_end:e.target.value}))}/></FormRow></div><div className="form-actions"><button type="button" className="btn secondary" disabled={busy} onClick={()=>setDialog(null)}>Cancel</button><button type="submit" className="btn primary" disabled={busy} aria-busy={busy}>{busy?<><LoaderCircle size={15} className="spin" aria-hidden="true"/> Saving…</>:'Save link'}</button></div></form></>}
       {busy&&<p className="planner-save-status" role="status" aria-live="polite"><LoaderCircle size={14} className="spin" aria-hidden="true"/> Saving changes to Study Hub…</p>}
     </div></div>}

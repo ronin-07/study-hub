@@ -62,7 +62,7 @@ test('all checklist surfaces use the shared controlled checkbox and visual row c
 
 test('persistent weekly, calendar, and PDF rows do not fade out then reappear',()=>{
   assert.match(tasks,/scheduled\.map\(i=>showRow\(i,true,false,'planned'\)\)/);
-  assert.match(tasks,/inbox\.map\(i=>showRow\(i,true,true\)\)/);
+  assert.match(tasks,/inbox\.map\(i=>showRow\(i,true,true,undefined,true\)\)/);
   assert.match(tasks,/listed\.map\(i=>showRow\(i,false,mode!==\'completed\'\)\)/);
   assert.match(css,/\.pdf-check \.task-completion-check:checked \+ span/);
 });
