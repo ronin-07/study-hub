@@ -1646,3 +1646,62 @@ html[data-study-hub-theme="light"]{color-scheme:light}
 @media(prefers-reduced-motion:reduce){
   .planner-v05-list .planner-v05-task,.planner-course-task-row,.planner-activity-detail{transition:none!important}
 }
+
+/* v0.5.2 Polish 2.1: use the full Tasks list width without stretching text lines.
+   Keep task dates and actions aligned, including under wide resizable sidebars. */
+.planner-v05-list{container-type:inline-size}
+.app-shell .planner-v05-list .planner-v052-task-row{
+  display:grid;
+  grid-template-columns:20px minmax(0,1fr) minmax(126px,160px) auto;
+  column-gap:17px;
+  align-items:center;
+  padding:15px 17px;
+  margin:0 0 9px;
+  border:1px solid var(--line);
+  border-radius:13px;
+  background:color-mix(in srgb,var(--paper) 80%,var(--soft));
+}
+.app-shell .planner-v05-list .planner-v052-task-row:last-child{margin-bottom:0;border-bottom-color:var(--line)}
+/* Deep-link and completion feedback must outrank the ordinary row surface. */
+.app-shell .planner-v05-list .planner-v052-task-row.planner-target-item{
+  background:linear-gradient(90deg,#f2a08026,#c39ae016);
+  box-shadow:inset 3px 0 0 #ffc09d,0 0 0 3px #e9ad8920;
+}
+.app-shell:not(.theme-dark) .planner-v05-list .planner-v052-task-row.planner-target-item{background:linear-gradient(90deg,#fff0dd,#f9eaf3)}
+.app-shell .planner-v05-list .planner-v052-task-row.is-completing{background:rgba(127,196,149,.09);box-shadow:inset 3px 0 0 rgba(127,196,149,.55)}
+.app-shell .planner-v05-list .planner-v052-task-row:hover,
+.app-shell .planner-v05-list .planner-v052-task-row:focus-within{
+  background:var(--soft);
+  border-color:color-mix(in srgb,var(--teal) 30%,var(--line));
+}
+.planner-v052-task-row>.task-completion-check{margin:0}
+.planner-v052-task-row .planner-v05-taskbody{width:100%;max-width:none;min-width:0}
+.planner-v052-task-row .planner-v05-task-heading>strong{font-size:.89rem;line-height:1.45}
+.planner-v052-task-row .planner-v05-task-reference{font-size:.8rem;margin-top:3px}
+.planner-v052-task-row .planner-v05-task-context{font-size:.72rem;line-height:1.5}
+.planner-v052-task-row .planner-v052-row-date{display:flex;flex-direction:column;align-items:flex-start;gap:5px;min-width:0;line-height:1.4}
+.planner-v052-task-row .planner-v052-date-line{display:inline-flex;align-items:center;gap:6px;max-width:100%;font-size:.73rem;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+.planner-v052-task-row .planner-v052-date-line svg{flex-shrink:0;opacity:.8}
+.planner-v052-task-row .planner-v052-date-line.due{color:#e8b08f;font-weight:730}
+.planner-v052-task-row .planner-v052-date-line.due.overdue{color:var(--urgent)}
+.planner-v052-task-row .planner-v052-date-line.muted{opacity:.8}
+.app-shell:not(.theme-dark) .planner-v052-task-row .planner-v052-date-line.due{color:#96566e}
+.planner-v052-task-row .planner-v05-row-actions{display:flex;justify-content:flex-end;justify-self:end;align-items:center;gap:3px;margin-left:0;max-width:none;white-space:nowrap}
+.planner-v052-task-row .planner-v05-row-actions .icon-btn{min-width:36px;min-height:36px}
+.planner-v052-task-row .planner-v052-plan{min-height:34px}
+.planner-v052-day-add{display:inline-flex;align-items:center;gap:7px;flex-shrink:0;white-space:nowrap;min-height:36px}
+/* On laptop-sized cards, keep actions at the right while dates move below the title. */
+@container (max-width:770px){
+  .app-shell .planner-v05-list .planner-v052-task-row{grid-template-columns:20px minmax(0,1fr) auto;column-gap:12px;row-gap:4px;padding:13px 14px}
+  .planner-v052-task-row .planner-v052-row-date{grid-column:2;grid-row:2;flex-direction:row;gap:8px;flex-wrap:wrap}
+  .planner-v052-task-row .planner-v05-row-actions{grid-column:3;grid-row:1 / span 2}
+}
+@container (max-width:500px){
+  .app-shell .planner-v05-list .planner-v052-task-row{grid-template-columns:20px minmax(0,1fr);column-gap:10px;padding:13px 11px}
+  .planner-v052-task-row .planner-v052-row-date{grid-column:2;grid-row:2}
+  .planner-v052-task-row .planner-v05-row-actions{grid-column:2;grid-row:3;justify-self:end;justify-content:flex-end;flex-wrap:wrap}
+}
+@media(max-width:540px){
+  .planner-v052-day-add{padding:7px 9px;font-size:.72rem;min-height:34px}
+  .planner-v05-agenda-title{align-items:flex-start}
+}

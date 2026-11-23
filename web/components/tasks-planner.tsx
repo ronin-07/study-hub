@@ -155,7 +155,7 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,completingIds
   const formCourse=availableCourses.find(c=>c.id===draft.course_id);
   const showRow=(i:Item,drag=false,removeOnComplete=false,calendarRole?:'planned'|'due',unscheduled=false)=>{
     const course=availableCourses.find(c=>c.id===i.course_id);
-    return <div className={'planner-v05-task task-completion-row'+(isOverdue(i,today)?' planner-task-overdue':'')+(highlightedTask===i.id?' planner-target-item':'')+(completingIds.has(i.id)?' is-completing':'')+(removeOnComplete&&exitingIds.has(i.id)?' is-exiting':'')} ref={highlightedTask===i.id?highlightedRef:undefined} key={i.id} draggable={drag&&!busy&&!i.done&&!pendingItems.has(i.id)&&!completingIds.has(i.id)} aria-busy={pendingItems.has(i.id)}
+    return <div className={'planner-v05-task task-completion-row'+(!calendarOnly?' planner-v052-task-row':'')+(isOverdue(i,today)?' planner-task-overdue':'')+(highlightedTask===i.id?' planner-target-item':'')+(completingIds.has(i.id)?' is-completing':'')+(removeOnComplete&&exitingIds.has(i.id)?' is-exiting':'')} ref={highlightedTask===i.id?highlightedRef:undefined} key={i.id} draggable={drag&&!busy&&!i.done&&!pendingItems.has(i.id)&&!completingIds.has(i.id)} aria-busy={pendingItems.has(i.id)}
         onDragStart={e=>{if(drag){e.dataTransfer.setData('text/plain',i.id);e.dataTransfer.effectAllowed='move';setDraggedTaskId(i.id);setDragNotice('');}}}
         onDragEnd={()=>{setDraggedTaskId(null);setHoverDay('');}}>
       {drag&&<GripVertical className="planner-v05-drag" size={15} aria-hidden="true"/>}
@@ -175,7 +175,7 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,completingIds
           </details>}
         </>:<>
           {activityReference(i)&&<div className="planner-v05-task-reference">{activityReference(i)}</div>}
-          {(i.due_date||i.planned_date&&mode!=='today')&&<div className="planner-v05-task-primary-date">{i.due_date?`Due ${shortStudyDate(i.due_date)}`:`Planned ${shortStudyDate(i.planned_date!)}`}</div>}
+          {calendarOnly&&(i.due_date||i.planned_date&&mode!=='today')&&<div className="planner-v05-task-primary-date">{i.due_date?`Due ${shortStudyDate(i.due_date)}`:`Planned ${shortStudyDate(i.planned_date!)}`}</div>}
           {(i.page_start!=null||i.notes?.trim()||(i.planned_date&&i.due_date))&&<details className="planner-v05-task-extra"><summary>More details</summary>
             {i.page_start!=null&&<span>Pages {i.page_start}{i.page_end!=null&&i.page_end!==i.page_start?`–${i.page_end}`:''}</span>}
             {i.planned_date&&i.due_date&&<span>Planned {shortStudyDate(i.planned_date)}</span>}
@@ -183,6 +183,11 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,completingIds
           </details>}
         </>}
       </div>
+      {!calendarOnly&&<div className="planner-v052-row-date" aria-label={`Dates for ${i.title}`}>
+        {i.planned_date&&<span className="planner-v052-date-line"><CalendarDays size={14} aria-hidden="true"/>{i.planned_date===today?'Planned today':`Planned ${shortStudyDate(i.planned_date)}`}</span>}
+        {i.due_date&&<span className={'planner-v052-date-line due'+(isOverdue(i,today)?' overdue':'')}><CalendarDays size={14} aria-hidden="true"/>Due {shortStudyDate(i.due_date)}</span>}
+        {!i.planned_date&&<span className="planner-v052-date-line muted">{i.due_date?'Needs planning':'Not scheduled'}</span>}
+      </div>}
       <div className="planner-v05-row-actions">
         {unscheduled&&<button className="btn secondary small planner-v052-plan" type="button" disabled={busy||pendingItems.has(i.id)} onClick={()=>openEdit(i)}><CalendarPlus size={15}/> Plan</button>}
         {i.resource_id&&<button className="icon-btn" disabled={busy} title="Open linked notes or textbook" aria-label={`Open resource for ${i.title}`} onClick={()=>onOpenResource(i)}><BookOpen size={16}/></button>}
@@ -195,7 +200,7 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,completingIds
   };
   return <>
     <div className="page-heading"><div><span className="eyebrow"><CalendarDays size={13}/> {calendarOnly?'YOUR STUDY CALENDAR':'YOUR TASKS & PLANS'}</span><h1>{calendarOnly?'Calendar':'Tasks'}</h1></div>
-      <button className="btn primary" onClick={()=>startCreate(mode==='calendar'?selectedDay:today)}><Plus size={16}/> New task</button></div>
+      {!calendarOnly&&<button className="btn primary" onClick={()=>startCreate(today)}><Plus size={16}/> New task</button>}</div>
     {!calendarOnly&&<div className="planner-v05-summary">
       <div><span>Planned today</span><strong>{plannedToday.length}</strong></div>
       <div><span>Upcoming deadlines</span><strong>{open.filter(i=>i.due_date&&i.due_date>=today).length}</strong></div>
@@ -228,7 +233,8 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,completingIds
         <p className="planner-v05-hint">Drag tasks to schedule. Use Edit on mobile.</p>
         {draggedTask&&hoverDay&&!canPlanOnDate(draggedTask,hoverDay)&&<p role="status" className="planner-v05-drop-notice"><AlertTriangle size={15} aria-hidden="true"/> Cannot plan after {formatDate(draggedTask.due_date!)}. Choose an earlier day.</p>}
         {dragNotice&&<p role="alert" className="planner-v05-drop-notice"><AlertTriangle size={15} aria-hidden="true"/> {dragNotice}</p>}
-      </div><div className="planner-v05-agenda"><div className="planner-v05-agenda-title"><div><span>SELECTED DAY</span><h3>{fullLabel(selectedDay)}</h3></div><button className="icon-btn" onClick={()=>startCreate(selectedDay)} aria-label="Add task for this day"><Plus size={18}/></button></div>
+      </div><div className="planner-v05-agenda"><div className="planner-v05-agenda-title"><div><span>SELECTED DAY</span><h3>{fullLabel(selectedDay)}</h3></div>
+        {(scheduled.length>0||due.length>0)&&<button type="button" className="btn secondary small planner-v052-day-add" onClick={()=>startCreate(selectedDay)} aria-label={`Plan task for ${fullLabel(selectedDay)}`}><Plus size={16}/> Plan task</button>}</div>
         {!scheduled.length&&!due.length?<PhotoEmptyState compact scene="calendar" title="Your calendar is free" detail="Nothing planned or due on this day." actionLabel="Add task" onAction={()=>startCreate(selectedDay)}/>:<>
           {scheduled.length>0&&<><h4>Planned work <span>{scheduled.length}</span></h4>{scheduled.map(i=>showRow(i,true,false,'planned'))}</>}
           {due.length>0&&<><h4>Other deadlines <span>{due.length}</span></h4>{due.map(i=>showRow(i,false,false,'due'))}</>}
