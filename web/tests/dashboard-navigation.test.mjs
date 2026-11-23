@@ -36,10 +36,10 @@ test('Home deadline links open course/week, or highlight a personal task, withou
  assert.doesNotMatch(planner, /if\(target\)openEdit\(target\)/);
 });
 
-test('Calendar deadline-only items can be opened directly',()=>{
+test('Calendar deadline-only items open their details without duplicating planned rows',()=>{
  assert.match(planner, /i\.due_date===selectedDay&&i\.planned_date!==selectedDay/);
- assert.match(planner, /aria-label=\{`Open task \$\{i\.title\}`\}/);
- assert.match(planner, /onClick=\{\(\)=>openEdit\(i\)\}/);
+ assert.match(planner, /due\.map\(i=>showRow\(i,false,false,'due'\)\)/);
+ assert.match(planner, /<details className="planner-v05-task-extra"/);
 });
 
 test('Home hero uses a standalone optimized panorama asset',()=>{

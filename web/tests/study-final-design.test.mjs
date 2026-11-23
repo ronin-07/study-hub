@@ -47,7 +47,7 @@ test('overview filters are scoped to selected course and teaching week',()=>{
   assert.match(course,/activityFilter==='completed'/);
   assert.match(course,/activityFilter==='planned'/);
   assert.match(course,/Boolean\(i\.due_date\)/);
-  assert.match(course,/isOverdue\(i,today\)/);
+  assert.match(course,/activityStatus\(i,today\)/);
 });
 
 test('week notes remain editable as activities without a separate quick-notes card',()=>{

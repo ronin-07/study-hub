@@ -18,8 +18,10 @@ test('Questions is a first-class activity kind with a question-specific form lab
   assert.equal(kindLabels.questions, 'Questions');
   assert.match(study, /'reading','questions','revision'/);
   assert.match(study, /itemDraft\.kind==='questions'\?'Question numbers':'Chapter \/ section'/);
-  assert.match(study, /i\.kind==='questions'\?'Questions'/);
-  assert.match(study, /formatStudyReference\(i\.chapter\)/);
+  assert.match(study, /activityReference\(i\)/);
+  const display = read('lib/activity-display.ts');
+  assert.match(display, /item\.kind === 'questions' \? 'Questions'/);
+  assert.match(display, /formatStudyReference\(item\.chapter\)/);
   assert.match(tasks, /'reading','questions','notes'/);
 });
 

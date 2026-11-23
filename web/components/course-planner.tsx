@@ -5,7 +5,7 @@ import type { User } from 'firebase/auth';
 import {
   Archive, ArrowRight, BookMarked, BookOpen, CalendarDays, CheckCircle2,
   ChevronDown, ChevronLeft, ChevronRight, Cloud, ExternalLink, FileText, FolderOpen, GraduationCap,
-  Library, ListChecks, ListFilter, LoaderCircle, NotebookPen, Pencil, Plus, RotateCcw, Timer, X
+  Library, ListChecks, ListFilter, LoaderCircle, NotebookPen, Pencil, Plus, RotateCcw, Timer, Trash2, X
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { MutationHint } from '@/lib/snapshot-cache';
@@ -13,9 +13,10 @@ import { Badge, Card, EmptyState, FormRow, SectionTitle } from '@/components/com
 import { ProgressTrack, ProgressValue } from '@/components/progress-motion';
 import { PhotoEmptyState } from '@/components/photo-empty-state';
 import type { FeedbackMessage } from '@/components/feedback-toasts';
-import { isActionable, isOverdue } from '@/lib/task-view';
+import { isActionable } from '@/lib/task-view';
+import { activityKindFallback, activityReference, activityStatus, activityStatusLabel, shortStudyDate } from '@/lib/activity-display';
 import { resolveWorkspaceSemester } from '@/lib/course-navigation';
-import { type Course, type Item, type Resource, type Semester, type Snapshot, formatDate, formatStudyReference, kindLabels, localToday } from '@/lib/types';
+import { type Course, type Item, type Resource, type Semester, type Snapshot, formatDate, kindLabels, localToday } from '@/lib/types';
 
 type SemesterOption = { key: string; name: string; id: string | null; registered: boolean };
 type WorkspaceTab = 'overview' | 'course-library' | 'week-resources' | 'tasks' | 'exam';
@@ -403,18 +404,29 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
               </div>}
               {filtersOpen&&<div id="study-activity-filters" className="planner-study-filters" aria-label="Filter weekly activities">{(['all','planned','due','completed'] as const).map(filter=><button key={filter} type="button" className={activityFilter===filter?'active':''} aria-pressed={activityFilter===filter} onClick={()=>setActivityFilter(filter)}>{filter[0].toUpperCase()+filter.slice(1)}</button>)}</div>}
               {filteredItems.length?filteredItems.map(i=>{
-                const overdue=isOverdue(i,today);
-                return <div className={'planner-task-row planner-study-task task-completion-row'+(overdue?' overdue':'')+(landingItem?.id===i.id?' planner-target-item':'')+(completingIds.has(i.id)?' is-completing':'')+((activityFilter==='planned'||activityFilter==='due')&&exitingIds.has(i.id)?' is-exiting':'')} ref={landingItem?.id===i.id?landingRef:undefined} key={i.id}>
+                const status=activityStatus(i,today);
+                const reference=activityReference(i);
+                const fallback=activityKindFallback(i)?.toLowerCase()===i.title.trim().toLowerCase()?null:activityKindFallback(i);
+                const document=i.resource_id?data.resources.find(r=>r.id===i.resource_id&&r.course_id===selectedId):undefined;
+                return <div className={'planner-task-row planner-study-task planner-activity-detail task-completion-row'+(status==='overdue'?' overdue':'')+(landingItem?.id===i.id?' planner-target-item':'')+(completingIds.has(i.id)?' is-completing':'')+((activityFilter==='planned'||activityFilter==='due')&&exitingIds.has(i.id)?' is-exiting':'')} ref={landingItem?.id===i.id?landingRef:undefined} key={i.id}>
                   <input type="checkbox" disabled={isReadOnly||busy||pendingItems.has(i.id)||completingIds.has(i.id)} className="task-completion-check" checked={i.done||completingIds.has(i.id)} onChange={()=>toggleItem(i)} aria-label={`Complete ${i.title}`}/>
-                  <div><strong className={i.done?'complete':''}>{i.title}</strong><small>{kindLabels[i.kind]}{i.planned_date?` · Planned ${formatDate(i.planned_date)}`:''}{i.due_date?` · Due ${formatDate(i.due_date)}`:''}{i.hidden_from_tasks?' · Checklist only':''}</small>{(i.chapter||i.page_start)&&<span className="planner-study-chapters">{i.chapter&&<span><b>{i.kind==='questions'?'Questions':i.kind==='reading'?'Chapters':'Section'}:</b> <span className="planner-study-ref-value">{formatStudyReference(i.chapter)}</span></span>}{i.page_start&&<span><b>Pages:</b> {i.page_start}{i.page_end?`–${i.page_end}`:''}</span>}</span>}
-                    {i.resource_id&&<button className="planner-inline-link" onClick={()=>{const r=shared.find(r=>r.id===i.resource_id)||weekResources.find(r=>r.id===i.resource_id);if(r)openResource(r);}}>Open document <ExternalLink size={12}/></button>}
+                  <div className="planner-activity-content">
+                    <div className="planner-activity-heading"><strong className={i.done?'complete':''}>{i.title}</strong>{status!=='none'&&<span className={`planner-activity-pill ${status}`}>{activityStatusLabel(status)}</span>}{!isActionable(i)&&<span className="planner-activity-pill checklist-only">Checklist only</span>}</div>
+                    {reference?<div className="planner-activity-reference">{reference}</div>:fallback&&<div className="planner-activity-kind">{fallback}</div>}
+                    {(i.page_start!=null||i.page_end!=null||i.planned_date||i.due_date)&&<div className="planner-activity-metadata">
+                      {(i.page_start!=null||i.page_end!=null)&&<span><BookOpen size={13} aria-hidden="true"/> Pages {i.page_start??'…'}{i.page_end!=null&&i.page_end!==i.page_start?`–${i.page_end}`:''}</span>}
+                      {i.planned_date&&<span><CalendarDays size={13} aria-hidden="true"/> Planned {shortStudyDate(i.planned_date)}</span>}
+                      {i.due_date&&<span><CalendarDays size={13} aria-hidden="true"/> Due {shortStudyDate(i.due_date)}</span>}
+                    </div>}
+                    {document&&<button type="button" className="planner-activity-document" onClick={()=>openResource(document)} title={`Open ${document.title}`}><FileText size={16} aria-hidden="true"/><span>{document.title}</span><ExternalLink size={15} aria-hidden="true"/></button>}
+                    {i.notes?.trim()&&<details className="planner-activity-notes"><summary><NotebookPen size={14} aria-hidden="true"/><span>Notes{` · ${i.notes.trim().split('\n')[0].slice(0,72)}`}</span><ChevronDown size={15} className="planner-notes-chevron" aria-hidden="true"/></summary><p>{i.notes}</p></details>}
                   </div>
-                  {overdue&&<span className="planner-study-status overdue">Overdue</span>}
-                  {!overdue&&i.planned_date===today&&!i.done&&<span className="planner-study-status">Today</span>}
-                  {!isReadOnly&&<button className="icon-btn" disabled={busy||pendingItems.has(i.id)} onClick={()=>openActivityForm(i)} title={`Edit ${i.title}`} aria-label={`Edit ${i.title}`}><Pencil size={16}/></button>}
-                  {!isReadOnly&&<button className="icon-btn" disabled={busy||i.done||pendingItems.has(i.id)||completingIds.has(i.id)} onClick={()=>openActivityPlan(i)} title={i.planned_date?`Reschedule ${i.title}`:`Plan ${i.title}`} aria-label={`Plan ${i.title}`}><CalendarDays size={16}/></button>}
-                  {!isReadOnly&&<button className="icon-btn" disabled={busy} aria-label={`Focus on ${i.title}`} onClick={()=>focusOn(i)}><Timer size={16}/></button>}
-                  {!isReadOnly&&<button className="icon-btn danger-hover" disabled={busy} aria-label={`Delete ${i.title}`} onClick={()=>void deleteItem(i)}><X size={15}/></button>}
+                  {!isReadOnly&&<div className="planner-activity-actions" role="group" aria-label={`${i.title} actions`}>
+                    <button className="icon-btn" disabled={busy||pendingItems.has(i.id)} onClick={()=>openActivityForm(i)} title={`Edit ${i.title}`} aria-label={`Edit ${i.title}`}><Pencil size={16}/></button>
+                    <button className="icon-btn" disabled={busy||i.done||pendingItems.has(i.id)||completingIds.has(i.id)} onClick={()=>openActivityPlan(i)} title={i.planned_date?`Reschedule ${i.title}`:`Plan ${i.title}`} aria-label={`Plan ${i.title}`}><CalendarDays size={16}/></button>
+                    <button className="icon-btn" disabled={busy} aria-label={`Focus on ${i.title}`} title={`Focus on ${i.title}`} onClick={()=>focusOn(i)}><Timer size={16}/></button>
+                    <button className="icon-btn danger-hover" disabled={busy} aria-label={`Delete ${i.title}`} title={`Delete ${i.title}`} onClick={()=>void deleteItem(i)}><Trash2 size={16}/></button>
+                  </div>}
                 </div>;
               }):<EmptyState icon={<CheckCircle2 size={23}/>} title={items.length?'No activities in this filter':'A fresh week'} detail={items.length?'Choose All to see every weekly activity.':'Add a lecture, reading, question set, or revision activity to begin.'}/>}
             </Card>

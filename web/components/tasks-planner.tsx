@@ -2,14 +2,15 @@
 
 import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent } from 'react';
 import type { User } from 'firebase/auth';
-import { AlertTriangle, ArrowLeft, ArrowRight, BookOpen, CalendarDays, CheckCircle2, Clock3, GripVertical, LoaderCircle, Plus, Repeat2, Timer, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, ArrowRight, BookOpen, CalendarDays, GripVertical, LoaderCircle, Plus, Repeat2, Timer, Trash2, X } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { FeedbackMessage } from '@/components/feedback-toasts';
 import type { MutationHint } from '@/lib/snapshot-cache';
-import { Card, DayStatus, FormRow } from '@/components/common';
+import { Card, FormRow } from '@/components/common';
 import { PhotoEmptyState } from '@/components/photo-empty-state';
 import { formatDate, kindLabels, localToday, type Course, type Item, type Priority } from '@/lib/types';
 import { canPlanOnDate, isOverdue, todayPriorities, upcomingWork, shiftCalendarMonth } from '@/lib/task-view';
+import { activityReference, activityKindFallback, activityStatus, activityStatusLabel, shortStudyDate } from '@/lib/activity-display';
 
 type Repeat = 'none'|'daily'|'weekly'|'monthly';
 type Mode = 'today'|'upcoming'|'calendar'|'completed';
@@ -148,18 +149,35 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,completingIds
   const draggedTask=draggedTaskId?items.find(i=>i.id===draggedTaskId):null;
   const formVisible=createOpen||editing!==null;
   const formCourse=availableCourses.find(c=>c.id===draft.course_id);
-  const showRow=(i:Item,drag=false,removeOnComplete=false)=>{
+  const showRow=(i:Item,drag=false,removeOnComplete=false,calendarRole?:'planned'|'due')=>{
     const course=availableCourses.find(c=>c.id===i.course_id);
     return <div className={'planner-v05-task task-completion-row'+(isOverdue(i,today)?' planner-task-overdue':'')+(highlightedTask===i.id?' planner-target-item':'')+(completingIds.has(i.id)?' is-completing':'')+(removeOnComplete&&exitingIds.has(i.id)?' is-exiting':'')} ref={highlightedTask===i.id?highlightedRef:undefined} key={i.id} draggable={drag&&!busy&&!i.done&&!pendingItems.has(i.id)&&!completingIds.has(i.id)} aria-busy={pendingItems.has(i.id)}
         onDragStart={e=>{if(drag){e.dataTransfer.setData('text/plain',i.id);e.dataTransfer.effectAllowed='move';setDraggedTaskId(i.id);setDragNotice('');}}}
         onDragEnd={()=>{setDraggedTaskId(null);setHoverDay('');}}>
       {drag&&<GripVertical className="planner-v05-drag" size={15} aria-hidden="true"/>}
       <input type="checkbox" className="task-completion-check" checked={i.done||completingIds.has(i.id)} disabled={busy||pendingItems.has(i.id)||completingIds.has(i.id)} aria-label={`Complete ${i.title}`} onChange={()=>onToggle(i)}/>
-      <div className="planner-v05-taskbody"><strong className={i.done?'complete':''}>{i.title}</strong>
-        <div className="planner-v05-tags"><span>{course?.code||'Personal'}</span>{i.kind==='assignment'&&<span>Assignment</span>}
-          {isOverdue(i,today)&&<span className="planner-overdue-tag"><AlertTriangle size={12}/> Overdue</span>}{i.priority==='high'&&<span className="priority">High priority</span>}
-          {i.repeat&&i.repeat!=='none'&&<span><Repeat2 size={12}/> {cadenceLabel[i.repeat]}</span>}
-        </div><DayStatus i={i}/>
+      <div className="planner-v05-taskbody">
+        <div className="planner-v05-task-heading"><strong className={i.done?'complete':''}>{i.title}</strong>{!calendarRole&&activityStatus(i,today)!=='none'&&<span className={`planner-v05-context-status ${activityStatus(i,today)}`}>{activityStatusLabel(activityStatus(i,today))}</span>}</div>
+        <div className="planner-v05-task-context">{course?.code||'Personal'}{i.week_number!=null?` · Week ${i.week_number}`:''}{i.kind==='assignment'?' · Assignment':''}{i.repeat&&i.repeat!=='none'?` · ${cadenceLabel[i.repeat]}`:''}</div>
+        {calendarRole?<>
+          <div className={`planner-v05-calendar-role ${calendarRole}`}>{calendarRole==='due'?'Deadline':i.due_date===selectedDay?'Planned and due':'Planned work'} · {shortStudyDate(selectedDay)}</div>
+          {(activityReference(i)||i.page_start!=null||i.notes?.trim()||i.resource_id||(calendarRole==='planned'&&i.due_date)||(calendarRole==='due'&&i.planned_date))&&<details className="planner-v05-task-extra"><summary>View activity details</summary>
+            {activityReference(i)&&<span className="planner-v05-task-reference">{activityReference(i)}</span>}
+            {i.page_start!=null&&<span>Pages {i.page_start}{i.page_end!=null&&i.page_end!==i.page_start?`–${i.page_end}`:''}</span>}
+            {i.planned_date&&<span>Planned {shortStudyDate(i.planned_date)}</span>}
+            {i.due_date&&<span>Due {shortStudyDate(i.due_date)}</span>}
+            {i.notes?.trim()&&<p>{i.notes}</p>}
+            {i.resource_id&&<button type="button" onClick={()=>onOpenResource(i)} className="planner-v05-inline-resource"><BookOpen size={14}/> Open linked document</button>}
+          </details>}
+        </>:<>
+          {(activityReference(i)||(activityKindFallback(i)?.toLowerCase()===i.title.trim().toLowerCase()?null:activityKindFallback(i)))&&<div className="planner-v05-task-reference">{activityReference(i)||(activityKindFallback(i)?.toLowerCase()===i.title.trim().toLowerCase()?null:activityKindFallback(i))}</div>}
+          {(i.due_date||i.planned_date)&&<div className="planner-v05-task-primary-date">{i.due_date?`Due ${shortStudyDate(i.due_date)}`:`Planned ${shortStudyDate(i.planned_date!)}`}</div>}
+          {(i.page_start!=null||i.notes?.trim()||(i.planned_date&&i.due_date))&&<details className="planner-v05-task-extra"><summary>More details</summary>
+            {i.page_start!=null&&<span>Pages {i.page_start}{i.page_end!=null&&i.page_end!==i.page_start?`–${i.page_end}`:''}</span>}
+            {i.planned_date&&i.due_date&&<span>Planned {shortStudyDate(i.planned_date)}</span>}
+            {i.notes?.trim()&&<p>{i.notes}</p>}
+          </details>}
+        </>}
       </div>
       <div className="planner-v05-row-actions">
         <button className="btn secondary small" disabled={busy||pendingItems.has(i.id)||completingIds.has(i.id)} onClick={()=>openEdit(i)}>Edit</button>
@@ -203,8 +221,8 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,completingIds
         {dragNotice&&<p role="alert" className="planner-v05-drop-notice"><AlertTriangle size={15} aria-hidden="true"/> {dragNotice}</p>}
       </div><div className="planner-v05-agenda"><div className="planner-v05-agenda-title"><div><span>SELECTED DAY</span><h3>{fullLabel(selectedDay)}</h3></div><button className="icon-btn" onClick={()=>startCreate(selectedDay)} aria-label="Add task for this day"><Plus size={18}/></button></div>
         {!scheduled.length&&!due.length?<PhotoEmptyState compact scene="calendar" title="Your calendar is free" detail="Nothing planned or due on this day." actionLabel="Add task" onAction={()=>startCreate(selectedDay)}/>:<>
-          <h4>Planned work <span>{scheduled.length}</span></h4>{scheduled.length?scheduled.map(i=>showRow(i,true)):<p className="planner-v05-hint">Nothing planned on this date.</p>}
-          <h4>Due on this day <span>{due.length}</span></h4>{due.length?due.map(i=><button type="button" key={i.id} className="planner-v05-due" onClick={()=>openEdit(i)} title={`Open ${i.title}`} aria-label={`Open task ${i.title}`}><Clock3 size={15}/><span>{i.title}</span>{i.done&&<CheckCircle2 size={14}/>}<ArrowRight size={14}/></button>):<p className="planner-v05-hint">No additional deadlines on this date.</p>}
+          <h4>Planned work <span>{scheduled.length}</span></h4>{scheduled.length?scheduled.map(i=>showRow(i,true,false,'planned')):<p className="planner-v05-hint">Nothing planned on this date.</p>}
+          <h4>Other deadlines <span>{due.length}</span></h4>{due.length?due.map(i=>showRow(i,false,false,'due')):<p className="planner-v05-hint">No additional deadlines on this date.</p>}
         </>}
         <button className="planner-v05-inbox-toggle" onClick={()=>setShowInbox(!showInbox)}>{showInbox?'Hide':'Show'} unscheduled tasks ({inbox.length})</button>
         {showInbox&&<div className="planner-v05-inbox">{inbox.length?inbox.map(i=>showRow(i,true,true)):<p className="planner-v05-hint">Your inbox is clear.</p>}</div>}
