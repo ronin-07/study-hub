@@ -5,7 +5,7 @@ import type { User } from 'firebase/auth';
 import {
   Archive, ArrowRight, BookMarked, BookOpen, CalendarDays, CheckCircle2,
   ChevronDown, ChevronLeft, ChevronRight, Cloud, ExternalLink, FileText, FolderOpen, GraduationCap,
-  Library, ListChecks, ListFilter, LoaderCircle, NotebookPen, Pencil, Plus, RotateCcw, Timer, Trash2, X
+  Library, ListChecks, ListFilter, LoaderCircle, MoreHorizontal, NotebookPen, Pencil, Plus, RotateCcw, Timer, Trash2, X
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { MutationHint } from '@/lib/snapshot-cache';
@@ -87,6 +87,10 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
   const [planDate, setPlanDate] = useState('');
   const [weekDraft, setWeekDraft] = useState({ title: '', objectives: '' });
   const [examTitle, setExamTitle] = useState('');
+  const [examEntryOpen, setExamEntryOpen] = useState(false);
+  const [courseTaskFilter, setCourseTaskFilter] = useState<'all'|'week'|'exam'>('all');
+  const [initialCourseDraft, setInitialCourseDraft] = useState<CourseDraft>(courseDraftDefaults);
+  const [initialSemesterDraft, setInitialSemesterDraft] = useState({ id: '', name: '', start_date: '', end_date: '' });
 
   // The parent course selection is authoritative (e.g. Home -> Open course).
   // Keep local semester selection when there is no selected course, such as an empty semester.
@@ -134,6 +138,8 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
   const sharedPreview = [...shared].sort((a,b) => libraryKinds.indexOf(a.kind) - libraryKinds.indexOf(b.kind)).slice(0,3);
   const courseItems = data.items.filter(i => i.course_id === selectedId);
   const examItems = courseItems.filter(i => i.week_number === null && i.kind === 'revision');
+  const actionableCourseItems = courseItems.filter(isActionable);
+  const filteredCourseTasks = actionableCourseItems.filter(i=>courseTaskFilter==='all'||(courseTaskFilter==='week'?i.week_number===weekNumber:i.week_number===null));
   // UI1 holds a completed row visibly for 900ms; progress must use the canonical
   // optimistic state rather than that presentation-only checklist projection.
   const progressCourseItems=progressItems.filter(i=>i.course_id===selectedId);
@@ -147,6 +153,7 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
   const isReadOnly = Boolean(selected?.archived);
   // Never carry a previous course or week's activity filter into a new workspace.
   useEffect(()=>{setActivityFilter('all');setFiltersOpen(false);},[selectedId,weekNumber]);
+  useEffect(()=>{setCourseTaskFilter('all');setExamEntryOpen(false);},[selectedId]);
 
   useEffect(() => {
     if (selected && weekNumber > selected.week_count) selectWeek(selected.week_count);
@@ -172,15 +179,26 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
   };
   const openCourseForm = (course?: Course) => {
     setEditCourseId(course?.id || '');
-    setCourseDraft(course ? {
+    const nextDraft = course ? {
       code: course.code, title: course.title, semester_key: courseSemester(course, semesterOptions),
       week_count: course.week_count, exam_date: course.exam_date || '', goals: course.goals || ''
-    } : { ...courseDraftDefaults, semester_key: currentSemesterKey });
+    } : { ...courseDraftDefaults, semester_key: currentSemesterKey };
+    setCourseDraft(nextDraft);
+    setInitialCourseDraft(nextDraft);
     setDialog('course');
   };
   const editSemester = (s?: Semester) => {
-    setSemDraft({ id: s?.id || '', name: s?.name || '', start_date: s?.start_date || '', end_date: s?.end_date || '' });
+    const nextDraft = { id: s?.id || '', name: s?.name || '', start_date: s?.start_date || '', end_date: s?.end_date || '' };
+    setSemDraft(nextDraft);
+    setInitialSemesterDraft(nextDraft);
     setDialog('semester');
+  };
+  const closeDialog = () => {
+    const changed = dialog==='semester'
+      ? JSON.stringify(semDraft)!==JSON.stringify(initialSemesterDraft)
+      : dialog==='course' && JSON.stringify(courseDraft)!==JSON.stringify(initialCourseDraft);
+    if(changed && !window.confirm('Discard your unsaved changes?'))return;
+    setDialog(null);
   };
   const saveSemester = async (e: FormEvent) => {
     e.preventDefault();
@@ -271,7 +289,7 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
     const ok = await run(() => api('/api/items',user,{method:'POST',body:{course_id:selected.id,week_number:null,
       kind:'revision',is_task:true,title:examTitle.trim()}}),{collection:'items'},
       {title:'Exam task added',detail:examTitle.trim()});
-    if (ok) setExamTitle('');
+    if (ok) {setExamTitle('');setExamEntryOpen(false);}
   };
   const openResourceForm = (scope: 'course' | 'week', resource?: Resource, suggestedKind?: ResourceKind) => {
     setResourceScope(scope); setResourceEditId(resource?.id || '');
@@ -312,7 +330,7 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
   const resourceKindLabel=(kind:ResourceKind)=>kind==='exam_paper'?'Previous exam paper':kind==='exam_solution'?'Exam solution':kind==='textbook'?'Textbook':kind==='handwritten'?'Handwritten notes':kind==='annotated'?'Annotated slides':kind==='slides'?'Slides':'Other';
   const resourcePreviewRow = (r:Resource) => <button type="button" className="planner-resource-preview-row" key={r.id} onClick={()=>openResource(r)} title={`Open ${r.title}`}>
     <span className="planner-resource-preview-icon">{r.kind==='textbook'?<BookOpen size={18}/>:r.kind==='handwritten'?<NotebookPen size={18}/>:<FileText size={18}/>}</span>
-    <span className="planner-resource-preview-copy"><strong>{r.title}</strong><small>{resourceKindLabel(r.kind)} · {sourceLabel(r)}</small></span>
+    <span className="planner-resource-preview-copy"><strong>{r.title}</strong><small>{r.kind==='other'?sourceLabel(r):`${resourceKindLabel(r.kind)} · ${sourceLabel(r)}`}</small></span>
     {r.source==='drive'?<BookOpen size={15} className="planner-resource-preview-open" aria-hidden="true"/>:<ExternalLink size={14} className="planner-resource-preview-open" aria-hidden="true"/>}
   </button>;
   const resourceRow = (r:Resource) => <div className="planner-file-row" key={r.id}>
@@ -322,6 +340,29 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
     {!isReadOnly&&<button type="button" className="icon-btn" title="Edit resource or move to Course Library" onClick={()=>openResourceForm(r.week_number==null?'course':'week',r)}><Pencil size={15}/></button>}
     {!isReadOnly&&<button type="button" className="icon-btn danger-hover" title="Unlink resource" onClick={()=>void removeResource(r)}><X size={15}/></button>}
   </div>;
+
+  const renderCourseTask = (i: Item) => {
+    const reference = activityReference(i);
+    const context = i.week_number!==null ? `Week ${i.week_number}` : 'Exam prep';
+    return <div className={'planner-task-row planner-course-task-row task-completion-row'+(landingItem?.id===i.id?' planner-target-item':'')+(completingIds.has(i.id)?' is-completing':'')} ref={landingItem?.id===i.id?landingRef:undefined} key={i.id}>
+      <input type="checkbox" className="task-completion-check" aria-label={`Complete ${i.title}`} disabled={isReadOnly||busy||pendingItems.has(i.id)||completingIds.has(i.id)} checked={i.done||completingIds.has(i.id)} onChange={()=>toggleItem(i)}/>
+      <div className="planner-course-task-info"><strong className={i.done?'complete':''}>{i.title}</strong>
+        {reference&&<span className="planner-course-task-reference">{reference}</span>}
+        <small>{context}{i.planned_date?` · Planned ${shortStudyDate(i.planned_date)}`:''}{i.due_date?` · Due ${shortStudyDate(i.due_date)}`:''}</small>
+      </div>
+      {!isReadOnly&&<div className="planner-course-task-actions">
+        <button type="button" className="icon-btn" disabled={busy} onClick={()=>focusOn(i)} aria-label={`Start focus for ${i.title}`} title="Start focus"><Timer size={16}/></button>
+        <details className="planner-task-more"><summary className="icon-btn" aria-label={`More actions for ${i.title}`} title="More actions"><MoreHorizontal size={17}/></summary>
+          <div className="planner-task-more-panel">
+            <button type="button" disabled={busy} onClick={e=>{e.currentTarget.closest('details')?.removeAttribute('open');openActivityForm(i);}}><Pencil size={14}/> Edit task</button>
+            <button type="button" disabled={busy} onClick={e=>{e.currentTarget.closest('details')?.removeAttribute('open');openActivityPlan(i);}}><CalendarDays size={14}/> Plan or reschedule</button>
+            {i.week_number!==null&&<button type="button" disabled={busy} onClick={e=>{e.currentTarget.closest('details')?.removeAttribute('open');void removeFromTasks(i);}}><ListChecks size={14}/> Remove from Tasks</button>}
+            <button type="button" className="danger" disabled={busy} onClick={e=>{e.currentTarget.closest('details')?.removeAttribute('open');void deleteItem(i);}}><Trash2 size={14}/> Delete permanently</button>
+          </div>
+        </details>
+      </div>}
+    </div>;
+  };
 
   const activeSemester = (data.semesters||[]).find(s=>s.id===semester?.id);
   const editingResource = data.resources.find(r=>r.id===resourceEditId);
@@ -340,7 +381,7 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
 
   return <>
     <div className="page-heading planner-page-heading planner-study-heading">
-      <div><span className="eyebrow"><GraduationCap size={13}/> STUDY WORKSPACE</span><h1>{semester?.name||'Your semesters'}</h1><p>{semester?`${activeCount} ${activeCount===1?'course':'courses'} · Choose a course to continue your week`:'Organize courses by semester, then continue your weekly study work.'}</p></div>
+      <div><span className="eyebrow"><GraduationCap size={13}/> STUDY WORKSPACE</span><h1>{semester?.name||'Your semesters'}</h1><p>{semester?`${activeCount} ${activeCount===1?'course':'courses'} in this semester`:'Organize courses by semester, then continue your weekly study work.'}</p></div>
       <div className="planner-heading-actions">
         {activeSemester&&<button className="btn secondary" onClick={()=>editSemester(activeSemester)} disabled={busy}><Pencil size={15}/> Edit semester</button>}
         <button type="button" className="btn primary" onClick={()=>openCourseForm()} disabled={busy||!semesterOptions.length}><Plus size={16}/> Course</button>
@@ -420,7 +461,7 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
                 return <div className={'planner-task-row planner-study-task planner-activity-detail task-completion-row'+(status==='overdue'?' overdue':'')+(landingItem?.id===i.id?' planner-target-item':'')+(completingIds.has(i.id)?' is-completing':'')+((activityFilter==='planned'||activityFilter==='due')&&exitingIds.has(i.id)?' is-exiting':'')} ref={landingItem?.id===i.id?landingRef:undefined} key={i.id}>
                   <input type="checkbox" disabled={isReadOnly||busy||pendingItems.has(i.id)||completingIds.has(i.id)} className="task-completion-check" checked={i.done||completingIds.has(i.id)} onChange={()=>toggleItem(i)} aria-label={`Complete ${i.title}`}/>
                   <div className="planner-activity-content">
-                    <div className="planner-activity-heading"><strong className={i.done?'complete':''}>{i.title}</strong>{status!=='none'&&<span className={`planner-activity-pill ${status}`}>{activityStatusLabel(status)}</span>}{!isActionable(i)&&<span className="planner-activity-pill checklist-only">Checklist only</span>}</div>
+                    <div className="planner-activity-heading"><strong className={i.done?'complete':''}>{i.title}</strong>{status!=='none'&&<span className={`planner-activity-pill ${status}`}>{activityStatusLabel(status)}</span>}</div>
                     {reference?<div className="planner-activity-reference">{reference}</div>:fallback&&<div className="planner-activity-kind">{fallback}</div>}
                     {(i.page_start!=null||i.page_end!=null||i.planned_date||i.due_date)&&<div className="planner-activity-metadata">
                       {(i.page_start!=null||i.page_end!=null)&&<span><BookOpen size={13} aria-hidden="true"/> Pages {i.page_start??'…'}{i.page_end!=null&&i.page_end!==i.page_start?`–${i.page_end}`:''}</span>}
@@ -467,26 +508,30 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
             {weekResources.length?weekResources.map(resourceRow):<PhotoEmptyState scene="study" title="No weekly materials" detail="Link lecture slides or annotated PDFs for this week." actionLabel={isReadOnly?undefined:'Add resource'} onAction={isReadOnly?undefined:()=>openResourceForm('week')}/>}
             {!isReadOnly&&<button className="btn secondary full" onClick={()=>openDrive(selected.id,weekNumber,'annotated','week')}><Cloud size={16}/> Browse Goodnotes backups</button>}
           </Card>}
-          {workspaceTab==='tasks'&&<Card><SectionTitle title="Course study tasks" aside={!isReadOnly&&<button className="btn primary small" onClick={()=>{openActivityForm();setItemDraft({...itemDraftDefaults,kind:'assignment',is_task:true});}}><Plus size={14}/> Add task</button>}/>
-            {courseItems.filter(i=>isActionable(i)).map(i=><div className={'planner-task-row task-completion-row'+(landingItem?.id===i.id?' planner-target-item':'')+(completingIds.has(i.id)?' is-completing':'')} ref={landingItem?.id===i.id?landingRef:undefined} key={i.id}><input type="checkbox" className="task-completion-check" disabled={isReadOnly||busy||pendingItems.has(i.id)||completingIds.has(i.id)} checked={i.done||completingIds.has(i.id)} onChange={()=>toggleItem(i)}/><div><strong className={i.done?'complete':''}>{i.title}</strong><small>{i.week_number?`Week ${i.week_number}`:'Exam prep'} · {kindLabels[i.kind]}{i.due_date?` · Due ${formatDate(i.due_date)}`:''}{i.hidden_from_tasks?' · Checklist only':''}</small></div>{!isReadOnly&&<button className="icon-btn" onClick={()=>focusOn(i)} title="Start focus"><Timer size={16}/></button>}{!isReadOnly&&i.week_number!==null&&<button className="icon-btn" disabled={busy} onClick={()=>void removeFromTasks(i)} title="Remove from Tasks; keep weekly activity" aria-label={`Remove ${i.title} from Tasks`}><X size={16}/></button>}</div>)}
-            {!courseItems.some(i=>isActionable(i))&&<EmptyState icon={<CalendarDays size={24}/>} title="No scheduled work" detail="Add assignments or schedule a revision activity."/>}
+          {workspaceTab==='tasks'&&<Card className="planner-course-tasks-card"><SectionTitle title="Course study tasks" aside={!isReadOnly&&<button className="btn primary small" onClick={()=>{openActivityForm();setItemDraft({...itemDraftDefaults,kind:'assignment',is_task:true});}}><Plus size={14}/> Add task</button>}/>
+            <p className="planner-course-task-summary">{actionableCourseItems.length} {actionableCourseItems.length===1?'task':'tasks'} · {actionableCourseItems.filter(i=>i.done).length} completed</p>
+            <div className="planner-course-task-filters" role="group" aria-label="Filter course study tasks">{(['all','week','exam'] as const).map(filter=><button key={filter} type="button" className={courseTaskFilter===filter?'active':''} aria-pressed={courseTaskFilter===filter} onClick={()=>setCourseTaskFilter(filter)}>{filter==='all'?'All':filter==='week'?'This week':'Exam prep'}</button>)}</div>
+            <div className="planner-course-task-list">{filteredCourseTasks.map(renderCourseTask)}</div>
+            {!filteredCourseTasks.length&&<EmptyState icon={<CalendarDays size={24}/>} title={actionableCourseItems.length?'Nothing in this filter':'No scheduled work'} detail={actionableCourseItems.length?'Choose All to see the other course tasks.':'Add assignments or schedule a revision activity.'}/>}
           </Card>}
-          {workspaceTab==='exam'&&<Card><SectionTitle title="Exam preparation" aside={<Badge>{examItems.filter(i=>i.done).length}/{examItems.length} completed</Badge>}/>
-            {!isReadOnly&&<form className="exam-task-form" onSubmit={e=>void saveExam(e)}><input aria-label="Exam preparation task" placeholder="Practise old exam papers" value={examTitle} onChange={e=>setExamTitle(e.target.value)} required/><button className="btn primary small" disabled={busy||!examTitle.trim()} aria-busy={busy}>{busy?<><LoaderCircle size={14} className="spin"/> Saving…</>:'Add task'}</button></form>}
-            {examItems.map(i=><div className={'planner-task-row task-completion-row'+(landingItem?.id===i.id?' planner-target-item':'')+(completingIds.has(i.id)?' is-completing':'')} ref={landingItem?.id===i.id?landingRef:undefined} key={i.id}><input type="checkbox" className="task-completion-check" disabled={isReadOnly||busy||pendingItems.has(i.id)||completingIds.has(i.id)} checked={i.done||completingIds.has(i.id)} onChange={()=>toggleItem(i)}/><div><strong className={i.done?'complete':''}>{i.title}</strong></div>{!isReadOnly&&<button className="icon-btn" onClick={()=>focusOn(i)} title="Start focus"><Timer size={16}/></button>}</div>)}
+          {workspaceTab==='exam'&&<Card className="planner-exam-card"><SectionTitle title="Exam preparation" aside={<Badge>{examItems.filter(i=>i.done).length}/{examItems.length} completed</Badge>}/>
+            <p className="planner-course-task-summary">Revision checklist</p>
+            {examItems.length>0&&<ProgressTrack className="planner-exam-progress" identity={`${selectedId}-exam`} label="Exam revision completion" value={Math.round(examItems.filter(i=>i.done).length/examItems.length*100)}/>}
+            <div className="planner-course-task-list">{examItems.map(renderCourseTask)}</div>
             {!examItems.length&&<EmptyState icon={<BookMarked size={23}/>} title="Exam preparation starts here" detail="Add past papers, mock exams and course-wide revision plans."/>}
+            {!isReadOnly&&(examEntryOpen?<form className="exam-task-form" onSubmit={e=>void saveExam(e)}><input aria-label="Exam preparation task" autoFocus placeholder="Practise old exam papers" value={examTitle} onChange={e=>setExamTitle(e.target.value)} required/><button className="btn primary small" disabled={busy||!examTitle.trim()} aria-busy={busy}>{busy?<><LoaderCircle size={14} className="spin"/> Saving…</>:'Add task'}</button><button type="button" className="btn secondary small" disabled={busy} onClick={()=>{setExamEntryOpen(false);setExamTitle('');}}>Cancel</button></form>:<button type="button" className="btn secondary planner-exam-add" onClick={()=>setExamEntryOpen(true)}><Plus size={16}/> Add revision task</button>)}
           </Card>}
         </>}
       </div>
     </div>
 
     {dialog&&<div className="dialog-backdrop" role="presentation"><div className="dialog planner-dialog" role="dialog" aria-modal="true" aria-label={`${dialog} configuration`}>
-      <button className="dialog-close" disabled={busy} onClick={()=>setDialog(null)} aria-label="Close dialog"><X size={18}/></button>
-      {dialog==='semester'&&<><h2>{semDraft.id?'Edit semester':'New semester'}</h2><form onSubmit={e=>void saveSemester(e)}><FormRow label="Semester name"><input autoFocus required maxLength={60} placeholder="Autumn 2026" value={semDraft.name} onChange={e=>setSemDraft(p=>({...p,name:e.target.value}))}/></FormRow><div className="form-grid"><FormRow label="Starts (optional)"><input type="date" value={semDraft.start_date} onChange={e=>setSemDraft(p=>({...p,start_date:e.target.value}))}/></FormRow><FormRow label="Ends (optional)"><input type="date" value={semDraft.end_date} onChange={e=>setSemDraft(p=>({...p,end_date:e.target.value}))}/></FormRow></div><div className="form-actions"><button type="button" className="btn secondary" disabled={busy} onClick={()=>setDialog(null)}>Cancel</button><button type="submit" className="btn primary" disabled={busy} aria-busy={busy}>{busy?<><LoaderCircle size={15} className="spin" aria-hidden="true"/> Saving…</>:'Save semester'}</button></div></form></>}
-      {dialog==='course'&&<><h2>{editCourseId?'Edit course':'Add a course'}</h2><form onSubmit={e=>void saveCourse(e)}><div className="form-grid"><FormRow label="Course code"><input required maxLength={40} value={courseDraft.code} placeholder="02516" onChange={e=>setCourseDraft(p=>({...p,code:e.target.value}))}/></FormRow><FormRow label="Teaching weeks"><input required type="number" min={1} max={30} value={courseDraft.week_count} onChange={e=>setCourseDraft(p=>({...p,week_count:Number(e.target.value)}))}/></FormRow><FormRow label="Course title"><input required maxLength={180} value={courseDraft.title} onChange={e=>setCourseDraft(p=>({...p,title:e.target.value}))} placeholder="Image Analysis & Computer Vision"/></FormRow><FormRow label="Semester"><select required value={courseDraft.semester_key} onChange={e=>setCourseDraft(p=>({...p,semester_key:e.target.value}))}>{semesterOptions.map(s=><option key={s.key} value={s.key}>{s.name}</option>)}</select></FormRow><FormRow label="Exam date (optional)"><input type="date" value={courseDraft.exam_date} onChange={e=>setCourseDraft(p=>({...p,exam_date:e.target.value}))}/></FormRow><FormRow label="Study goals"><textarea rows={2} maxLength={2000} value={courseDraft.goals} onChange={e=>setCourseDraft(p=>({...p,goals:e.target.value}))}/></FormRow></div><div className="form-actions"><button type="button" className="btn secondary" disabled={busy} onClick={()=>setDialog(null)}>Cancel</button><button type="submit" className="btn primary" disabled={busy} aria-busy={busy}>{busy?<><LoaderCircle size={15} className="spin" aria-hidden="true"/> Saving…</>:'Save course'}</button></div></form></>}
+      <button className="dialog-close" disabled={busy} onClick={closeDialog} aria-label="Close dialog"><X size={18}/></button>
+      {dialog==='semester'&&<><h2>{semDraft.id?'Edit semester':'Add semester'}</h2><form onSubmit={e=>void saveSemester(e)}><FormRow label="Semester name"><input autoFocus required maxLength={60} placeholder="Autumn 2026" value={semDraft.name} onChange={e=>setSemDraft(p=>({...p,name:e.target.value}))}/></FormRow><div className="form-grid"><FormRow label="Starts (optional)"><input type="date" value={semDraft.start_date} onChange={e=>setSemDraft(p=>({...p,start_date:e.target.value}))}/></FormRow><FormRow label="Ends (optional)"><input type="date" value={semDraft.end_date} onChange={e=>setSemDraft(p=>({...p,end_date:e.target.value}))}/></FormRow></div><div className="form-actions"><button type="button" className="btn secondary" disabled={busy} onClick={closeDialog}>Cancel</button><button type="submit" className="btn primary" disabled={busy} aria-busy={busy}>{busy?<><LoaderCircle size={15} className="spin" aria-hidden="true"/> Saving…</>:'Save semester'}</button></div></form></>}
+      {dialog==='course'&&<><h2>{editCourseId?'Edit course':'Add course'}</h2><form onSubmit={e=>void saveCourse(e)}><div className="form-grid planner-course-form-grid"><FormRow label="Course code"><input required maxLength={40} value={courseDraft.code} placeholder="02516" onChange={e=>setCourseDraft(p=>({...p,code:e.target.value}))}/></FormRow><FormRow label="Teaching weeks"><input required type="number" min={1} max={30} value={courseDraft.week_count} onChange={e=>setCourseDraft(p=>({...p,week_count:Number(e.target.value)}))}/></FormRow><div className="planner-form-full"><FormRow label="Course title"><input required maxLength={180} value={courseDraft.title} onChange={e=>setCourseDraft(p=>({...p,title:e.target.value}))} placeholder="Image Analysis & Computer Vision"/></FormRow></div><FormRow label="Semester"><select required value={courseDraft.semester_key} onChange={e=>setCourseDraft(p=>({...p,semester_key:e.target.value}))}>{semesterOptions.map(s=><option key={s.key} value={s.key}>{s.name}</option>)}</select></FormRow><FormRow label="Exam date (optional)"><input type="date" value={courseDraft.exam_date} onChange={e=>setCourseDraft(p=>({...p,exam_date:e.target.value}))}/></FormRow><div className="planner-form-full"><FormRow label="Study goals (optional)"><textarea rows={3} maxLength={2000} value={courseDraft.goals} onChange={e=>setCourseDraft(p=>({...p,goals:e.target.value}))}/></FormRow></div></div><div className="form-actions"><button type="button" className="btn secondary" disabled={busy} onClick={closeDialog}>Cancel</button><button type="submit" className="btn primary" disabled={busy} aria-busy={busy}>{busy?<><LoaderCircle size={15} className="spin" aria-hidden="true"/> Saving…</>:'Save course'}</button></div></form></>}
       {dialog==='archive'&&selected&&<><h2>Archive {selected.code}?</h2><p>It will disappear from your active planner. Unfinished tasks won't appear in Today. All notes, documents, week progress and focus history will be kept.</p><div className="planner-archive-preview"><span>{linkedCounts.items} study items</span><span>{linkedCounts.documents} resource links</span><span>{linkedCounts.sessions} focus sessions</span></div><div className="form-actions"><button className="btn secondary" onClick={()=>setDialog(null)}>Cancel</button><button className="btn primary" disabled={busy} onClick={()=>void archive()}><Archive size={15}/> Archive course</button></div></>}
       {dialog==='week'&&<><h2>Week {weekNumber} details</h2><form onSubmit={e=>void saveWeek(e)}><FormRow label="Topic"><input required value={weekDraft.title} placeholder="Multiclass segmentation" onChange={e=>setWeekDraft(p=>({...p,title:e.target.value}))}/></FormRow><FormRow label="Learning objectives"><textarea rows={3} value={weekDraft.objectives} onChange={e=>setWeekDraft(p=>({...p,objectives:e.target.value}))}/></FormRow><div className="form-actions"><button type="button" className="btn secondary" disabled={busy} onClick={()=>setDialog(null)}>Cancel</button><button className="btn primary" disabled={busy} aria-busy={busy}>{busy?<><LoaderCircle size={15} className="spin"/> Saving…</>:'Save week'}</button></div></form></>}
-      {dialog==='plan-item'&&planItem&&<><h2>Plan study activity</h2><p><strong>{planItem.title}</strong> · Week {planItem.week_number}</p>
+      {dialog==='plan-item'&&planItem&&<><h2>Plan study activity</h2><p><strong>{planItem.title}</strong> · {planItem.week_number!==null?`Week ${planItem.week_number}`:'Exam preparation'}</p>
         <div className="form-actions planner-plan-quick"><button className="btn secondary" disabled={busy||Boolean(planItem.due_date&&localToday()>planItem.due_date)} title={planItem.due_date&&localToday()>planItem.due_date?`Deadline passed on ${formatDate(planItem.due_date)}; cannot schedule today`:undefined} onClick={()=>void updateActivityPlan(localToday())}><CalendarDays size={15}/> Plan for today</button></div>
         <form onSubmit={e=>{e.preventDefault();if(planDate)void updateActivityPlan(planDate);}}><FormRow label="Choose a planned date"><input type="date" required max={planItem.due_date||undefined} value={planDate} onChange={e=>setPlanDate(e.target.value)}/></FormRow><div className="form-actions">{planItem.planned_date&&<button type="button" className="btn secondary" disabled={busy} onClick={()=>void updateActivityPlan(null)}>Clear date</button>}<button type="button" className="btn secondary" disabled={busy} onClick={()=>setDialog(null)}>Cancel</button><button className="btn primary" type="submit" disabled={busy||!planDate||Boolean(planItem.due_date&&planDate>planItem.due_date)}>{busy?<><LoaderCircle size={15} className="spin"/> Saving…</>:'Save plan'}</button></div></form>
         {planItem.due_date&&<p className="planner-plan-note">This activity must be planned no later than {formatDate(planItem.due_date)}.</p>}
