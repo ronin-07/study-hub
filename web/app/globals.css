@@ -1536,15 +1536,17 @@ html[data-study-hub-theme="light"]{color-scheme:light}
 .planner-course-task-info small{font-size:.69rem;line-height:1.5;margin-top:3px;overflow-wrap:anywhere}
 .planner-course-task-actions{display:flex;gap:4px;align-items:flex-start;flex:0 0 auto!important}
 .planner-course-task-actions .icon-btn{width:34px;min-height:34px;display:grid;place-items:center;cursor:pointer}
-.planner-task-more{position:relative;flex-shrink:0}
-.planner-task-more>summary{list-style:none}
-.planner-task-more>summary::-webkit-details-marker{display:none}
-.planner-task-more[open]{z-index:5}
-.planner-task-more-panel{position:absolute;right:0;top:calc(100% + 5px);width:max-content;min-width:196px;max-width:min(300px,80vw);padding:6px;display:flex;flex-direction:column;gap:2px;background:var(--paper);color:var(--text);border:1px solid var(--line);border-radius:11px;box-shadow:0 13px 30px #08071650}
-.planner-task-more-panel button{display:flex;align-items:center;gap:9px;width:100%;text-align:left;border:0;background:transparent;color:var(--text);border-radius:7px;padding:9px 11px;font-size:.74rem;cursor:pointer}
-.planner-task-more-panel button:hover:not(:disabled),.planner-task-more-panel button:focus-visible{background:var(--soft)}
-.planner-task-more-panel button.danger{color:var(--urgent)}
-.planner-task-more-panel button:disabled{opacity:.5;cursor:not-allowed}
+/* Portalled contextual menu: flips above the last row and cannot be clipped
+   by a course card or the browser viewport. */
+.planner-task-floating-menu{position:fixed;z-index:1200;width:max-content;min-width:210px;max-width:min(300px,calc(100vw - 16px));max-height:calc(100dvh - 16px);overflow-y:auto;padding:6px;display:flex;flex-direction:column;gap:2px;background:var(--paper);color:var(--text);border:1px solid var(--line);border-radius:11px;box-shadow:0 13px 30px #08071670}
+.planner-task-floating-menu button{display:flex;align-items:center;gap:9px;width:100%;text-align:left;border:0;background:transparent;color:var(--text);border-radius:7px;padding:9px 11px;font-size:.74rem;cursor:pointer}
+.planner-task-floating-menu button:hover:not(:disabled),.planner-task-floating-menu button:focus-visible{background:var(--soft)}
+.planner-task-floating-menu button.danger{color:var(--urgent)}
+.planner-task-floating-menu button:disabled{opacity:.5;cursor:not-allowed}
+/* A completed exam row is calm and compact, not a selected full-width block. */
+.planner-exam-card .planner-course-task-row.is-done:not(.is-completing){background:transparent;box-shadow:none}
+.planner-exam-card .planner-course-task-row.is-completing{background:rgba(127,196,149,.045);box-shadow:inset 2px 0 0 rgba(127,196,149,.6)}
+.planner-exam-kind-note{display:block;color:var(--muted);font-size:.7rem;line-height:1.45;margin-top:5px}
 .planner-exam-progress{margin:5px 0 14px;height:7px}
 .planner-exam-add{display:inline-flex;align-items:center;gap:7px;margin-top:15px}
 .planner-exam-card .exam-task-form{align-items:center;flex-wrap:wrap;margin-top:15px}
@@ -1552,7 +1554,6 @@ html[data-study-hub-theme="light"]{color-scheme:light}
 @media(max-width:540px){
   .planner-course-task-row{grid-template-columns:18px minmax(0,1fr);gap:9px}
   .planner-course-task-actions{grid-column:2;justify-content:flex-end}
-  .planner-task-more-panel{right:0}
 }
 
 /* Course creation follows content length: code/weeks, full-width title,

@@ -492,8 +492,28 @@ export default function Page() {
       }
     })();
   };
-  const rememberCourse=(id:string)=>{setCourseId(id);if(id)window.localStorage.setItem('studyhub-last-course',id);};
+  const rememberCourse=(id:string)=>{
+    setCourseId(id);
+    if (id) {
+      window.localStorage.setItem('studyhub-last-course',id);
+      if (id !== courseId) {
+        const course=data.courses.find(c=>c.id===id);
+        const saved=Number(window.localStorage.getItem(`studyhub-last-week-${id}`));
+        setWeekNumber(course && Number.isInteger(saved) && saved>=1 ? Math.min(saved,course.week_count) : 1);
+      }
+    } else setWeekNumber(1);
+  };
   const rememberWeek=(week:number)=>{setWeekNumber(week);if(courseId)window.localStorage.setItem(`studyhub-last-week-${courseId}`,String(week));};
+  // On initial load the last course comes from local storage rather than a
+  // course-picker click. Restore its week too, without overriding later edits.
+  const restoredCourseRef=useRef('');
+  useEffect(()=>{
+    const course=data.courses.find(c=>c.id===courseId);
+    if(!course||restoredCourseRef.current===courseId)return;
+    restoredCourseRef.current=courseId;
+    const saved=Number(window.localStorage.getItem(`studyhub-last-week-${courseId}`));
+    setWeekNumber(Number.isInteger(saved)&&saved>=1?Math.min(saved,course.week_count):1);
+  },[courseId,data.courses]);
   const openCourse=(id:string,week?:number,landingItem?:Item,section?:'course-library'|'tasks')=>{
     const course=data.courses.find(c=>c.id===id&&!c.archived);
     if(!course){setTab('courses');return;}
@@ -905,7 +925,7 @@ export default function Page() {
                         const weekLabel=group.weekNumbers.length===1?`Week ${group.weekNumbers[0]}`:group.weekNumbers.length?`Weeks ${group.weekNumbers.join(', ')}`:'Course tasks';
                         const doneCount=visibleCourseDoneCount(group.doneCount,group.activityCount,group.tasks,completingIds,completedItemIds);
                         const progress=group.activityCount?Math.round(100*doneCount/group.activityCount):0;
-                        const todayCount=group.tasks.filter(item=>item.planned_date===today||item.due_date===today).length;
+                        const todayCount=group.todayCount;
                         const primaryWeek=group.weekNumbers.length===1?group.weekNumbers[0]:null;
                         const weekTopic=primaryWeek!=null?data.weeks.find(w=>w.course_id===group.course.id&&w.number===primaryWeek)?.title:null;
                         return <div key={group.course.id} className={'home-course-tile tile-'+(index%4)}>
@@ -914,8 +934,8 @@ export default function Page() {
                             {weekTopic&&<p className="home-course-topic" title={weekTopic}>{weekTopic}</p>}
                             <span className="home-course-workload">{todayCount>0?`${todayCount} ${todayCount===1?'activity':'activities'} today`:`${group.tasks.length} ${group.tasks.length===1?'activity':'activities'} to catch up on`}</span>
                           </div>
-                          <div className="home-course-progress"><span>{weekLabel} progress · {doneCount}/{group.activityCount} complete · <ProgressValue value={progress}/></span><ProgressTrack className="home-progress-track" identity={group.course.id} label={`${group.course.title} ${weekLabel} activity progress`} value={progress}/></div>
-                          <div className="home-course-actions"><button className="home-open-course" onClick={()=>openCourse(group.course.id,group.tasks[0]?.week_number||undefined)}>Open course <ArrowRight size={16}/></button><CourseActionsMenu courseId={group.course.id} courseTitle={group.course.title} onViewTasks={()=>openCourse(group.course.id,undefined,undefined,'tasks')} onFocus={()=>focusOnCourse(group.course.id)} onLibrary={()=>openCourse(group.course.id,undefined,undefined,'course-library')}/></div>
+                          <div className="home-course-progress"><span>{todayCount>0?"Today’s progress":"Catch-up progress"} · {doneCount}/{group.activityCount} complete · <ProgressValue value={progress}/></span><ProgressTrack className="home-progress-track" identity={group.course.id} label={`${group.course.title} ${todayCount>0?"today’s":"catch-up"} activity progress`} value={progress}/></div>
+                          <div className="home-course-actions"><button className="home-open-course" onClick={()=>openCourse(group.course.id)}>Open course <ArrowRight size={16}/></button><CourseActionsMenu courseId={group.course.id} courseTitle={group.course.title} onViewTasks={()=>openCourse(group.course.id,undefined,undefined,'tasks')} onFocus={()=>focusOnCourse(group.course.id)} onLibrary={()=>openCourse(group.course.id,undefined,undefined,'course-library')}/></div>
                         </div>;
                       })}
                     </div>

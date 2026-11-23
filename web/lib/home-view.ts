@@ -9,29 +9,38 @@ export type TodayCourse = {
   overdueCount: number;
   doneCount: number;
   activityCount: number;
+  todayCount: number;
 };
 
 /** One card per active course, even when today's items span several teaching weeks. */
 export function todayStudyCourses(courses: Course[], items: Item[], today: string): TodayCourse[] {
   const active = new Map(courses.filter(c => !c.archived).map(c => [c.id, c]));
   const work = todayPriorities(items.filter(isActionable), today);
+  // Today's schedule includes already-completed items, so checking the last
+  // task does not make the course card disappear or reset its progress.
+  const scheduledToday = items.filter(i => isActionable(i) &&
+    (i.planned_date === today || i.due_date === today));
   const grouped = new Map<string, Item[]>();
   for (const task of work) {
     if (!task.course_id || !active.has(task.course_id)) continue;
     grouped.set(task.course_id, [...(grouped.get(task.course_id) || []), task]);
   }
+  for (const task of scheduledToday) {
+    if (task.course_id && active.has(task.course_id) && !grouped.has(task.course_id)) grouped.set(task.course_id, []);
+  }
   return [...grouped].map(([id, tasks]) => {
-    const weeks = [...new Set(tasks.map(t => t.week_number).filter((n): n is number => n != null))].sort((a,b) => a-b);
-    // Count all checklist activities in the relevant teaching weeks; the daily
-    // schedule is still only today's/overdue actionable work.
-    const activities = items.filter(i => i.course_id === id && (weeks.length
-      ? (i.week_number != null && weeks.includes(i.week_number)) || tasks.some(t => t.id === i.id)
-      : tasks.some(t => t.id === i.id)));
+    const todayTasks = scheduledToday.filter(i => i.course_id === id);
+    const contextTasks = [...todayTasks, ...tasks];
+    const weeks = [...new Set(contextTasks.map(t => t.week_number).filter((n): n is number => n != null))].sort((a,b) => a-b);
+    // Daily progress only counts work actually scheduled for today. Overdue-
+    // only courses instead show catch-up progress for their open work.
+    const progressTasks = todayTasks.length ? todayTasks : tasks;
     return {
       course: active.get(id)!, tasks, weekNumbers: weeks,
       overdueCount: tasks.filter(t => isOverdue(t, today)).length,
-      doneCount: activities.filter(i => i.done).length,
-      activityCount: activities.length
+      doneCount: progressTasks.filter(i => i.done).length,
+      activityCount: progressTasks.length,
+      todayCount: todayTasks.length
     };
   }).sort((a,b) => b.overdueCount-a.overdueCount || b.tasks.length-a.tasks.length || a.course.code.localeCompare(b.course.code));
 }

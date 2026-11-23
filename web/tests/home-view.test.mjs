@@ -10,7 +10,7 @@ test('groups actionable work by active course, excludes personal, future, archiv
  assert.deepEqual(groups[0].tasks.map(t=>t.id),['overdue','today']);
  assert.deepEqual(groups[0].weekNumbers,[3,5]);
  assert.equal(groups[0].overdueCount,1);
- assert.deepEqual([groups[0].doneCount,groups[0].activityCount],[1,4]);
+ assert.deepEqual([groups[0].doneCount,groups[0].activityCount],[0,1]); // Only today's planned item counts; not every activity in weeks 3 and 5
 });
 test('due-only item appears on home without a planned date',()=>{
  assert.deepEqual(todayStudyCourses(courses,[item('due','a',null,null,'2026-11-22')],'2026-11-22')[0].tasks.map(t=>t.id),['due']);
@@ -18,6 +18,21 @@ test('due-only item appears on home without a planned date',()=>{
 test('one course card for multiple teaching weeks, no duplicate scheduled items',()=>{
  const groups=todayStudyCourses(courses,[item('a','a',1,'2026-11-22','2026-11-22'),item('b','a',6,'2026-11-22')],'2026-11-22');
  assert.equal(groups.length,1); assert.equal(groups[0].tasks.length,2);
+});
+test('today progress spans weeks but counts only scheduled work, including completed items',()=>{
+  const rows=[item('a','a',1,'2026-11-22'),item('b','a',4,'2026-11-22'),
+    item('c','a',1,null),item('d','a',4,null)];
+  const first=todayStudyCourses(courses,rows,'2026-11-22')[0];
+  assert.deepEqual(first.weekNumbers,[1,4]);
+  assert.deepEqual([first.todayCount,first.doneCount,first.activityCount],[2,0,2]);
+  const after=todayStudyCourses(courses,rows.map(row=>row.id==='a'?{...row,done:true}:row),'2026-11-22')[0];
+  assert.deepEqual([after.todayCount,after.doneCount,after.activityCount],[2,1,2]);
+  const complete=todayStudyCourses(courses,rows.map(row=>(row.id==='a'||row.id==='b')?{...row,done:true}:row),'2026-11-22')[0];
+  assert.deepEqual([complete.todayCount,complete.doneCount,complete.activityCount],[2,2,2]);
+});
+test('overdue-only course keeps catch-up work separate from today progress',()=>{
+  const group=todayStudyCourses(courses,[item('old','a',4,'2026-11-20')],'2026-11-22')[0];
+  assert.deepEqual([group.todayCount,group.doneCount,group.activityCount],[0,0,1]);
 });
 test('seven-day strip handles year-end and counts a task once if planned and due same day',()=>{
  const dates=nextSevenDays('2026-12-29',[item('same','a',1,'2027-01-01','2027-01-01')]);
