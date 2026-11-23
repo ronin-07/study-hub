@@ -1287,3 +1287,118 @@ html{font-size:18px}
 .app-shell:not(.theme-dark) .planner-activity-reference,
 .app-shell:not(.theme-dark) .planner-v05-task-reference{color:#8b455b}
 .app-shell:not(.theme-dark) .home-course-task-reference{color:#795168}
+
+/* v0.5.1 adaptive density: retain the approved 1440p design, adapt to CSS viewport.
+   Keep type legible and preserve all actions/data; only spacing and layout change. */
+@media (min-width:811px) and (max-width:1599px){
+  html{font-size:17px}
+  .sidebar{width:220px;padding:20px 13px 16px}
+  .brand{gap:10px;padding:1px 7px 27px}
+  .side-nav{gap:4px}
+  .nav-btn{min-height:42px;padding:9px 11px;gap:10px;border-radius:11px}
+  .sidebar-bottom{padding:12px 7px 0}
+  .app-shell .main-area>.topbar{height:66px;padding-inline:clamp(14px,1.8vw,28px)}
+  .page-content{padding:22px clamp(14px,1.8vw,28px) 68px}
+  .page-heading{margin-bottom:16px;gap:12px}
+  .card{padding:18px;border-radius:16px}
+  .dialog{padding:22px;border-radius:17px;max-height:min(90dvh,760px);overflow-y:auto}
+  .planner-dialog{padding:20px}
+  .form-grid{gap:12px}
+  .stats-grid{gap:12px;margin-bottom:15px}
+  .two-col-layout,.course-layout,.focus-layout{gap:14px}
+  .welcome-hero{padding:22px 25px;min-height:165px;margin-bottom:16px}
+  .dashboard-page{padding:20px clamp(14px,1.8vw,28px) 65px}
+  .home-layout{gap:15px}
+  .home-stats-grid{gap:10px}
+  .home-panel{padding:16px;border-radius:16px}
+  .home-priority-row{padding-block:8px}
+  .home-course-tile{min-height:205px;padding:12px}
+  .home-day{min-height:68px}
+  .planner-shell{min-height:0}
+  .planner-study-shell{grid-template-columns:minmax(175px,198px) minmax(0,1fr)}
+  .planner-study-rail{padding:13px 9px}
+  .planner-workspace{padding:15px 16px 20px;container-type:inline-size;container-name:study-workspace}
+  .planner-study-heading{margin-bottom:10px}
+  .planner-study-hero{min-height:98px;padding:16px 18px;margin:13px 0 11px}
+  .planner-study-hero h3{margin-top:5px}
+  .planner-study-week-toolbar{margin-bottom:3px}
+  .planner-study-tabs{gap:4px;margin-bottom:11px}
+  .planner-study-tabs button{padding:8px 9px}
+  .planner-classic-overview{grid-template-columns:minmax(0,1.22fr) minmax(235px,.82fr);gap:12px}
+  .planner-classic-overview>.planner-learning-checklist{padding:14px 15px}
+  .planner-classic-overview .planner-study-side-cards{gap:11px}
+  .planner-classic-overview .planner-study-side-cards>.card{padding:14px 15px}
+  .planner-learning-checklist .planner-activity-detail,
+  .planner-learning-checklist .planner-activity-detail.overdue{padding:13px 0;gap:10px}
+  .planner-v05-shell{padding:17px}
+  .planner-v05-calendar-layout{gap:13px}
+  .planner-v05-day{min-height:68px;padding:6px;gap:6px}
+  .planner-v05-task{padding-block:11px}
+  .focus-card{padding:23px}
+  .focus-settings{gap:10px;margin-bottom:14px}
+  .pdf-reading-layout{grid-template-columns:minmax(0,1fr) minmax(215px,280px)}
+}
+
+/* If the usable Study workspace is narrow, stack its cards rather than squeeze
+   the checklist and its action icons into unreadable columns. */
+@container study-workspace (max-width:720px){
+  .planner-classic-overview{grid-template-columns:minmax(0,1fr)}
+  .planner-classic-overview .planner-study-side-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}
+  .planner-classic-overview .planner-study-shared-library-card{height:clamp(300px,45vh,420px)}
+}
+
+@media (min-width:811px) and (max-width:1279px){
+  html{font-size:16.5px}
+  .sidebar{width:205px;padding-inline:11px}
+  .main-area .topbar-right{gap:6px}
+  .topbar-datetime{gap:7px;padding-inline:9px}
+  .planner-study-shell{grid-template-columns:minmax(163px,183px) minmax(0,1fr)}
+  .planner-study-rail{padding-inline:8px}
+  .planner-workspace{padding:13px 14px 18px}
+  .planner-study-hero{padding:13px 15px}
+  .planner-classic-overview>.planner-learning-checklist{padding:13px 14px}
+  .planner-classic-overview .planner-study-side-cards>.card{padding:13px 14px}
+  .planner-learning-checklist .planner-activity-detail,
+  .planner-learning-checklist .planner-activity-detail.overdue{grid-template-columns:18px minmax(0,1fr)}
+  .planner-activity-actions{grid-column:2;justify-content:flex-end}
+  .planner-v05-toolbar{gap:10px;padding-bottom:12px;margin-bottom:13px}
+  .planner-v05-summary{gap:9px}
+  .focus-layout{gap:12px}
+}
+
+@media (min-width:811px) and (max-width:1100px){
+  .topbar-datetime .topbar-date-section,.topbar-datetime-divider{display:none}
+  .planner-classic-overview .planner-study-side-cards{grid-template-columns:minmax(0,1fr)}
+  .home-side-column{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .pdf-reading-layout{grid-template-columns:minmax(0,1fr) minmax(205px,235px)}
+}
+
+/* On phones and narrow tablets, avoid fixed desktop paddings and keep action
+   targets usable. The mobile navigation and existing single-column rules stay. */
+@media (max-width:810px){
+  html{font-size:17px}
+  .page-content{padding-inline:16px}
+  .planner-workspace{padding-inline:15px}
+  .planner-study-shell{grid-template-columns:minmax(0,1fr)}
+  .planner-classic-overview{grid-template-columns:minmax(0,1fr)}
+  .planner-learning-checklist .planner-activity-detail,
+  .planner-learning-checklist .planner-activity-detail.overdue{grid-template-columns:18px minmax(0,1fr);gap:9px}
+  .planner-activity-actions{grid-column:2;justify-content:flex-end;flex-wrap:wrap}
+  .planner-learning-checklist .planner-activity-actions .icon-btn{min-width:32px;min-height:32px}
+  .planner-activity-document{width:100%}
+}
+@media(max-width:560px){
+  html{font-size:17px}
+  .planner-workspace{padding-inline:13px}
+  .planner-classic-overview .planner-study-side-cards{display:flex;flex-direction:column}
+  .planner-classic-overview .planner-study-side-cards>.card{width:100%}
+}
+
+/* Short laptop screens benefit from reduced vertical chrome, not hidden details. */
+@media (min-width:811px) and (max-width:1599px) and (max-height:800px){
+  .page-content,.dashboard-page{padding-top:16px}
+  .planner-study-hero{min-height:86px;margin:10px 0}
+  .planner-study-tabs{margin-bottom:9px}
+  .focus-card{padding-block:17px}
+  .timer-dial{width:228px;height:228px;margin:20px auto}
+}
