@@ -131,8 +131,15 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,completingIds
     const id=e.dataTransfer.getData('text/plain');
     if(id)void reschedule(id,date);
   };
+  const removeFromTasks=async(item:Item)=>{
+    if(item.week_number===null||!item.course_id||busy)return;
+    if(!window.confirm(`Remove “${item.title}” from Tasks and Calendar? It will remain in the Week ${item.week_number} learning checklist.`))return;
+    const ok=await run(()=>api(`/api/items/${item.id}`,user,{method:'PATCH',body:{hidden_from_tasks:true}}),
+      {collection:'items'},{title:'Removed from Tasks',detail:'The weekly activity was preserved.'});
+    if(ok)closeForm();
+  };
   const remove=async(item:Item)=>{
-    if(!window.confirm(`Delete “${item.title}”? This removes the task, not its course or PDFs.`))return;
+    if(!window.confirm(`Permanently delete “${item.title}”?${item.course_id&&item.week_number!=null?' This will also remove its weekly learning activity.':' This cannot be undone.'} Linked PDFs are not deleted.`))return;
     const ok=await run(()=>api(`/api/items/${item.id}`,user,{method:'DELETE'}),{collection:'items',deleteId:item.id},
       {title:'Task deleted',detail:item.title});
     if(ok)closeForm();
@@ -218,7 +225,7 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,completingIds
           {draft.repeat!=='none'&&<p className="planner-v05-hint"><Repeat2 size={13}/> When you complete this task, a new one will be scheduled for the next {draft.repeat==='daily'?'day':draft.repeat==='weekly'?'week':'month'}. No background tasks are generated.</p>}
           <FormRow label="Notes (optional)"><textarea rows={3} value={draft.notes} onChange={e=>setDraft(p=>({...p,notes:e.target.value}))} placeholder="Details, checklist notes or reference links"/></FormRow>
           {editing?.kind==='assignment'&&<label className="planner-v05-submitted"><input type="checkbox" checked={draft.submitted} onChange={e=>setDraft(p=>({...p,submitted:e.target.checked}))}/> Officially submitted</label>}
-          <div className="planner-v05-formactions">{editing&&<button type="button" className="btn secondary planner-v05-delete" disabled={busy} onClick={()=>void remove(editing)}><Trash2 size={15}/> Delete</button>}
+          <div className="planner-v05-formactions">{editing?.course_id&&editing.week_number!==null&&<button type="button" className="btn secondary" disabled={busy} onClick={()=>void removeFromTasks(editing)}><X size={15}/> Remove from Tasks</button>}{editing&&<button type="button" className="btn secondary planner-v05-delete" disabled={busy} onClick={()=>void remove(editing)}><Trash2 size={15}/> Delete permanently</button>}
             <button type="button" className="btn secondary" disabled={busy} onClick={closeForm}>Cancel</button><button className="btn primary" disabled={busy||formDateInvalid||!draft.title.trim()||(draft.repeat!=='none'&&!draft.planned_date)} aria-busy={busy}>{busy&&<LoaderCircle className="spin" size={14}/>} {busy?'Saving…':editing?'Save changes':'Create task'}</button></div>
         </form>
       </div>

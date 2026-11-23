@@ -8,7 +8,7 @@ export function canPlanOnDate(item: Pick<Item, 'due_date'>, day: string): boolea
 
 export function isActionable(item: Item): boolean {
   // Includes pre-fix documents whose planned/due date was saved without is_task.
-  return item.is_task || item.kind === 'assignment' || !!item.planned_date || !!item.due_date;
+  return !item.hidden_from_tasks && (item.is_task || item.kind === 'assignment' || !!item.planned_date || !!item.due_date);
 }
 
 export function isOverdue(item: Item, today: string): boolean {

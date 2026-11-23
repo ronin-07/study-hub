@@ -50,10 +50,10 @@ test('overview filters are scoped to selected course and teaching week',()=>{
   assert.match(course,/isOverdue\(i,today\)/);
 });
 
-test('quick notes are real per-week records with editable Firebase-backed text',()=>{
-  assert.match(course,/const weekNotes=items\.filter\(i=>i\.kind==='notes'\)/);
-  assert.match(course,/setItemDraft\(\{\.\.\.itemDraftDefaults,kind:'notes',is_task:false\}\)/);
-  assert.match(course,/method:'PATCH',body:\{title:noteDraft\.title\.trim\(\),notes:noteDraft\.notes\}/);
+test('week notes remain editable as activities without a separate quick-notes card',()=>{
+  assert.doesNotMatch(course,/className="planner-study-notes-card"/);
+  assert.match(course,/const openActivityForm = \(item\?: Item\)/);
+  assert.match(course,/method:editActivityId \? 'PATCH' : 'POST'/);
   assert.match(course,/maxLength=\{5000\}/);
   assert.match(course,/\{collection:'items'\}/);
 });

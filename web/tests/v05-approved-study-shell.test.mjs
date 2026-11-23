@@ -37,7 +37,8 @@ test('approved classic Study layout has hero, direct actions, checklist, week re
   assert.match(study,/Link lecture slides/);
   assert.match(study,/Shared course library/);
   assert.match(study,/Open Course Library/);
-  assert.match(study,/planner-study-notes-card/);
+  assert.doesNotMatch(study,/className="planner-study-notes-card"/);
+  assert.match(study,/planner-study-library-scroll/);
   assert.match(study,/aria-label="Teaching week"/);
   assert.match(study,/planner-study-filters/);
   assert.doesNotMatch(study,/study-create-menu|planner-icon-menu/);

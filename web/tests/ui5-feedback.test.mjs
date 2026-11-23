@@ -38,7 +38,7 @@ test('meaningful saves are labeled and course archive has an Undo action', () =>
   const study=read('components/course-planner.tsx');
   const tasks=read('components/tasks-planner.tsx');
   const page=read('app/page.tsx');
-  for(const label of ['Semester created','Course created','Week saved','Note saved','Resource linked','Course archived','Course restored'])assert.ok(study.includes(label),label);
+  for(const label of ['Semester created','Course created','Week saved','Activity updated','Resource linked','Course archived','Course restored'])assert.ok(study.includes(label),label);
   assert.match(study,/action:\{label:'Undo'/);
   assert.ok(tasks.includes('Task created'));
   assert.ok(page.includes('Drive scan completed'));

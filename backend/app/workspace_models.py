@@ -44,7 +44,7 @@ class ResourcePatch(BaseModel):
     model_config = ConfigDict(extra='forbid')
     week_number: int | None = Field(default=None, ge=1, le=30)
     title: str | None = Field(default=None, min_length=1, max_length=240)
-    kind: str | None = Field(default=None, pattern=r'^(slides|annotated|handwritten|textbook|other)$')
+    kind: str | None = Field(default=None, pattern=r'^(slides|annotated|handwritten|textbook|exam_paper|exam_solution|other)$')
     item_id: str | None = None
     chapter: str | None = Field(default=None, max_length=120)
     page_start: int | None = Field(default=None, ge=1, le=20000)
