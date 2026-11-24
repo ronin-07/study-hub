@@ -32,8 +32,19 @@ class Reference:
 
 
 class Collection:
-    def __init__(self, db, path):
-        self.db, self.path = db, path
+    def __init__(self, db, path, filters=(), ordering=None, maximum=None):
+        self.db, self.path, self.filters = db, path, filters
+        self.ordering, self.maximum = ordering, maximum
+
+    def where(self, field, op, value):
+        assert op in ('==', '>=')
+        return Collection(self.db, self.path, self.filters + ((field, op, value),), self.ordering, self.maximum)
+
+    def order_by(self, field, direction):
+        return Collection(self.db, self.path, self.filters, (field, direction), self.maximum)
+
+    def limit(self, maximum):
+        return Collection(self.db, self.path, self.filters, self.ordering, maximum)
 
     def document(self, identifier):
         return Reference(self.db, self.path + '/' + identifier)
@@ -42,9 +53,15 @@ class Collection:
         if transaction is not None and transaction.ops:
             raise AssertionError('Firestore does not permit transactional reads after writes')
         prefix = self.path + '/'
-        for path, value in sorted(self.db.docs.items()):
-            if path.startswith(prefix) and '/' not in path[len(prefix):]:
-                yield Snapshot(value)
+        rows = [value for path, value in sorted(self.db.docs.items())
+                if path.startswith(prefix) and '/' not in path[len(prefix):]
+                and all(value.get(k) == v if op == '==' else value.get(k) is not None and value[k] >= v
+                        for k, op, v in self.filters)]
+        if self.ordering:
+            field, direction = self.ordering
+            rows = sorted((r for r in rows if r.get(field) is not None), key=lambda r:r[field], reverse=direction=='DESCENDING')
+        for value in rows[:self.maximum]:
+            yield Snapshot(value)
 
 
 class UserReference:
@@ -110,7 +127,7 @@ def firestore_store(monkeypatch):
             tx.commit()
             return result
         return invoke
-    monkeypatch.setattr(google.cloud, 'firestore', SimpleNamespace(transactional=transactional), raising=False)
+    monkeypatch.setattr(google.cloud, 'firestore', SimpleNamespace(transactional=transactional, Query=SimpleNamespace(DESCENDING='DESCENDING')), raising=False)
     store = FirestoreStore.__new__(FirestoreStore)
     store.db = Database()
     return store

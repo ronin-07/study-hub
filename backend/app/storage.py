@@ -1,10 +1,35 @@
 """Simple per-user document storage. SQLite for localhost; Firestore in configured deployment."""
+from __future__ import annotations
 import json
+import logging
+from contextvars import ContextVar
 import os
 import sqlite3
 from pathlib import Path
 from threading import RLock
 from typing import Any, Callable
+
+
+# Request-local estimates only; never log identifiers or document contents.
+DB_DIAGNOSTICS = ContextVar('studyhub_db_diagnostics', default=None)
+_db_log = logging.getLogger('studyhub.database')
+
+
+def count_db(kind: str, amount: int = 1):
+    counters = DB_DIAGNOSTICS.get()
+    if counters is not None:
+        # The same request may issue concurrent asyncio.to_thread queries.
+        with counters['lock']:
+            counters[kind] = counters.get(kind, 0) + amount
+
+
+def check_document_size(kind: str, doc: dict):
+    if DB_DIAGNOSTICS.get() is None:
+        return
+    size = len(json.dumps(doc, ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
+    if size >= 256 * 1024:
+        _db_log.warning('Firestore serialized document size estimate: collection=%s bytes=%d level=%s',
+                        kind, size, 'high' if size >= 512 * 1024 else 'warning')
 
 
 class DocumentAlreadyExists(Exception):
@@ -41,8 +66,10 @@ class WorkspaceView:
     transactions forbid reads after a write. The SQLite adapter shares this behavior.
     """
 
-    def __init__(self, fetch, scan):
+    def __init__(self, fetch, scan, scan_equal=None):
         self._fetch, self._scan = fetch, scan
+        self._scan_equal = scan_equal
+        self._filtered: dict[tuple, list[dict[str, Any]]] = {}
         self._writes: dict[tuple[str, str], dict[str, Any] | None] = {}
         self._creates: set[tuple[str, str]] = set()
         self._cache: dict[tuple[str, str], dict[str, Any] | None] = {}
@@ -70,6 +97,32 @@ class WorkspaceView:
                 else:
                     rows[identifier] = dict(doc)
         return list(rows.values())
+
+    def list_equal(self, kind: str, field: str, value: str) -> list[dict[str, Any]]:
+        if kind in self._collections or self._scan_equal is None:
+            return [row for row in self.list(kind) if row.get(field) == value]
+        key = (kind, field, value)
+        if key not in self._filtered:
+            self._filtered[key] = self._scan_equal(kind, field, value)
+            for row in self._filtered[key]:
+                self._cache[(kind, row['id'])] = row
+        rows = {row['id']: dict(row) for row in self._filtered[key]}
+        for (changed_kind, identifier), doc in self._writes.items():
+            if changed_kind == kind:
+                if doc is None or doc.get(field) != value:
+                    rows.pop(identifier, None)
+                else:
+                    rows[identifier] = dict(doc)
+        return list(rows.values())
+
+    def create_generated(self, kind: str, doc: dict[str, Any]) -> None:
+        # Server-generated UUIDs do not need a separate existence lookup;
+        # both stores enforce a create-only precondition at commit.
+        key = (kind, doc['id'])
+        if key in self._writes or self._cache.get(key) is not None:
+            raise DocumentAlreadyExists
+        self._creates.add(key)
+        self._writes[key] = dict(doc)
 
     def create(self, kind: str, doc: dict[str, Any]) -> None:
         key = (kind, doc['id'])
@@ -166,7 +219,12 @@ class SQLiteStore:
                                   (uid, kind)).fetchall()
                 return [json.loads(row['payload']) for row in rows]
 
-            view = WorkspaceView(fetch, scan)
+            def scan_equal(kind, field, value):
+                rows = db.execute('SELECT payload FROM documents WHERE uid=? AND kind=? AND json_extract(payload, ?) = ?',
+                                  (uid, kind, '$.' + field, value)).fetchall()
+                return [json.loads(row['payload']) for row in rows]
+
+            view = WorkspaceView(fetch, scan, scan_equal)
             result = mutate(view)
             for (kind, identifier), doc in view._writes.items():
                 if doc is None:
@@ -183,7 +241,7 @@ class SQLiteStore:
                                (uid, kind, identifier, json.dumps(doc)))
         return result
 
-    def update_item_atomic(self, uid: str, identifier: str, mutate: ItemMutation) -> dict[str, Any]:
+    def update_item_atomic(self, uid: str, identifier: str, mutate: ItemMutation, *, successor_lookup=None):
         """Serialize concurrent edits and successor creation, including across processes."""
         with self.lock, self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
@@ -197,6 +255,11 @@ class SQLiteStore:
                            (uid, 'items', successor['id'], json.dumps(successor)))
             db.execute('UPDATE documents SET payload=? WHERE uid=? AND kind=? AND id=?',
                        (json.dumps(updated), uid, 'items', identifier))
+            if successor_lookup is not None:
+                successor_id = successor['id'] if successor else successor_lookup(updated)
+                row = db.execute('SELECT payload FROM documents WHERE uid=? AND kind=? AND id=?',
+                                 (uid, 'items', successor_id)).fetchone() if successor_id else None
+                return updated, json.loads(row['payload']) if row else None
         return updated
 
     def start_focus_atomic(self, uid: str, doc: dict[str, Any]) -> dict[str, Any]:
@@ -317,24 +380,32 @@ class FirestoreStore:
         return self.db.collection('users').document(uid).collection('studyhub_' + kind)
 
     def list(self, uid, kind):
-        return [s.to_dict() for s in self.col(uid, kind).stream()]
+        rows = [s.to_dict() for s in self.col(uid, kind).stream()]
+        count_db('queries'); count_db('query_documents', len(rows))
+        return rows
 
     def get(self, uid, kind, identifier):
+        count_db('point_reads')
         snap = self.col(uid, kind).document(identifier).get()
         return snap.to_dict() if snap.exists else None
 
     def put(self, uid, kind, doc):
+        check_document_size(kind, doc)
         self.col(uid, kind).document(doc['id']).set(doc)
+        count_db('writes')
 
     def create(self, uid, kind, doc):
         from google.api_core.exceptions import AlreadyExists, Conflict
         try:
+            check_document_size(kind, doc)
             self.col(uid, kind).document(doc['id']).create(doc)
+            count_db('writes')
         except (AlreadyExists, Conflict) as exc:
             raise DocumentAlreadyExists from exc
 
     def delete(self, uid, kind, identifier):
         self.col(uid, kind).document(identifier).delete()
+        count_db('deletes')
 
 
     def guard_ref(self, uid):
@@ -373,51 +444,78 @@ class FirestoreStore:
 
         @firestore.transactional
         def operation(tx):
+            count_db('point_reads')
             lock = lock_ref.get(transaction=tx)
             revision = int((lock.to_dict() or {}).get('revision', 0)) if lock.exists else 0
 
             def fetch(kind, identifier):
+                count_db('point_reads')
                 snapshot = self.col(uid, kind).document(identifier).get(transaction=tx)
                 return snapshot.to_dict() if snapshot.exists else None
 
             def scan(kind):
                 # Firestore query reads MUST precede the first transaction write.
-                return [snap.to_dict() for snap in self.col(uid, kind).stream(transaction=tx)]
+                rows = [snap.to_dict() for snap in self.col(uid, kind).stream(transaction=tx)]
+                count_db('queries'); count_db('query_documents', len(rows))
+                return rows
 
-            view = WorkspaceView(fetch, scan)
+            def scan_equal(kind, field, value):
+                rows = [snap.to_dict() for snap in self.col(uid, kind).where(field, '==', value).stream(transaction=tx)]
+                count_db('queries'); count_db('query_documents', len(rows))
+                return rows
+
+            view = WorkspaceView(fetch, scan, scan_equal)
             result = mutate(view)
+            if not view._writes:
+                return result
             if len(view._writes) + 1 > 500:
                 raise ValueError('Workspace transaction exceeds Firestore 500-write limit')
             for (kind, identifier), doc in view._writes.items():
                 ref = self.col(uid, kind).document(identifier)
                 if doc is None:
                     tx.delete(ref)
-                elif (kind, identifier) in view._creates:
-                    tx.create(ref, doc)
+                    count_db('staged_deletes')
                 else:
-                    tx.set(ref, doc)
+                    check_document_size(kind, doc)
+                    if (kind, identifier) in view._creates:
+                        tx.create(ref, doc)
+                    else:
+                        tx.set(ref, doc)
+                    count_db('staged_writes')
+            count_db('staged_writes')
             tx.set(lock_ref, {'id': 'state', 'revision': revision + 1})
             return result
 
         return operation(transaction)
 
-    def update_item_atomic(self, uid: str, identifier: str, mutate: ItemMutation) -> dict[str, Any]:
+    def update_item_atomic(self, uid: str, identifier: str, mutate: ItemMutation, *, successor_lookup=None):
         from google.cloud import firestore
         original_ref = self.col(uid, 'items').document(identifier)
         transaction = self.db.transaction()
 
         @firestore.transactional
         def operation(tx):
+            count_db('point_reads')
             snap = original_ref.get(transaction=tx)
             if not snap.exists:
                 raise DocumentMissing
             updated, successor = mutate(snap.to_dict())
-            new_ref = self.col(uid, 'items').document(successor['id']) if successor else None
-            successor_exists = new_ref.get(transaction=tx).exists if new_ref else False
+            successor_id = successor['id'] if successor else successor_lookup(updated) if successor_lookup else None
+            new_ref = self.col(uid, 'items').document(successor_id) if successor_id else None
+            if new_ref:
+                count_db('point_reads')
+            next_snap = new_ref.get(transaction=tx) if new_ref else None
+            successor_exists = next_snap is not None and next_snap.exists
             # No reads after the first transactional write.
+            check_document_size('items', updated)
             tx.set(original_ref, updated)
-            if new_ref and not successor_exists:
+            count_db('staged_writes')
+            if successor is not None and new_ref and not successor_exists:
+                check_document_size('items', successor)
                 tx.create(new_ref, successor)
+                count_db('staged_writes')
+            if successor_lookup is not None:
+                return updated, next_snap.to_dict() if successor_exists else successor
             return updated
 
         return operation(transaction)
@@ -430,28 +528,35 @@ class FirestoreStore:
 
         @firestore.transactional
         def operation(tx):
+            count_db('point_reads')
             active = active_ref.get(transaction=tx)
+            count_db('point_reads')
             session = session_ref.get(transaction=tx)
             if active.exists:
                 raise ActiveSessionExists
             if session.exists:
                 raise DocumentAlreadyExists
             if doc.get('course_id'):
+                count_db('point_reads')
                 course = self.col(uid, 'courses').document(doc['course_id']).get(transaction=tx)
                 if not course.exists or course.to_dict().get('archived'):
                     raise SessionStateConflict
             tx.create(session_ref, doc)
+            count_db('staged_writes')
             tx.create(active_ref, {'id': 'active', 'session_id': doc['id']})
+            count_db('staged_writes')
             return doc
 
         return operation(transaction)
 
     def _focus_stats_in_tx(self, tx, uid: str, stats_ref) -> dict[str, Any]:
         """Migrate legacy session history once, with a transactional read barrier."""
+        count_db('point_reads')
         stats_snap = stats_ref.get(transaction=tx)
         if stats_snap.exists:
             return stats_snap.to_dict()
         completed = [snap.to_dict() for snap in self.col(uid, 'sessions').stream(transaction=tx)]
+        count_db('queries'); count_db('query_documents', len(completed))
         completed = [s for s in completed if recorded_focus_seconds(s) > 0]
         return {'id': 'state', 'total_seconds': sum(recorded_focus_seconds(s) for s in completed),
                 'completed_sessions': len(completed)}
@@ -464,31 +569,41 @@ class FirestoreStore:
 
         @firestore.transactional
         def initialize(tx):
+            count_db('point_reads')
             stats = stats_ref.get(transaction=tx)
             if stats.exists:
                 return stats.to_dict()
             initial = self._focus_stats_in_tx(tx, uid, stats_ref)
             tx.create(stats_ref, initial)
+            count_db('staged_writes')
             return initial
 
         # Existing accounts are initialized once; later requests read one document.
         stats = initialize(transaction)
         sessions = self.col(uid, 'sessions')
-        recent = sessions.order_by('ended_at', direction=firestore.Query.DESCENDING).limit(5).stream()
         weekly = sessions.where('ended_at', '>=', week_start).stream()
         picked: dict[str, dict[str, Any]] = {}
-        for snap in recent:
-            s = snap.to_dict()
-            if s and recorded_focus_seconds(s) > 0:
-                picked[s['id']] = s
+        count_db('queries')
         for snap in weekly:
+            count_db('query_documents')
             s = snap.to_dict()
             if s and recorded_focus_seconds(s) > 0:
                 picked[s['id']] = s
+        if len(picked) < 5:
+            # Preserve the existing five-newest semantics (including legacy invalid
+            # sessions) for short weeks; avoid a redundant query otherwise.
+            count_db('queries')
+            for snap in sessions.order_by('ended_at', direction=firestore.Query.DESCENDING).limit(5).stream():
+                count_db('query_documents')
+                s = snap.to_dict()
+                if s and recorded_focus_seconds(s) > 0:
+                    picked[s['id']] = s
+        count_db('point_reads')
         guard = self.guard_ref(uid).get()
         if guard.exists:
             identifier = (guard.to_dict() or {}).get('session_id')
             if identifier:
+                count_db('point_reads')
                 active = sessions.document(identifier).get()
                 if active.exists:
                     s = active.to_dict()
@@ -505,7 +620,9 @@ class FirestoreStore:
 
         @firestore.transactional
         def operation(tx):
+            count_db('point_reads')
             session = session_ref.get(transaction=tx)
+            count_db('point_reads')
             active = active_ref.get(transaction=tx)
             if not session.exists:
                 raise DocumentMissing
@@ -520,9 +637,12 @@ class FirestoreStore:
                 stats['total_seconds'] += recorded_focus_seconds(updated)
                 stats['completed_sessions'] += 1
                 tx.set(stats_ref, stats)
+                count_db('staged_writes')
             tx.set(session_ref, updated)
+            count_db('staged_writes')
             if updated['status'] == 'finished':
                 tx.delete(active_ref)
+                count_db('staged_deletes')
             return updated
 
         return operation(transaction)
@@ -536,7 +656,9 @@ class FirestoreStore:
 
         @firestore.transactional
         def operation(tx):
+            count_db('point_reads')
             session = session_ref.get(transaction=tx)
+            count_db('point_reads')
             active = active_ref.get(transaction=tx)
             if not session.exists:
                 raise DocumentMissing
@@ -545,12 +667,15 @@ class FirestoreStore:
                 if not active.exists or active.to_dict().get('session_id') != identifier:
                     raise SessionStateConflict
                 tx.delete(active_ref)
+                count_db('staged_deletes')
             if recorded_focus_seconds(entry) > 0:
                 stats = self._focus_stats_in_tx(tx, uid, stats_ref)
                 stats['total_seconds'] = max(0, stats['total_seconds'] - recorded_focus_seconds(entry))
                 stats['completed_sessions'] = max(0, stats['completed_sessions'] - 1)
                 tx.set(stats_ref, stats)
+                count_db('staged_writes')
             tx.delete(session_ref)
+            count_db('staged_deletes')
 
         operation(transaction)
 

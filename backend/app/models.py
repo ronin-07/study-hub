@@ -104,6 +104,11 @@ class GenerationResult(BaseModel):
     items: list[Item]
 
 
+class ItemUpdateResult(BaseModel):
+    item: Item
+    successor: Item | None = None
+
+
 class ItemPatch(BaseModel):
     model_config = ConfigDict(extra='forbid')
     title: str | None = Field(default=None, min_length=1, max_length=240)

@@ -403,7 +403,7 @@ export default function Page() {
   useEffect(()=>{
     const refreshOnReturn=()=>{
       // Switching browser tabs repeatedly should not download six collections each time.
-      if(document.visibilityState==='visible'&&!mutationBusyRef.current&&Date.now()-lastLoadedAtRef.current>=30000)void load();
+      if(document.visibilityState==='visible'&&!mutationBusyRef.current&&Date.now()-lastLoadedAtRef.current>=30*60*1000)void load();
     };
     document.addEventListener('visibilitychange',refreshOnReturn);
     return ()=>document.removeEventListener('visibilitychange',refreshOnReturn);
@@ -538,25 +538,20 @@ export default function Page() {
     const activeUid=user?.uid||'local';
     void (async()=>{
       try {
-        const saved=await api<Item>(`/api/items/${item.id}`,user,{method:'PATCH',body:{done:!item.done}});
+        const response=await api<{item:Item;successor:Item|null}>(`/api/items/${item.id}/with-successor`,user,{method:'PATCH',body:{done:!item.done}});
+        const saved=response.item;
         if(useFirebase&&firebaseAuth?.currentUser?.uid!==activeUid)return;
         snapshotCoordinator.retain('items',saved.id);
-        setData(previous=>applyMutation(previous,{collection:'items'},saved));
+        if(response.successor)snapshotCoordinator.retain('items',response.successor.id);
+        setData(previous=>{
+          const updated=applyMutation(previous,{collection:'items'},saved);
+          // An existing successor may already have a pending optimistic edit.
+          return response.successor&&!pendingItemsRef.current.has(response.successor.id)
+            ?applyMutation(updated,{collection:'items'},response.successor):updated;
+        });
         if(!item.done&&saved.done)completionSaved(item.id);
         else if(!item.done)clearCompletion(item.id);
-        if(!item.done&&saved.done&&saved.repeat&&saved.repeat!=='none'){
-          // Recurring completion creates a successor on the server. Fetch items only.
-          // A failed follow-up read must not undo a successfully committed completion.
-          try {
-            const allItems=await api<Item[]>('/api/items',user);
-            if(useFirebase&&firebaseAuth?.currentUser?.uid!==activeUid)return;
-            snapshotCoordinator.retain('items');
-            setData(previous=>({...previous,items:allItems.map(i=>
-              pendingItemsRef.current.has(i.id)&&i.id!==item.id?previous.items.find(old=>old.id===i.id)||i:i)}));
-          }catch{
-            notify({kind:'error',title:'Task saved, sync incomplete',detail:'The next recurring task did not load. Refresh to sync.'});
-          }
-        }
+
       }catch(e){
         if(useFirebase&&firebaseAuth?.currentUser?.uid!==activeUid)return;
         // Roll back only the completion bit; don't clobber a concurrent metadata edit.

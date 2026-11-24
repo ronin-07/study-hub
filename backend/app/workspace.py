@@ -91,7 +91,7 @@ def edit_semester(identifier: str, patch: SemesterPatch, user: User = Depends(cu
         # Semester name is cached on courses for the existing UI. Commit all
         # related updates together, or none of them.
         if value.name != old['name']:
-            courses = [c for c in tx.list('courses') if c.get('semester_id') == identifier]
+            courses = tx.list_equal('courses', 'semester_id', identifier)
             if len(courses) > 498:
                 raise HTTPException(409, 'Too many courses to rename in one transaction')
             for course in courses:
@@ -140,12 +140,12 @@ def edit_course(identifier: str, patch: CoursePatch, user: User = Depends(curren
         if value.semester_id != original['semester_id'] or normalized_code(value.code) != normalized_code(original['code']):
             if any(c['id'] != identifier and c.get('semester_id') == value.semester_id
                    and normalized_code(c.get('code', '')) == normalized_code(value.code)
-                   for c in tx.list('courses')):
+                   for c in tx.list_equal('courses', 'semester_id', value.semester_id)):
                 raise HTTPException(409, 'Course code already exists in this semester')
         if value.week_count < original['week_count']:
             for kind, field in [('weeks', 'number'), ('items', 'week_number'), ('resources', 'week_number')]:
                 if any(row.get('course_id') == identifier and (row.get(field) or 0) > value.week_count
-                       for row in tx.list(kind)):
+                       for row in tx.list_equal(kind, 'course_id', identifier)):
                     raise HTTPException(409, 'Cannot shorten course while later weeks contain data')
         tx.put('courses', value.model_dump(mode='json'))
         return value
@@ -168,7 +168,7 @@ def archive_course(identifier: str, user: User = Depends(current_user)):
                 raise HTTPException(409, 'Finish the active focus session before archiving')
         # Also reject legacy guardless sessions until Preview is reset.
         if any(s.get('course_id') == identifier and s.get('status') in ('running', 'paused')
-               for s in tx.list('sessions')):
+               for s in tx.list_equal('sessions', 'course_id', identifier)):
             raise HTTPException(409, 'Finish the active focus session before archiving')
         doc['archived'] = True
         tx.put('courses', doc)
@@ -245,11 +245,11 @@ def edit_resource(identifier: str, patch: ResourcePatch, user: User = Depends(cu
                    and other.get('source') == 'drive' and other.get('drive_file_id') == merged.get('drive_file_id')
                    and (other.get('week_number') == merged.get('week_number')
                         or other.get('week_number') is None or merged.get('week_number') is None)
-                   for other in tx.list('resources')):
+                   for other in tx.list_equal('resources', 'course_id', old['course_id'])):
                 raise HTTPException(409, 'This Drive PDF is already linked in the course')
         if merged.get('week_number') is not None:
             if any(item.get('resource_id') == identifier and item.get('week_number') != merged['week_number']
-                   for item in tx.list('items')):
+                   for item in tx.list_equal('items', 'resource_id', identifier)):
                 raise HTTPException(409, 'Other weeks reference this shared resource')
         value = validate(Resource, merged)
         tx.put('resources', value.model_dump(mode='json'))

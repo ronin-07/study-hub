@@ -71,10 +71,10 @@ test('checkboxes update optimistically, use a targeted task PATCH, and rollback 
   assert.match(page,/items:previous\.items\.map\(i=>i\.id===item\.id\?\{\.\.\.i,done:item\.done\}:i\)/);
 });
 
-test('only repeating completions fetch tasks to reconcile their successor',()=>{
-  assert.match(page,/if\(!item\.done&&saved\.done&&saved\.repeat&&saved\.repeat!=='none'\)/);
-  assert.match(page,/api<Item\[]>\('\/api\/items',user\)/);
-  assert.match(api,/@app\.get\('\/api\/items'/);
+test('completion reconciles the affected records without a full item list',()=>{
+  assert.match(page,/\/api\/items\/\$\{item.id\}\/with-successor/);
+  assert.match(page,/response.successor/);
+  assert.ok(api.includes("@app.patch('/api/items/{identifier}/with-successor'"));
 });
 
 test('the top-right noninteractive avatar is gone and sign-out is a real button',()=>{
@@ -86,7 +86,7 @@ test('the top-right noninteractive avatar is gone and sign-out is a real button'
 test('clock rerenders are limited when no focus timer is running',()=>{
   assert.match(page,/setInterval\(refresh,30000\)/);
   assert.match(page,/<FocusElapsed session=\{active\} anchor=\{focusClock\}\/>/);
-  assert.match(page,/Date\.now\(\)-lastLoadedAtRef\.current>=30000/);
+  assert.match(page,/Date\.now\(\)-lastLoadedAtRef\.current>=30\*60\*1000/);
 });
 
 test('PDF bookmarks are debounced and serialized instead of blocking the global workspace',()=>{

@@ -108,12 +108,12 @@ def test_manual_creation_race(client):
 
 def test_maximum_batch_and_rollback(client,monkeypatch):
     cid=course(client,weeks=30)
-    original=WorkspaceView.create
+    original=WorkspaceView.create_generated
     def fail(self,kind,doc):
         if kind=='items' and doc['week_number']==2: raise RuntimeError('injected failure')
         return original(self,kind,doc)
     with monkeypatch.context() as patch:
-        patch.setattr(WorkspaceView,'create',fail)
+        patch.setattr(WorkspaceView,'create_generated',fail)
         with pytest.raises(RuntimeError): generate(client,cid,DEFAULTS,[1,2])
     assert client.get('/api/items').json()==[]
     choices=DEFAULTS+[{'title':f'Custom {i}','kind':'exercise'} for i in range(4)]

@@ -4,6 +4,8 @@ from __future__ import annotations
 import os
 import time
 import asyncio
+import logging
+from threading import Lock
 from datetime import date
 from typing import Any
 
@@ -13,11 +15,11 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import ValidationError
 
 from .workspace_models import Semester
-from .models import ExamAttempt, GenerateActivities, GenerationResult, Course, FocusSession, FinishFocus, Item, ItemPatch, PauseFocus, ResumeFocus, ReadingPosition, Resource, StartFocus, Week
+from .models import ExamAttempt, GenerateActivities, GenerationResult, ItemUpdateResult, Course, FocusSession, FinishFocus, Item, ItemPatch, PauseFocus, ResumeFocus, ReadingPosition, Resource, StartFocus, Week
 from .security import User, current_user, firebase_app
 from .deployment import validate_deployment_environment
 from .storage import (ActiveSessionExists, DocumentAlreadyExists, DocumentMissing,
-                      SessionStateConflict, get_store)
+                      SessionStateConflict, get_store, DB_DIAGNOSTICS)
 
 validate_deployment_environment()
 
@@ -30,7 +32,20 @@ app = FastAPI(title='Study Hub API', version='0.5.0')
 @app.middleware('http')
 async def api_server_timing(request: Request, call_next):
     started = time.perf_counter()
-    response = await call_next(request)
+    # Disabled unless explicitly enabled in a non-Vercel development environment.
+    enabled = os.getenv('STUDYHUB_DB_DIAGNOSTICS') == '1' and not os.getenv('VERCEL')
+    counters = {'lock': Lock()} if enabled else None
+    token = DB_DIAGNOSTICS.set(counters)
+    try:
+        response = await call_next(request)
+    finally:
+        DB_DIAGNOSTICS.reset(token)
+        if counters is not None:
+            route = request.scope.get('route')
+            logging.getLogger('studyhub.database').warning(
+                'DB %s %s duration_ms=%.1f estimates=%s', request.method,
+                getattr(route, 'path', 'unmatched'), (time.perf_counter()-started)*1000,
+                {k: v for k, v in counters.items() if k != 'lock'})
     if request.url.path.startswith('/api/'):
         response.headers['Server-Timing'] = f'api;dur={(time.perf_counter()-started)*1000:.1f}'
         response.headers['Cache-Control'] = 'private, no-store'
@@ -56,12 +71,10 @@ def all_docs(uid: str, kind: str) -> list[dict]:
 
 
 def validate_context(uid: str, course_id: str | None, week_number: int | None):
-    if course_id:
-        ensure_course_active(uid, course_id)
+    course = ensure_course_active(uid, course_id) if course_id else None
     if week_number is not None and not course_id:
         raise HTTPException(422, 'Week requires course')
     if course_id and week_number is not None:
-        course = app_store.get(uid, 'courses', course_id)
         if week_number > course['week_count']:
             raise HTTPException(422, 'Week exceeds course length')
 
@@ -117,7 +130,7 @@ def add_course(value: Course, user: User = Depends(current_user)):
         value.semester = semester['name']
         if any(c.get('semester_id') == value.semester_id
                and normalized_code(c.get('code', '')) == normalized_code(value.code)
-               for c in tx.list('courses')):
+               for c in tx.list_equal('courses', 'semester_id', value.semester_id)):
             raise HTTPException(409, 'Course code already exists in this semester')
         tx.create('courses', value.model_dump(mode='json'))
         return value
@@ -139,7 +152,7 @@ def add_week(value: Week, user: User = Depends(current_user)):
         if value.number > course['week_count']:
             raise HTTPException(422, 'Week exceeds course length')
         if any(w.get('course_id') == value.course_id and w['number'] == value.number
-               for w in tx.list('weeks')):
+               for w in tx.list_equal('weeks', 'course_id', value.course_id)):
             raise HTTPException(409, 'This course week already exists')
         tx.create('weeks', value.model_dump(mode='json'))
         return value
@@ -160,7 +173,7 @@ def weekly_activity_matches(tx, course_id, week_number, title, exclude_id=None):
     name = activity_name(title)
     return any(row['id'] != exclude_id and row.get('course_id') == course_id
                and row.get('week_number') == week_number and activity_name(row['title']) == name
-               for row in tx.list('items'))
+               for row in tx.list_equal('items', 'course_id', course_id))
 
 
 @app.post('/api/courses/{course_id}/generate-activities', response_model=GenerationResult)
@@ -181,7 +194,7 @@ def generate_activities(course_id: str, value: GenerateActivities, user: User = 
         if weeks[-1] > course['week_count']:
             raise HTTPException(422, 'Week exceeds course length')
         existing = {}
-        for row in tx.list('items'):
+        for row in tx.list_equal('items', 'course_id', course_id):
             if row.get('course_id') == course_id and row.get('week_number') in weeks:
                 existing.setdefault((row['week_number'], activity_name(row['title'])), []).append(row)
         created = skipped = 0
@@ -195,7 +208,7 @@ def generate_activities(course_id: str, value: GenerateActivities, user: User = 
                     continue
                 item = Item(title=activity.title.strip(), kind=activity.kind, course_id=course_id, week_number=week)
                 doc = item.model_dump(mode='json')
-                tx.create('items', doc)
+                tx.create_generated('items', doc)
                 rows.append(doc)
                 created += 1
         return {'created': created, 'skipped': skipped, 'items': rows}
@@ -240,6 +253,15 @@ def add_item(value: Item, user: User = Depends(current_user)):
 
 @app.patch('/api/items/{identifier}', response_model=Item)
 def patch_item(identifier: str, updates: ItemPatch, user: User = Depends(current_user)):
+    return _patch_item(identifier, updates, user)
+
+
+@app.patch('/api/items/{identifier}/with-successor', response_model=ItemUpdateResult)
+def patch_item_with_successor(identifier: str, updates: ItemPatch, user: User = Depends(current_user)):
+    return _patch_item(identifier, updates, user, with_successor=True)
+
+
+def _patch_item(identifier: str, updates: ItemPatch, user: User, with_successor=False):
     fields = updates.model_dump(exclude_unset=True, mode='json')
 
     def update(original: dict) -> tuple[dict, dict | None]:
@@ -260,6 +282,12 @@ def patch_item(identifier: str, updates: ItemPatch, user: User = Depends(current
             successor = next_occurrence(value).model_dump(mode='json')
         return value.model_dump(mode='json'), successor
 
+    def successor_id(updated):
+        if fields.get('done') is True and updated.get('done') and updated.get('repeat', 'none') != 'none':
+            from .recurrence import next_occurrence
+            return next_occurrence(Item.model_validate(updated)).id
+        return None
+
     try:
         if 'title' in fields:
             def rename(tx):
@@ -273,12 +301,18 @@ def patch_item(identifier: str, updates: ItemPatch, user: User = Depends(current
                 if successor is not None and tx.get('items', successor['id']) is None:
                     tx.create('items', successor)
                 tx.put('items', updated)
+                if with_successor:
+                    next_id = successor['id'] if successor else successor_id(updated)
+                    return updated, tx.get('items', next_id) if next_id else None
                 return updated
             result = app_store.workspace_atomic(user.uid, rename)
         else:
-            result = app_store.update_item_atomic(user.uid, identifier, update)
+            result = app_store.update_item_atomic(user.uid, identifier, update, successor_lookup=successor_id if with_successor else None)
     except DocumentMissing:
         raise HTTPException(404, 'Item not found') from None
+    if with_successor:
+        item, successor = result
+        return ItemUpdateResult(item=Item.model_validate(item), successor=Item.model_validate(successor) if successor else None)
     return Item.model_validate(result)
 
 @app.delete('/api/items/{identifier}', status_code=204)
@@ -293,7 +327,7 @@ def delete_item(identifier: str, user: User = Depends(current_user)):
                 raise HTTPException(404, 'courses not found')
             if course.get('archived', False):
                 raise HTTPException(409, 'Course is archived; restore it before making changes')
-        if any(r.get('item_id') == identifier for r in tx.list('resources')):
+        if any(r.get('item_id') == identifier for r in tx.list_equal('resources', 'item_id', identifier)):
             raise HTTPException(409, 'Detach linked PDF resources before deleting this study item')
         tx.delete('items', identifier)
 
@@ -322,7 +356,7 @@ def add_resource(value: Resource, user: User = Depends(current_user)):
                    and existing.get('course_id') == value.course_id
                    and (existing.get('week_number') == value.week_number
                         or existing.get('week_number') is None or value.week_number is None)
-                   for existing in tx.list('resources')):
+                   for existing in tx.list_equal('resources', 'course_id', value.course_id)):
                 raise HTTPException(409, 'This PDF is already linked to that course and week')
         tx.create('resources', value.model_dump(mode='json'))
         return value
@@ -342,7 +376,7 @@ def paper_practice_task(identifier: str, user: User = Depends(current_user)):
         course = tx.get('courses', paper['course_id'])
         if not course or course.get('archived', False):
             raise HTTPException(409, 'Course is unavailable or archived')
-        existing = next((i for i in tx.list('items') if i.get('resource_id') == identifier
+        existing = next((i for i in tx.list_equal('items', 'resource_id', identifier) if i.get('resource_id') == identifier
                          and i.get('course_id') == paper['course_id'] and i.get('week_number') is None
                          and i.get('kind') == 'revision'), None)
         if existing:
@@ -423,7 +457,7 @@ def delete_resource(identifier: str, user: User = Depends(current_user)):
             raise HTTPException(409, 'Course is archived; restore it before making changes')
         if entry.get('exam_attempts'):
             raise HTTPException(409, 'Remove recorded exam attempts before unlinking this paper')
-        if any(i.get('resource_id') == identifier for i in tx.list('items')):
+        if any(i.get('resource_id') == identifier for i in tx.list_equal('items', 'resource_id', identifier)):
             raise HTTPException(409, 'Unlink this resource from study items before removing it')
         tx.delete('resources', identifier)
 
@@ -444,11 +478,11 @@ def focus_seconds(session: dict, now: int):
 @app.post('/api/sessions/start', response_model=FocusSession, status_code=201)
 def start_session(value: StartFocus, user: User = Depends(current_user)):
     validate_context(user.uid, value.course_id, value.week_number)
+    validated_course_id = value.course_id
     if value.item_id:
         item = app_store.get(user.uid, 'items', value.item_id)
         if not item:
             raise HTTPException(404, 'Linked task not found')
-        if item.get('course_id'): ensure_course_active(user.uid, item['course_id'])
         if value.course_id and item.get('course_id') != value.course_id:
             raise HTTPException(422, 'Task does not belong to selected course')
         if value.week_number and item.get('week_number') != value.week_number:
@@ -457,7 +491,8 @@ def start_session(value: StartFocus, user: User = Depends(current_user)):
             value.course_id = item['course_id']
         if value.week_number is None and item.get('week_number'):
             value.week_number = item['week_number']
-    if value.course_id: ensure_course_active(user.uid, value.course_id)
+    if value.course_id and value.course_id != validated_course_id:
+        validate_context(user.uid, value.course_id, value.week_number)
     timestamp = now_s()
     # Accept up to five seconds of network latency, but never trust an arbitrary
     # client-supplied start time. Old callers that omit requested_at are unchanged.
