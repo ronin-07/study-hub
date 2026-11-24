@@ -1989,3 +1989,26 @@ html[data-study-hub-theme="light"]{color-scheme:light}
   .pdf-opening{padding:14px}
 }
 @media(prefers-reduced-motion:reduce){.pdf-opening-indicator:after{animation:none;transform:translateX(100%)}}
+
+/* v0.6 — Course-wide activity setup, using existing Mulberry Dusk tokens. */
+.generator-dialog{position:fixed;inset:0;margin:auto;width:min(94vw,680px);max-width:680px;max-height:calc(100dvh - 32px);padding:0;overflow:hidden;color:var(--text)}
+.generator-dialog[open]{display:flex;flex-direction:column}
+.generator-dialog::backdrop{background:#16142bbd;backdrop-filter:blur(5px)}
+.generator-heading{display:flex;align-items:center;gap:12px;padding:20px 44px 12px 22px;flex-shrink:0}
+.generator-heading>svg{color:var(--teal);flex-shrink:0}.generator-heading h2{margin:0 0 3px}
+.generator-body{padding:0 22px 16px;overflow:auto;overscroll-behavior:contain;min-height:0}
+.generator-context{display:grid;gap:4px;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--soft);margin-bottom:14px}
+.generator-context strong{overflow-wrap:anywhere}.generator-fieldset{border:0;padding:0;margin:0 0 14px;min-width:0}.generator-fieldset legend{font-weight:700;margin-bottom:8px}
+.generator-tools{display:flex;gap:6px;align-items:center;justify-content:flex-end;margin-bottom:6px;font-size:.78rem;color:var(--muted)}.generator-tools span{margin-right:auto}
+.generator-choices{border:1px solid var(--line);border-radius:10px;overflow:hidden}.generator-choice{display:flex;align-items:center;gap:8px;padding:8px 12px}.generator-choice+.generator-choice{border-top:1px solid var(--line)}
+.generator-choice label{display:flex;align-items:center;gap:10px;flex:1;cursor:pointer;min-width:0;font-size:.86rem}.generator-choice label span{overflow-wrap:anywhere}.generator-choice small{display:block;color:var(--muted);font-size:.72rem;margin-top:2px}
+.generator-dialog input:is([type=checkbox],[type=radio]){width:17px;height:17px;flex:none;accent-color:#8eb89b}.generator-custom-label{display:block;margin:11px 0 5px;font-size:.8rem;font-weight:650}
+.generator-custom{display:grid;grid-template-columns:minmax(0,1fr) minmax(90px,130px) auto;gap:6px;align-items:center;margin-bottom:5px}.generator-custom input,.generator-custom select{min-width:0;width:100%}
+.generator-radio{display:flex;align-items:center;gap:8px;font-size:.84rem;min-height:32px;cursor:pointer}.generator-weeks{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px}.generator-weeks .btn{justify-content:center;min-width:0;padding:8px}.generator-weeks [aria-pressed=true]{background:var(--soft);border-color:#bd91b1;box-shadow:inset 0 0 0 1px #bd91b1}
+.generator-footer{flex-shrink:0;padding:12px 22px 18px;border-top:1px solid var(--line);background:var(--paper)}.generator-summary{display:grid;grid-template-columns:1fr 1fr;gap:5px 16px;padding:10px 12px;border-radius:10px;background:var(--soft);font-size:.8rem}.generator-summary>strong,.generator-total{grid-column:1/-1}.generator-summary>div{display:flex;justify-content:space-between;gap:6px}.generator-total{border-top:1px solid var(--line);padding-top:6px;font-weight:700}.generator-total b{font-size:1rem;color:var(--teal)}.generator-footer p{margin:7px 0}.generator-buttons{display:flex;justify-content:flex-end;gap:8px}.generator-buttons .primary{flex:1;justify-content:center}.generator-setup{display:flex;flex-direction:column;align-items:center;text-align:center;gap:12px;padding:30px}.generator-setup>svg{color:var(--teal)}.generator-setup .btn{width:100%;justify-content:center}
+.generator-dialog :is(button,input,select):focus-visible{outline:2px solid #9ed3b2!important;outline-offset:2px!important}
+@media(max-width:560px){.generator-dialog{width:100%;max-width:100%;max-height:calc(100dvh - 12px);border-radius:18px 18px 0 0;inset:auto 0 0;margin:0}.generator-heading{padding:16px 42px 10px 16px}.generator-body{padding:0 16px 10px}.generator-footer{padding:9px 16px max(12px,env(safe-area-inset-bottom))}.generator-summary{gap:4px 10px;font-size:.73rem}.generator-custom{grid-template-columns:minmax(0,1fr) auto}.generator-custom input{grid-column:1/-1}.generator-weeks .btn{min-height:40px}.generator-choice{min-height:44px}.generator-buttons .btn{min-height:44px}.generator-footer p{font-size:.72rem}}
+@media(max-height:540px){.generator-summary{font-size:.72rem;gap:2px 10px}.generator-footer{padding-top:7px;padding-bottom:7px}.generator-heading{padding-top:10px;padding-bottom:8px}}
+@media(prefers-reduced-motion:reduce){.generator-dialog .spin{animation:none}}
+
+.generator-error{border:1px solid var(--line);border-radius:8px;padding:8px;font-weight:650}.generator-dialog .dialog-close{z-index:1}

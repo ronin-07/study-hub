@@ -34,7 +34,7 @@ class Week(BaseDocument):
     objectives: str = Field(default='', max_length=3000)
 
 
-ItemKind = Literal['lecture', 'notes', 'reading', 'questions', 'revision', 'assignment', 'personal']
+ItemKind = Literal['lecture', 'notes', 'reading', 'questions', 'revision', 'assignment', 'exercise', 'personal']
 
 
 class Item(BaseDocument):
@@ -80,6 +80,24 @@ class Item(BaseDocument):
         if self.submitted and self.kind != 'assignment':
             raise ValueError('Only an assignment may be marked submitted')
         return self
+
+
+class ActivityDefinition(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    title: str = Field(min_length=1, max_length=240)
+    kind: Literal['lecture', 'notes', 'reading', 'questions', 'revision', 'assignment', 'exercise']
+
+
+class GenerateActivities(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    activities: list[ActivityDefinition] = Field(min_length=1, max_length=10)
+    weeks: list[int] = Field(min_length=1, max_length=30)
+
+
+class GenerationResult(BaseModel):
+    created: int
+    skipped: int
+    items: list[Item]
 
 
 class ItemPatch(BaseModel):

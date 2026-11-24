@@ -54,7 +54,8 @@ class WorkspaceView:
             doc = self._writes[key]
         else:
             if key not in self._cache:
-                self._cache[key] = self._fetch(kind, identifier)
+                self._cache[key] = (next((row for row in self._collections[kind] if row['id'] == identifier), None)
+                                    if kind in self._collections else self._fetch(kind, identifier))
             doc = self._cache[key]
         return dict(doc) if doc is not None else None
 

@@ -13,7 +13,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import ValidationError
 
 from .workspace_models import Semester
-from .models import Course, FocusSession, FinishFocus, Item, ItemPatch, PauseFocus, ResumeFocus, ReadingPosition, Resource, StartFocus, Week
+from .models import GenerateActivities, GenerationResult, Course, FocusSession, FinishFocus, Item, ItemPatch, PauseFocus, ResumeFocus, ReadingPosition, Resource, StartFocus, Week
 from .security import User, current_user, firebase_app
 from .deployment import validate_deployment_environment
 from .storage import (ActiveSessionExists, DocumentAlreadyExists, DocumentMissing,
@@ -150,6 +150,59 @@ def add_week(value: Week, user: User = Depends(current_user)):
         raise HTTPException(409, 'Week ID already exists') from None
 
 
+def activity_name(title: str) -> str:
+    return ' '.join(title.split()).lower()
+
+
+def weekly_activity_matches(tx, course_id, week_number, title, exclude_id=None):
+    if course_id is None or week_number is None:
+        return False
+    name = activity_name(title)
+    return any(row['id'] != exclude_id and row.get('course_id') == course_id
+               and row.get('week_number') == week_number and activity_name(row['title']) == name
+               for row in tx.list('items'))
+
+
+@app.post('/api/courses/{course_id}/generate-activities', response_model=GenerationResult)
+def generate_activities(course_id: str, value: GenerateActivities, user: User = Depends(current_user)):
+    names = [activity_name(activity.title) for activity in value.activities]
+    if any(not name for name in names) or len(set(names)) != len(names):
+        raise HTTPException(422, 'Activity names must be nonblank and unique')
+    weeks = sorted(set(value.weeks))
+    if len(weeks) != len(value.weeks) or weeks[0] < 1:
+        raise HTTPException(422, 'Select distinct valid teaching weeks')
+
+    def operation(tx):
+        course = tx.get('courses', course_id)
+        if not course:
+            raise HTTPException(404, 'Course not found')
+        if course.get('archived', False):
+            raise HTTPException(409, 'Course is archived; restore it before making changes')
+        if weeks[-1] > course['week_count']:
+            raise HTTPException(422, 'Week exceeds course length')
+        existing = {}
+        for row in tx.list('items'):
+            if row.get('course_id') == course_id and row.get('week_number') in weeks:
+                existing.setdefault((row['week_number'], activity_name(row['title'])), []).append(row)
+        created = skipped = 0
+        rows = []
+        for week in weeks:
+            for activity, name in zip(value.activities, names):
+                matches = existing.get((week, name))
+                if matches:
+                    skipped += 1
+                    rows.extend(matches)
+                    continue
+                item = Item(title=activity.title.strip(), kind=activity.kind, course_id=course_id, week_number=week)
+                doc = item.model_dump(mode='json')
+                tx.create('items', doc)
+                rows.append(doc)
+                created += 1
+        return {'created': created, 'skipped': skipped, 'items': rows}
+
+    return app_store.workspace_atomic(user.uid, operation)
+
+
 @app.post('/api/items', response_model=Item, status_code=201)
 def add_item(value: Item, user: User = Depends(current_user)):
     if value.planned_date and value.due_date and value.planned_date > value.due_date:
@@ -174,6 +227,8 @@ def add_item(value: Item, user: User = Depends(current_user)):
                 raise HTTPException(422, 'Referenced resource belongs to another course')
             if resource.get('week_number') is not None and resource['week_number'] != value.week_number:
                 raise HTTPException(422, 'Referenced weekly resource belongs to another week')
+        if weekly_activity_matches(tx, value.course_id, value.week_number, value.title):
+            raise HTTPException(409, 'An activity with this name already exists in this teaching week')
         tx.create('items', value.model_dump(mode='json'))
         return value
 
@@ -206,7 +261,22 @@ def patch_item(identifier: str, updates: ItemPatch, user: User = Depends(current
         return value.model_dump(mode='json'), successor
 
     try:
-        result = app_store.update_item_atomic(user.uid, identifier, update)
+        if 'title' in fields:
+            def rename(tx):
+                original = tx.get('items', identifier)
+                if original is None:
+                    raise DocumentMissing
+                updated, successor = update(original)
+                if activity_name(updated['title']) != activity_name(original['title']) and weekly_activity_matches(
+                        tx, updated.get('course_id'), updated.get('week_number'), updated['title'], identifier):
+                    raise HTTPException(409, 'An activity with this name already exists in this teaching week')
+                if successor is not None and tx.get('items', successor['id']) is None:
+                    tx.create('items', successor)
+                tx.put('items', updated)
+                return updated
+            result = app_store.workspace_atomic(user.uid, rename)
+        else:
+            result = app_store.update_item_atomic(user.uid, identifier, update)
     except DocumentMissing:
         raise HTTPException(404, 'Item not found') from None
     return Item.model_validate(result)

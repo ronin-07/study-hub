@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { api, pdfBlob } from '@/lib/api';
 import { formatLocalClock, formatLocalDate } from '@/lib/clock';
-import { applyMutation, preserveWorkspaceChanges, type MutationHint } from '@/lib/snapshot-cache';
+import { applyMutation, bulkMutationRows, preserveWorkspaceChanges, type MutationHint } from '@/lib/snapshot-cache';
 import { createSnapshotCoordinator, describeSnapshotFailure, fetchSnapshotWithRetry, type SnapshotLoadProblem } from '@/lib/snapshot-loading';
 import { Badge, Card, EmptyState, FormRow, SectionTitle } from '@/components/common';
 import { PdfOpeningOverlay } from '@/components/pdf-opening-overlay';
@@ -423,13 +423,19 @@ export default function Page() {
       let synchronized = true;
       if(mutation){
         if(mutation.collection!=='none') {
-          const id=mutation.deleteId||(result&&typeof result==='object'&&'id' in result&&typeof result.id==='string'?result.id:'');
+          if(mutation.bulkInsert){
+            const rows=bulkMutationRows(result);
+            for(const row of rows) snapshotCoordinator.retain(mutation.collection,row.id);
+            setData(previous=>applyMutation(previous,mutation,result));
+          }else{
+            const id=mutation.deleteId||(result&&typeof result==='object'&&'id' in result&&typeof result.id==='string'?result.id:'');
           if(!id){
             // A write may have succeeded even if the response shape changed. Reconcile once.
             synchronized=await load(true);
           }else {
             snapshotCoordinator.retain(mutation.collection,id);
             setData(previous=>applyMutation(previous,mutation,result));
+          }
           }
         }
       } else synchronized=await load(true);

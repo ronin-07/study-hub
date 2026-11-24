@@ -1,7 +1,7 @@
 import type { Snapshot } from './types';
 
 export type SnapshotCollection = keyof Snapshot;
-export type MutationHint = { collection: SnapshotCollection; deleteId?: string } | { collection: 'none' };
+export type MutationHint = { collection: SnapshotCollection; deleteId?: string; bulkInsert?: boolean } | { collection: 'none' };
 
 type Identified = { id: string };
 type WorkspaceCollection = Exclude<SnapshotCollection, 'sessions' | 'focus_stats'>;
@@ -49,6 +49,11 @@ export function applyMutation(snapshot: Snapshot, hint: MutationHint, result: un
   if (hint.collection === 'none') return snapshot;
   const collection = hint.collection;
   const existing = snapshot[collection] as Identified[];
+  if (hint.bulkInsert) {
+    const rows = bulkMutationRows(result);
+    const ids = new Set(existing.map(row=>row.id));
+    return {...snapshot, [collection]: [...existing, ...rows.filter(row=>!ids.has(row.id))]};
+  }
   if (hint.deleteId) {
     return { ...snapshot, [collection]: existing.filter(row => row.id !== hint.deleteId) };
   }
@@ -59,4 +64,12 @@ export function applyMutation(snapshot: Snapshot, hint: MutationHint, result: un
   return { ...snapshot, [collection]: existing.some(row => row.id === updated.id)
     ? existing.map(row => row.id === updated.id ? updated : row)
     : [...existing, updated] };
+}
+
+export function bulkMutationRows(result:unknown): Identified[] {
+  if (!result || typeof result!=='object' || !('items' in result) || !Array.isArray(result.items)
+      || result.items.some(row=>!row || typeof row.id!=='string' || !row.id)) {
+    throw new Error('Unexpected bulk save response. Refresh to verify your activities.');
+  }
+  return result.items;
 }

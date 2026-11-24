@@ -1,4 +1,4 @@
-export type Kind = 'lecture' | 'notes' | 'reading' | 'questions' | 'revision' | 'assignment' | 'personal';
+export type Kind = 'lecture' | 'notes' | 'reading' | 'questions' | 'revision' | 'assignment' | 'exercise' | 'personal';
 export type Priority = 'low' | 'medium' | 'high';
 export type Semester = { id: string; name: string; start_date: string | null; end_date: string | null };
 export type Course = { id: string; code: string; title: string; semester: string; semester_id?: string | null; week_count: number; exam_date?: string | null; goals?: string; archived?: boolean };
@@ -22,7 +22,7 @@ export type DriveIndexed = DriveEntry & {
 export type DriveIndexResponse = { folder: DriveSource | null; files: DriveIndexed[] };
 export type DriveScanResponse = { count: number; scanned_at: number; files: DriveIndexed[] };
 export type Tab = 'today' | 'courses' | 'tasks' | 'calendar' | 'focus' | 'library';
-export const kindLabels: Record<Kind,string> = { lecture: 'Lecture', notes: 'Notes', reading: 'Reading', questions: 'Questions', revision: 'Revision', assignment: 'Assignment', personal: 'Personal' };
+export const kindLabels: Record<Kind,string> = { lecture: 'Lecture', notes: 'Notes', reading: 'Reading', questions: 'Questions', revision: 'Revision', assignment: 'Assignment', exercise: 'Exercise', personal: 'Personal' };
 /** Space reference lists for display without altering stored chapter/question identifiers. */
 export function formatStudyReference(value: string): string {
   return value.split(',').map(part => part.trim()).filter(Boolean).join(', ');
