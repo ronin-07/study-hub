@@ -13,8 +13,8 @@ import { formatLocalClock, formatLocalDate } from '@/lib/clock';
 import { applyMutation, type MutationHint } from '@/lib/snapshot-cache';
 import { describeSnapshotFailure, fetchSnapshotWithRetry, type SnapshotLoadProblem } from '@/lib/snapshot-loading';
 import { Badge, Card, EmptyState, FormRow, SectionTitle } from '@/components/common';
-import { PdfWorkspace, PdfOpeningOverlay } from '@/components/pdf-workspace';
-import { createPdfRequestGate } from '@/lib/pdf-preview';
+import { PdfOpeningOverlay } from '@/components/pdf-opening-overlay';
+import { createPdfRequestGate, createPdfSessionCache } from '@/lib/pdf-preview';
 import { ProfileName } from '@/components/profile-name';
 import { CoursePlanner } from '@/components/course-planner';
 import { ProgressTrack, ProgressValue } from '@/components/progress-motion';
@@ -22,7 +22,7 @@ import { visibleCourseDoneCount } from '@/lib/progress-presentation';
 import { FocusElapsed, FocusDial } from '@/components/focus-elapsed';
 import { FocusDurationFields } from '@/components/focus-duration-fields';
 import { formatFocusDuration } from '@/lib/focus-display';
-import { filterIndexedPdfs, type IndexedPdfFilter } from '@/lib/resource-view';
+import { driveLinksByFile, filterIndexedPdfs, type IndexedPdfFilter } from '@/lib/resource-view';
 import {
   previewPause, previewResume, recoverFocusClock, startFocusClock, pauseFocusClock,
   resumeFocusClock, focusClockSeconds, rekeyFocusClock, type FocusClockAnchor,
@@ -41,8 +41,14 @@ import { type DriveEntry, type DriveList, type FocusSession, type Item,
   formatDate, kindLabels, localToday } from '@/lib/types';
 
 type DriveStatus = { connected: boolean; configured: boolean };
+type DriveRead = 'status' | 'index' | 'folder';
+type ReadState = 'idle' | 'loading' | 'ready' | 'error';
 const empty: Snapshot = {courses:[], weeks:[], items:[], resources:[], sessions:[], semesters:[]};
 type PdfOpening = {requestId:number;fileId:string;title:string;resourceId?:string;page:number;status:'loading'|'error';message?:string};
+type OpenPdf = {
+  url:string; title:string; page:number; resourceId?:string; courseId?:string; weekNumber?:number;
+  Workspace:typeof import('@/components/pdf-workspace').PdfWorkspace;
+};
 const PDF_FETCH_TIMEOUT_MS = 120_000;
 const pageNames: Record<Tab,string> = {today:'Home', courses:'Study', tasks:'Tasks', calendar:'Calendar', focus:'Focus', library:'Resources'};
 const tabs: {id:Tab; label:string; icon:typeof Home}[] = [
@@ -133,9 +139,10 @@ export default function Page() {
   const [weekNumber,setWeekNumber] = useState(1);
   const [now,setNow] = useState(Math.floor(Date.now()/1000));
   const [clockReady,setClockReady] = useState(false);
-  const [pdf,setPdf] = useState<{url:string;title:string;page:number;resourceId?:string;courseId?:string;weekNumber?:number}|null>(null);
+  const [pdf,setPdf] = useState<OpenPdf|null>(null);
   const [pdfOpening,setPdfOpening] = useState<PdfOpening|null>(null);
   const pdfRequestGateRef = useRef(createPdfRequestGate());
+  const [pdfCache] = useState(createPdfSessionCache);
   const pdfPendingFileRef = useRef<string|null>(null);
   const pdfObjectUrlRef = useRef<string|null>(null);
   const pdfBookmarkTimerRef=useRef<ReturnType<typeof setTimeout>|null>(null);
@@ -179,19 +186,24 @@ export default function Page() {
   },[quickFocusOpen]);
 
   const [drive,setDrive] = useState<DriveStatus>({connected:false,configured:false});
+  const [driveStatusState,setDriveStatusState] = useState<ReadState>('idle');
   const [driveFiles,setDriveFiles] = useState<DriveEntry[]>([]);
   const [folderPath,setFolderPath] = useState<{id:string;name:string}[]>([{id:'root',name:'My Drive'}]);
   const [driveNext,setDriveNext] = useState<string|null>(null);
   const [driveBusy,setDriveBusy] = useState(false);
+  const [driveFolderLoaded,setDriveFolderLoaded] = useState<string|null>(null);
+  const [driveFolderError,setDriveFolderError] = useState('');
   const [sourceFolder,setSourceFolder] = useState<DriveSource|null>(null);
-  const [driveIndex,setDriveIndex] = useState<DriveIndexed[]>([]);
+  const [indexedFiles,setIndexedFiles] = useState<DriveIndexed[]>([]);
+  const [driveIndexState,setDriveIndexState] = useState<ReadState>('idle');
+  const driveReads = useRef<Partial<Record<DriveRead, AbortController>>>({});
+  const driveGeneration = useRef(0);
   const [scanBusy,setScanBusy] = useState(false);
   const scanBusyRef = useRef(false);
   const [indexFilter,setIndexFilter] = useState<IndexedPdfFilter>('unlinked');
   const [indexSearch,setIndexSearch] = useState('');
   const [selectedPdfId,setSelectedPdfId] = useState<string|null>(null);
   const linkIntentRef=useRef<{courseId:string;week:number;scope:'course'|'week';kind:Resource['kind']}|null>(null);
-  const [recentlyLinkedIds,setRecentlyLinkedIds]=useState<Set<string>>(()=>new Set());
   const linkPanelRef=useRef<HTMLDivElement|null>(null);
   const [foldersExpanded,setFoldersExpanded] = useState(false);
   const [visibleCount,setVisibleCount] = useState(30);
@@ -201,6 +213,25 @@ export default function Page() {
   const [linkKind,setLinkKind] = useState<Resource['kind']>('handwritten');
   const [linkItem,setLinkItem] = useState('');
   const [linkingFileId,setLinkingFileId] = useState<string|null>(null);
+
+  const cancelDriveReads=useCallback(()=>{
+    driveGeneration.current++;
+    for(const controller of Object.values(driveReads.current))controller.abort();
+    driveReads.current={};
+  },[]);
+  const resetDriveDiscovery=useCallback((configured=false)=>{
+    cancelDriveReads();
+    setDrive({connected:false,configured});
+    setDriveStatusState(configured?'ready':'idle');
+    setSourceFolder(null);setIndexedFiles([]);setDriveIndexState('idle');
+    setDriveFiles([]);setDriveNext(null);setDriveFolderLoaded(null);setDriveFolderError('');setDriveBusy(false);
+    setFolderPath([{id:'root',name:'My Drive'}]);setFoldersExpanded(false);
+    setSelectedPdfId(null);setIndexSearch('');setIndexFilter('unlinked');setVisibleCount(30);
+    setLinkCourse('');setLinkWeek(1);setLinkScope('week');setLinkKind('handwritten');setLinkItem('');
+    setLinkingFileId(null);linkIntentRef.current=null;
+    scanBusyRef.current=false;setScanBusy(false);
+  },[cancelDriveReads]);
+  useEffect(()=>cancelDriveReads,[cancelDriveReads]);
 
   useEffect(()=>{
     if (!firebaseAuth) return;
@@ -215,14 +246,16 @@ export default function Page() {
       setFinishReview(false);setQuickFocusOpen(false);
       // A previous account's pending PDF must never appear after an auth switch.
       pdfRequestGateRef.current.cancel();pdfPendingFileRef.current=null;
+      pdfCache.clear();resetDriveDiscovery();
       if(pdfBookmarkTimerRef.current){clearTimeout(pdfBookmarkTimerRef.current);pdfBookmarkTimerRef.current=null;}
       pdfBookmarkPendingRef.current=null;
       if(pdfObjectUrlRef.current)URL.revokeObjectURL(pdfObjectUrlRef.current);
       pdfObjectUrlRef.current=null;setPdf(null);setPdfOpening(null);
+      loadRequestRef.current++;setSnapshotReady(false);
       clearFeedback();
       setUser(u);setAuthReady(true);
     });
-  },[]);
+  },[pdfCache,resetDriveDiscovery]);
   useEffect(()=>{
     // Render the clock only after hydration to avoid server/client time mismatches.
     setNow(Math.floor(Date.now()/1000));
@@ -739,27 +772,57 @@ export default function Page() {
     void focusRequest(null,`/api/sessions/${active.id}/finish`,{confirmed_seconds:confirmed},
       ()=>{setFinishReview(false);setFocusClock(null);notify({kind:'success',title:'Focus session saved',detail:`${duration(confirmed)} recorded.`});});
   };
-  const loadDriveStatus=useCallback(async()=>{
-    if (useFirebase&&!user) return;
-    try {setDrive(await api<DriveStatus>('/api/drive/status',user));}catch{/* noncritical */}
+  const readDrive=useCallback(async<T,>(key:DriveRead,route:string,commit:(result:T)=>void,fail:(error:unknown)=>void,settled?:()=>void)=>{
+    if((useFirebase&&!user)||driveReads.current[key])return;
+    const controller=new AbortController();
+    driveReads.current[key]=controller;
+    try{
+      const result=await api<T>(route,user,{signal:controller.signal});
+      if(driveReads.current[key]===controller)commit(result);
+    }catch(error){
+      if(driveReads.current[key]===controller)fail(error);
+    }finally{
+      if(driveReads.current[key]===controller){
+        delete driveReads.current[key];
+        settled?.();
+      }
+    }
   },[user]);
-  useEffect(()=>{if(authReady)void loadDriveStatus();},[authReady,loadDriveStatus]);
-  const loadIndex=useCallback(async()=>{
-    try {
-      const result=await api<DriveIndexResponse>('/api/drive/index',user);
-      setSourceFolder(result.folder);setDriveIndex(result.files);
-    }catch(e){setError(e instanceof Error?e.message:'Cannot read Goodnotes index');}
-  },[user]);
-  useEffect(()=>{if(authReady&&drive.connected)void loadIndex();},[authReady,drive.connected,loadIndex]);
-  const browseDrive=useCallback(async(folderId:string,more=false,token?:string)=>{
-    setDriveBusy(true);setError('');
-    try {const result=await api<DriveList>(`/api/drive/files?folder_id=${encodeURIComponent(folderId)}${token?`&page_token=${encodeURIComponent(token)}`:''}`,user);
-      setDriveFiles(existing=>more?[...existing,...result.files]:result.files);setDriveNext(result.nextPageToken||null);
-    }catch(e){setError(e instanceof Error?e.message:'Drive browsing failed');}
-    finally{setDriveBusy(false);}
-  },[user]);
-  const openFolder=(folder:DriveEntry)=>{setFolderPath(p=>[...p,{id:folder.id,name:folder.name}]);void browseDrive(folder.id);};
-  const backFolder=()=>{if(folderPath.length===1)return;const next=folderPath.slice(0,-1);setFolderPath(next);void browseDrive(next.at(-1)!.id);};
+  const loadDriveStatus=useCallback(()=>{
+    setDriveStatusState('loading');
+    void readDrive<DriveStatus>('status','/api/drive/status',result=>{
+      setDrive(result);setDriveStatusState('ready');
+    },()=>setDriveStatusState('error'));
+  },[readDrive]);
+  const loadIndex=useCallback(()=>{
+    setDriveIndexState('loading');
+    void readDrive<DriveIndexResponse>('index','/api/drive/index',result=>{
+      setSourceFolder(result.folder);setIndexedFiles(result.files);setDriveIndexState('ready');
+    },()=>setDriveIndexState('error'));
+  },[readDrive]);
+  const resourcesActive=tab==='library'&&snapshotReady&&authReady&&(!useFirebase||!!user);
+  useEffect(()=>{
+    if(resourcesActive&&driveStatusState==='idle')loadDriveStatus();
+  },[resourcesActive,driveStatusState,loadDriveStatus]);
+  useEffect(()=>{
+    if(resourcesActive&&drive.connected&&driveIndexState==='idle')loadIndex();
+  },[resourcesActive,drive.connected,driveIndexState,loadIndex]);
+  const browseDrive=useCallback((folderId:string,token?:string)=>{
+    setDriveBusy(true);setDriveFolderError('');
+    void readDrive<DriveList>('folder',
+      `/api/drive/files?folder_id=${encodeURIComponent(folderId)}${token?`&page_token=${encodeURIComponent(token)}`:''}`,
+      result=>{
+        setDriveFiles(existing=>token?[...existing,...result.files]:result.files);
+        setDriveNext(result.nextPageToken||null);setDriveFolderLoaded(folderId);
+      },error=>setDriveFolderError(error instanceof Error?error.message:'Drive browsing failed'),
+      ()=>setDriveBusy(false));
+  },[readDrive]);
+  const changeFolder=(next:typeof folderPath)=>{
+    driveReads.current.folder?.abort();delete driveReads.current.folder;
+    setDriveFolderError('');setDriveBusy(false);setFolderPath(next);
+  };
+  const openFolder=(folder:DriveEntry)=>changeFolder([...folderPath,{id:folder.id,name:folder.name}]);
+  const backFolder=()=>changeFolder(folderPath.slice(0,-1));
   const connectDrive=()=>void act(async()=>{const result=await api<{authorization_url:string}>('/api/drive/connect',user);window.location.assign(result.authorization_url);},{collection:'none'});
   // Opening a document is a read, not a mutation. Show feedback immediately, and
   // keep it independent of the global save lock. Only the newest request can win.
@@ -777,17 +840,23 @@ export default function Page() {
       let timedOut=false;
       const timeout=window.setTimeout(()=>{timedOut=true;controller.abort();},PDF_FETCH_TIMEOUT_MS);
       try{
-        const url=await pdfBlob(`/api/drive/files/${encodeURIComponent(fileId)}/pdf`,user,controller.signal);
-        // Cancellation can race with blob creation: revoke any unused object URL.
-        if(controller.signal.aborted||!pdfRequestGateRef.current.isCurrent(requestId)){URL.revokeObjectURL(url);return;}
+        const cached=pdfCache.get(fileId);
+        const download=pdfBlob(`/api/drive/files/${encodeURIComponent(fileId)}/pdf`,user,controller.signal,cached);
+        const [body, reader]=await Promise.all([download,import('@/components/pdf-workspace')]);
+        if(controller.signal.aborted||!pdfRequestGateRef.current.isCurrent(requestId))return;
+        if(body.etag)pdfCache.store(fileId,{blob:body.blob,etag:body.etag});
+        else pdfCache.remove(fileId);
+        const url=URL.createObjectURL(body.blob);
         const resource=data.resources.find(entry=>entry.id===resourceId);
         pdfObjectUrlRef.current=url;
-        setPdf({url,title,resourceId,courseId:resource?.course_id,weekNumber:resource?.week_number??weekNumber,page});
+        setPdf({url,title,resourceId,courseId:resource?.course_id,weekNumber:resource?.week_number??weekNumber,page,Workspace:reader.PdfWorkspace});
         setPdfOpening(null);
       }catch(e){
         if(!pdfRequestGateRef.current.isCurrent(requestId))return;
         const cancelled=controller.signal.aborted&&!timedOut;
         if(cancelled)return;
+        controller.abort();
+        pdfCache.remove(fileId);
         const message=timedOut?'The PDF took too long to download. Try again, or open it from Google Drive.':
           e instanceof Error?e.message:'Could not open this PDF.';
         setPdfOpening({requestId,fileId,title,resourceId,page,status:'error',message});
@@ -816,11 +885,18 @@ export default function Page() {
     if(pdfObjectUrlRef.current)URL.revokeObjectURL(pdfObjectUrlRef.current);
     pdfObjectUrlRef.current=null;setPdf(null);
   };
+  const disconnectDrive=()=>void act(async()=>{
+    const generation=driveGeneration.current;
+    await api('/api/drive/disconnect',user,{method:'DELETE'});
+    if(driveGeneration.current!==generation)return;
+    closePdf();pdfCache.clear();resetDriveDiscovery(drive.configured);
+  },{collection:'none'},{title:'Google Drive disconnected',detail:'Existing linked resources are kept.'});
   // Prevent old requests and blob URLs surviving page unmount.
   useEffect(()=>()=>{
     pdfRequestGateRef.current.cancel();pdfPendingFileRef.current=null;
+    pdfCache.clear();
     if(pdfObjectUrlRef.current)URL.revokeObjectURL(pdfObjectUrlRef.current);
-  },[]);
+  },[pdfCache]);
   const openTaskResource=(item:Item)=>{
     const r=data.resources.find(entry=>entry.id===item.resource_id);
     if(!r){setError('The linked document is no longer available. Check the Course Library.');return;}
@@ -845,34 +921,47 @@ export default function Page() {
       pdfBookmarkTimerRef.current=setTimeout(flushPdfBookmark,650);
     }
   };
+  const resourceLinks=useMemo(()=>driveLinksByFile(data.resources),[data.resources]);
+  const driveIndex=useMemo(()=>indexedFiles.map(file=>({...file,links:resourceLinks.get(file.id)??[]})),[indexedFiles,resourceLinks]);
   const linkDriveFile=(file:DriveEntry)=>{
-    if(mutationBusyRef.current||selectedPdfId!==file.id||recentlyLinkedIds.has(file.id))return;
+    if(mutationBusyRef.current||selectedPdfId!==file.id||resourceLinks.has(file.id))return;
+    const generation=driveGeneration.current;
     setLinkingFileId(file.id);
     void act(async()=>{
-    if(!linkCourse)throw new Error('Select a course before linking a PDF');
-    const saved=await api<Resource>('/api/resources',user,{method:'POST',body:{course_id:linkCourse,week_number:linkScope==='course'?null:linkWeek,title:file.name,kind:linkKind,source:'drive',drive_file_id:file.id,item_id:linkScope==='course'?null:(linkItem||null)}});
-    // Reindex in the background; the returned resource updates the course immediately.
-    setRecentlyLinkedIds(previous=>new Set(previous).add(file.id));
-    void loadIndex();
-    return saved;
-    },{collection:'resources'},{title:'PDF linked',detail:`${file.name} added to your course.`}).finally(()=>setLinkingFileId(null));
+      if(!linkCourse)throw new Error('Select a course before linking a PDF');
+      return api<Resource>('/api/resources',user,{method:'POST',body:{course_id:linkCourse,week_number:linkScope==='course'?null:linkWeek,title:file.name,kind:linkKind,source:'drive',drive_file_id:file.id,item_id:linkScope==='course'?null:(linkItem||null)}});
+    },{collection:'resources'},{title:'PDF linked',detail:`${file.name} added to your course.`}).finally(()=>{
+      if(driveGeneration.current===generation)setLinkingFileId(null);
+    });
   };
   const selectBackupFolder=()=>void act(async()=>{
     if(currentFolder.id==='root')throw new Error('Choose the Goodnotes backup folder, not the root of your Drive');
+    const generation=driveGeneration.current;
     const result=await api<{folder:DriveSource}>('/api/drive/source-folder',user,{method:'POST',body:{folder_id:currentFolder.id}});
-    setSourceFolder(result.folder);setDriveIndex([]);setSelectedPdfId(null);setRecentlyLinkedIds(new Set());
+    if(driveGeneration.current!==generation)return;
+    driveReads.current.index?.abort();delete driveReads.current.index;
+    setSourceFolder(result.folder);setSelectedPdfId(null);
+    if(sourceFolder?.folder_id!==result.folder.folder_id){
+      setIndexedFiles([]);setVisibleCount(30);setDriveIndexState('ready');
+    }else setDriveIndexState('idle');
   },{collection:'none'},{title:'Backup folder selected',detail:'Ready to scan Goodnotes PDFs.'});
   const scanBackup=async()=>{
-    if(scanBusyRef.current)return;
+    if(scanBusyRef.current||mutationBusyRef.current)return;
+    const generation=driveGeneration.current;
     scanBusyRef.current=true;setScanBusy(true);setError('');
     try {
       const result=await api<DriveScanResponse>('/api/drive/scan',user,{method:'POST'});
-      setDriveIndex(result.files);setRecentlyLinkedIds(new Set(result.files.filter(file=>file.links.length>0).map(file=>file.id)));
+      if(driveGeneration.current!==generation)return;
+      driveReads.current.index?.abort();delete driveReads.current.index;
+      setIndexedFiles(result.files);setDriveIndexState('ready');
       setSourceFolder(f=>f?{...f,scanned_at:result.scanned_at}:f);
       setVisibleCount(30);
       notify({kind:'success',title:'Drive scan completed',detail:`${result.count} PDFs indexed.`});
-    }catch(e){notify({kind:'error',title:'Drive scan failed',detail:e instanceof Error?e.message:'Try again.',action:{label:'Retry scan',onClick:()=>{void scanBackup();}}});}
-    finally{scanBusyRef.current=false;setScanBusy(false);}
+    }catch(e){
+      if(driveGeneration.current===generation)notify({kind:'error',title:'Drive scan failed',detail:e instanceof Error?e.message:'Try again.',action:{label:'Retry scan',onClick:()=>{void scanBackup();}}});
+    }finally{
+      if(driveGeneration.current===generation){scanBusyRef.current=false;setScanBusy(false);}
+    }
   };
   const selectedIndexed=driveIndex.find(f=>f.id===selectedPdfId);
   const selectedBrowsePdf=driveFiles.find(f=>f.id===selectedPdfId&&f.mimeType==='application/pdf');
@@ -889,9 +978,13 @@ export default function Page() {
     setLinkItem('');
     if(window.innerWidth<=900){window.requestAnimationFrame(()=>linkPanelRef.current?.scrollIntoView({behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'}));}
   };
-  const indexedVisible=filterIndexedPdfs(driveIndex,indexFilter,indexSearch);
+  const indexedVisible=useMemo(()=>resourcesActive?filterIndexedPdfs(driveIndex,indexFilter,indexSearch):[],[resourcesActive,driveIndex,indexFilter,indexSearch]);
   const currentFolder=folderPath.at(-1)!;
-  useEffect(()=>{if(tab==='library'&&drive.connected&&driveFiles.length===0)void browseDrive(currentFolder.id);},[tab,drive.connected]); // initial browse only
+  const folderBrowserVisible=drive.connected&&(foldersExpanded||(driveIndexState==='ready'&&!sourceFolder));
+  const currentFolderLoaded=driveFolderLoaded===currentFolder.id;
+  useEffect(()=>{
+    if(resourcesActive&&folderBrowserVisible&&!currentFolderLoaded)browseDrive(currentFolder.id);
+  },[resourcesActive,folderBrowserVisible,currentFolderLoaded,currentFolder.id,browseDrive]);
 
   if (useFirebase&&!authReady) return <div className="boot"><LoaderCircle className="spin"/><p>Checking sign-in…</p></div>;
   if (useFirebase&&!user) return <main className="login-shell"><Card className="login-card"><span className="brand-mark"><GraduationCap/></span><h1>Study Hub</h1><p>Sign in to continue.</p><button className="btn primary" onClick={()=>void signIn()}>Sign in with Google</button></Card></main>;
@@ -1082,31 +1175,36 @@ export default function Page() {
             <div className="page-heading"><div><span className="eyebrow"><Folder size={13}/> CONNECTED MATERIALS</span><h1>Resources</h1><p>Find Goodnotes PDFs and link them to your coursework.</p></div></div>
             <div className="resources-layout">
               <div className="stack resources-list-column">
-                {!drive.connected&&data.resources.length===0&&<PhotoEmptyState compact scene="resources" title="No resources yet" detail="Link slides, books, and notes from your courses." actionLabel="Open Study" onAction={()=>navigate('courses')}/>}
+                {driveStatusState==='ready'&&!drive.connected&&data.resources.length===0&&<PhotoEmptyState compact scene="resources" title="No resources yet" detail="Link slides, books, and notes from your courses." actionLabel="Open Study" onAction={()=>navigate('courses')}/>}
                 <Card className="resources-source-card">
                   <div className="resources-source-header"><div><strong><Cloud size={17}/> Google Drive source</strong><small>{sourceFolder?`Goodnotes backup · ${sourceFolder.name}`:'Choose your Goodnotes backup folder'}</small></div>
-                    <Badge tone={drive.connected?'good':'muted'}>{drive.connected?'Connected':'Not connected'}</Badge>
+                    {driveStatusState==='ready'&&<Badge tone={drive.connected?'good':'muted'}>{drive.connected?'Connected':'Not connected'}</Badge>}
                   </div>
-                  {drive.connected?<>
+                  {(driveStatusState==='idle'||driveStatusState==='loading')&&<p className="muted" role="status"><LoaderCircle size={15} className="spin"/> Checking Drive connection…</p>}
+                  {driveStatusState==='error'&&<p className="muted" role="alert">Could not check the Drive connection. <button className="text-button" onClick={loadDriveStatus}>Retry</button></p>}
+                  {driveStatusState==='ready'&&(drive.connected?<>
                     <div className="resources-source-actions"><span className="resources-index-count"><FileText size={14}/> {driveIndex.length} indexed PDFs · {driveIndex.filter(f=>f.links.length>0).length} linked</span>
                       <button className="btn secondary small" type="button" onClick={()=>setFoldersExpanded(v=>!v)} aria-expanded={foldersExpanded}>{foldersExpanded?'Hide Drive folders':'Change / browse folder'}</button>
                       {sourceFolder&&<button className="btn primary small" disabled={scanBusy||busy} onClick={()=>void scanBackup()}>{scanBusy?<LoaderCircle size={14} className="spin"/>:<ScanSearch size={14}/>} {scanBusy?'Scanning…':'Scan PDFs'}</button>}
                     </div>
-                    <div className="resources-connection-line"><span className="live-dot"/> Connected privately <button className="text-button" onClick={()=>{if(confirm('Disconnect Google Drive and erase the local folder index? Existing linked resources will remain.'))void act(async()=>{await api('/api/drive/disconnect',user,{method:'DELETE'});setDrive({connected:false,configured:drive.configured});setDriveFiles([]);setSourceFolder(null);setDriveIndex([]);setSelectedPdfId(null);setRecentlyLinkedIds(new Set());},{collection:'none'},{title:'Google Drive disconnected',detail:'Existing linked resources are kept.'});}}>Disconnect</button></div>
-                    {(foldersExpanded||!sourceFolder)&&<div className="resources-folder-browser">
+                    <div className="resources-connection-line"><span className="live-dot"/> Connected privately <button className="text-button" disabled={busy||scanBusy} onClick={()=>{if(confirm('Disconnect Google Drive and erase the local folder index? Existing linked resources will remain.'))disconnectDrive();}}>Disconnect</button></div>
+                    {(driveIndexState==='idle'||driveIndexState==='loading')&&<p className="muted" role="status"><LoaderCircle size={15} className="spin"/> Loading indexed PDFs…</p>}
+                    {driveIndexState==='error'&&<p className="muted" role="alert">Could not load indexed PDFs. <button className="text-button" onClick={loadIndex}>Retry</button></p>}
+                    {folderBrowserVisible&&<div className="resources-folder-browser">
                       <div className="folder-picker-heading"><strong>Browse Drive folders</strong><button className="icon-btn" title="Refresh folder" disabled={driveBusy} onClick={()=>void browseDrive(currentFolder.id)}><RotateCcw size={16}/></button></div>
-                      <div className="folder-path"><button onClick={()=>{setFolderPath([{id:'root',name:'My Drive'}]);void browseDrive('root');}}>My Drive</button>{folderPath.slice(1).map(f=><span key={f.id}> / {f.name}</span>)}</div>
-                      <div className="folder-picker-actions">{folderPath.length>1&&<button className="btn secondary small" onClick={backFolder}><ArrowLeft size={14}/> Back</button>}{currentFolder.id!=='root'&&<button className="btn secondary small" disabled={busy} onClick={selectBackupFolder}><FolderCheck size={14}/> Use this folder</button>}</div>
-                      {driveBusy&&<p className="muted"><LoaderCircle size={15} className="spin"/> Loading Drive folders…</p>}
-                      {driveFiles.map(f=><div className="drive-row" key={f.id}><span className="resource-icon">{f.mimeType==='application/pdf'?<FileText size={18}/>:<Folder size={18}/>}</span><div className="task-content"><strong title={f.name}>{f.name}</strong><small>{f.mimeType==='application/pdf'?'PDF document':'Folder'}{f.modifiedTime?' · '+new Date(f.modifiedTime).toLocaleDateString():''}</small></div>{f.mimeType==='application/pdf'?<><button className="icon-btn" title="Preview PDF" onClick={()=>previewPdf(f.id,f.name)}><BookOpen size={16}/></button><button className="btn secondary small" onClick={()=>choosePdf(f)}>Select</button></>:<button className="icon-btn" title="Open folder" onClick={()=>openFolder(f)}><ArrowRight size={17}/></button>}</div>)}
-                      {!driveBusy&&driveFiles.length===0&&<p className="muted">No PDFs or subfolders here.</p>}
-                      {driveNext&&<button className="btn secondary full" onClick={()=>void browseDrive(currentFolder.id,true,driveNext)}>Load more</button>}
+                      <div className="folder-path"><button onClick={()=>{if(currentFolder.id!=='root')changeFolder(folderPath.slice(0,1));}}>My Drive</button>{folderPath.slice(1).map(f=><span key={f.id}> / {f.name}</span>)}</div>
+                      <div className="folder-picker-actions">{folderPath.length>1&&<button className="btn secondary small" onClick={backFolder}><ArrowLeft size={14}/> Back</button>}{currentFolder.id!=='root'&&<button className="btn secondary small" disabled={busy||scanBusy} onClick={selectBackupFolder}><FolderCheck size={14}/> Use this folder</button>}</div>
+                      {driveBusy&&<p className="muted" role="status"><LoaderCircle size={15} className="spin"/> Loading Drive folders…</p>}
+                      {driveFolderError&&<p className="muted" role="alert">{driveFolderError}</p>}
+                      {currentFolderLoaded&&driveFiles.map(f=><div className="drive-row" key={f.id}><span className="resource-icon">{f.mimeType==='application/pdf'?<FileText size={18}/>:<Folder size={18}/>}</span><div className="task-content"><strong title={f.name}>{f.name}</strong><small>{f.mimeType==='application/pdf'?'PDF document':'Folder'}{f.modifiedTime?' · '+new Date(f.modifiedTime).toLocaleDateString():''}</small></div>{f.mimeType==='application/pdf'?<><button className="icon-btn" title="Preview PDF" onClick={()=>previewPdf(f.id,f.name)}><BookOpen size={16}/></button><button className="btn secondary small" onClick={()=>choosePdf(f)}>Select</button></>:<button className="icon-btn" title="Open folder" onClick={()=>openFolder(f)}><ArrowRight size={17}/></button>}</div>)}
+                      {currentFolderLoaded&&!driveBusy&&!driveFolderError&&driveFiles.length===0&&<p className="muted">No PDFs or subfolders here.</p>}
+                      {currentFolderLoaded&&driveNext&&<button className="btn secondary full" disabled={driveBusy} onClick={()=>void browseDrive(currentFolder.id,driveNext)}>Load more</button>}
                     </div>}
                   </>:<>
                     <p className="muted compact">Use your existing Goodnotes PDF backup. Only file names and folder paths are indexed, not copied notes.</p>
                     <button className="btn primary" disabled={!drive.configured||busy} onClick={connectDrive}><Cloud size={16}/> Connect my Drive</button>
                     {!drive.configured&&<div className="subtle-notice">First configure Google OAuth in the backend environment. The rest of Study Hub remains available.</div>}
-                  </>}
+                  </>)}
                 </Card>
                 {drive.connected&&sourceFolder&&<Card className="resources-index-card">
                   <SectionTitle title="Discovered backup PDFs" aside={<Badge>{driveIndex.length} indexed</Badge>}/>
@@ -1134,7 +1232,7 @@ export default function Page() {
                 <SectionTitle title="Link document"/>
                 {!selectedPdf?<div className="resources-no-selection"><FileText size={25}/><strong>Select a PDF to link</strong><p>Choose a file from Discovered PDFs or the Drive folder browser. You'll review its course and week here before confirming.</p></div>:<>
                   <div className="resources-selected-file"><FileText size={18}/><div><strong title={selectedPdf.name}>{selectedPdf.name}</strong><small>Selected PDF · {selectedIndexed?.path||'Drive folder'}</small></div><button className="icon-btn" aria-label="Clear selected PDF" onClick={()=>setSelectedPdfId(null)}><X size={16}/></button></div>
-                  {(selectedIndexed?.links.length||recentlyLinkedIds.has(selectedPdf.id)) ? <div className="subtle-notice">This PDF is already linked. Open it from its course library, or select another document.</div>:<>
+                    {resourceLinks.has(selectedPdf.id) ? <div className="subtle-notice">This PDF is already linked. Open it from its course library, or select another document.</div>:<>
                     {selectedIndexed?.suggestion&&<div className="resources-match-context"><Sparkles size={16}/><div><strong>Suggested: {selectedIndexed.suggestion.course_code} · Week {selectedIndexed.suggestion.week_number}</strong><small>{selectedIndexed.suggestion.confidence} confidence · Review before linking</small></div></div>}
                     <FormRow label="Course"><select value={linkCourse} onChange={e=>{setLinkCourse(e.target.value);setLinkWeek(1);setLinkItem('');}}><option value="">Select course</option>{data.courses.filter(c=>!c.archived).map(c=><option key={c.id} value={c.id}>{c.code} · {c.title}</option>)}</select></FormRow>
                     <FormRow label="Resource belongs to"><select value={linkScope} onChange={e=>setLinkScope(e.target.value as 'course'|'week')}><option value="course">Course Library (all weeks)</option><option value="week">One teaching week</option></select></FormRow>
@@ -1156,7 +1254,7 @@ export default function Page() {
     {pdfOpening&&<PdfOpeningOverlay title={pdfOpening.title} status={pdfOpening.status} error={pdfOpening.message}
       requestId={pdfOpening.requestId} onCancel={closePdf}
       onRetry={()=>previewPdf(pdfOpening.fileId,pdfOpening.title,pdfOpening.resourceId,pdfOpening.page)}/>}
-    {pdf&&<PdfWorkspace pdf={pdf} items={presentedItems} pendingItems={pendingItems} completingIds={completingIds}
+    {pdf&&<pdf.Workspace pdf={pdf} items={presentedItems} pendingItems={pendingItems} completingIds={completingIds}
       related={data.resources.filter(r=>r.course_id===pdf.courseId&&(r.week_number===pdf.weekNumber||r.week_number===null))}
       onClose={closePdf} onPage={changePdfPage} onToggleItem={toggle}
       onFocus={item=>{closePdf();startFrom(item);}}

@@ -28,12 +28,12 @@ test('Focus statistics and recent sessions use adaptive display; target remains 
 test('Resources selects by immutable file ID and links only the selected document',()=>{
   assert.match(page,/setSelectedPdfId\(entry\.id\)/);
   assert.match(page,/setLinkCourse\(suggestion\?\.course_id\|\|intended\?\.courseId\|\|'\'\)/);
-  assert.match(page,/selectedPdfId!==file\.id\|\|recentlyLinkedIds\.has\(file\.id\)\)return/);
+  assert.match(page,/selectedPdfId!==file\.id\|\|resourceLinks\.has\(file\.id\)\)return/);
   assert.match(page,/onClick=\{\(\)=>linkDriveFile\(selectedPdf\)\}/);
   assert.match(page,/Nothing is linked automatically/);
-  assert.match(page,/recentlyLinkedIds\.has\(file\.id\)/);
+  assert.match(page,/resourceLinks\.has\(selectedPdf\.id\)/);
   assert.match(page,/linkIntentRef\.current=\{courseId:id,week,kind,scope\}/);
-  assert.match(page,/selectedIndexed\?\.links\.length/);
+  assert.match(page,/driveLinksByFile\(data\.resources\)/);
 });
 test('Resource browsing has query, status filters, sticky editor and no silent auto linking',()=>{
   assert.match(page,/filterIndexedPdfs\(driveIndex,indexFilter,indexSearch\)/);

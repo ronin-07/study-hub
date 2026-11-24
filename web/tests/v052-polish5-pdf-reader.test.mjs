@@ -5,6 +5,7 @@ import {createRequire} from 'node:module';
 const read=(path)=>fs.readFileSync(new URL(path,import.meta.url),'utf8');
 const page=read('../app/page.tsx');
 const reader=read('../components/pdf-workspace.tsx');
+const opening=read('../components/pdf-opening-overlay.tsx');
 const api=read('../lib/api.ts');
 const css=read('../app/globals.css');
 const profile=read('../components/profile-name.tsx');
@@ -27,23 +28,23 @@ test('PDF request gate aborts the older request, and only the latest selection m
   assert.equal(gate.isCurrent(second.requestId),false);
 });
 
-test('open starts loading immediately, avoids duplicate fetches and releases unused blob URLs',()=>{
+test('open starts loading immediately and stale requests cannot cache bytes or create a blob URL',()=>{
   assert.match(page,/pdfPendingFileRef\.current===fileId\)return/);
   assert.match(page,/setPdfOpening\(\{requestId,fileId,title,resourceId,page,status:'loading'\}\)/);
-  assert.match(page,/pdfBlob\(`\/api\/drive\/files\/\$\{encodeURIComponent\(fileId\)\}\/pdf`,user,controller\.signal\)/);
-  assert.match(page,/if\(controller\.signal\.aborted\|\|!pdfRequestGateRef\.current\.isCurrent\(requestId\)\)\{URL\.revokeObjectURL\(url\);return;\}/);
+  assert.match(page,/pdfBlob\(`\/api\/drive\/files\/\$\{encodeURIComponent\(fileId\)\}\/pdf`,user,controller\.signal,cached\)/);
+  assert.match(page,/if\(controller\.signal\.aborted\|\|!pdfRequestGateRef\.current\.isCurrent\(requestId\)\)return;[\s\S]*?pdfCache\.store[\s\S]*?URL\.createObjectURL\(body\.blob\)/);
   assert.match(page,/PDF_FETCH_TIMEOUT_MS/);
   assert.match(api,/signal\?: AbortSignal/);
   assert.match(api,/cache: 'no-store', signal/);
 });
 
 test('PDF load failure has retry, cancel, file identity and no fake percentage',()=>{
-  assert.match(reader,/aria-label=\{`Opening \$\{title\}`\}/);
-  assert.match(reader,/className="pdf-opening-filename"/);
-  assert.match(reader,/onClick=\{onCancel\}/);
-  assert.match(reader,/onClick=\{onRetry\}/);
-  assert.match(reader,/20[0]{3}/);
-  assert.doesNotMatch(reader,/\d+% complete/);
+  assert.match(opening,/aria-label=\{`Opening \$\{title\}`\}/);
+  assert.match(opening,/className="pdf-opening-filename"/);
+  assert.match(opening,/onClick=\{onCancel\}/);
+  assert.match(opening,/onClick=\{onRetry\}/);
+  assert.match(opening,/20[0]{3}/);
+  assert.doesNotMatch(opening,/\d+% complete/);
 });
 
 test('reader uses native PDF for hyperlinks and zoom, with explicit saved-page control',()=>{

@@ -1,18 +1,28 @@
 import { type User } from 'firebase/auth';
+import type { CachedPdf } from './pdf-preview';
 
 export class ApiRequestError extends Error {
-  constructor(message: string, public readonly status: number, public readonly requestId: string | null = null) {
+  readonly status: number;
+  readonly requestId: string | null;
+
+  constructor(message: string, status: number, requestId: string | null = null) {
     super(message);
     this.name = 'ApiRequestError';
+    this.status = status;
+    this.requestId = requestId;
   }
 }
 
 // '/' means same-origin requests: Vercel Services routes /api/* to FastAPI.
 const BASE = (process.env.NEXT_PUBLIC_API_URL || (process.env.NODE_ENV === 'production' ? '/' : 'http://127.0.0.1:8000')).replace(/\/$/, '');
-export async function api<T>(route: string, user: User | null, options?: { method?: string; body?: unknown; timeoutMs?: number }): Promise<T> {
+export async function api<T>(route: string, user: User | null, options?: { method?: string; body?: unknown; timeoutMs?: number; signal?: AbortSignal }): Promise<T> {
   const token = user ? await user.getIdToken() : null;
   const controller = options?.timeoutMs ? new AbortController() : null;
   const timer = controller ? setTimeout(() => controller.abort(), options!.timeoutMs) : null;
+  const externalSignal = options?.signal;
+  const abort = () => controller?.abort(externalSignal?.reason);
+  if (controller && externalSignal?.aborted) abort();
+  if (controller) externalSignal?.addEventListener('abort', abort, { once: true });
   let res: Response;
   try {
     res = await fetch(BASE + route, {
@@ -20,9 +30,12 @@ export async function api<T>(route: string, user: User | null, options?: { metho
     headers: { ...(options?.body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: options?.body !== undefined ? JSON.stringify(options.body) : undefined,
     cache: 'no-store',
-    signal: controller?.signal
+    signal: controller?.signal ?? externalSignal
     });
-  } finally { if (timer !== null) clearTimeout(timer); }
+  } finally {
+    if (timer !== null) clearTimeout(timer);
+    if (controller) externalSignal?.removeEventListener('abort', abort);
+  }
   if (!res.ok) {
     let details = `${res.status} ${res.statusText}`;
     try { const e = await res.json(); if (typeof e.detail === 'string') details = e.detail; } catch {}
@@ -31,19 +44,24 @@ export async function api<T>(route: string, user: User | null, options?: { metho
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
-/** Download a Drive PDF for the native browser viewer. Aborting also stops blob reading.
- * The blob URL is owned by the caller, which must revoke it when no longer used.
- */
-export async function pdfBlob(route: string, user: User | null, signal?: AbortSignal): Promise<string> {
+/** Authorize the PDF even when a validated copy may already be in memory. */
+export async function pdfBlob(route: string, user: User | null, signal?: AbortSignal, cached?: CachedPdf): Promise<{ blob: Blob; etag: string | null }> {
   const token = user ? await user.getIdToken() : null;
-  if (signal?.aborted) throw new DOMException('PDF opening cancelled', 'AbortError');
+  signal?.throwIfAborted();
   const res = await fetch(BASE + route, {
-    headers: token ? {Authorization: `Bearer ${token}`} : {},
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(cached ? { 'If-None-Match': cached.etag } : {}),
+    },
     cache: 'no-store', signal,
   });
-  if (!res.ok) throw new Error(`PDF retrieval failed (${res.status})`);
+  signal?.throwIfAborted();
+  const etag = res.headers.get('etag');
+  if (res.status === 304 && cached && etag === cached.etag) return cached;
+  if (!res.ok) throw new ApiRequestError(`PDF retrieval failed (${res.status})`, res.status);
   const body = await res.blob();
-  if (signal?.aborted) throw new DOMException('PDF opening cancelled', 'AbortError');
+  signal?.throwIfAborted();
   if (!body.type.toLowerCase().startsWith('application/pdf')) throw new Error('Unexpected file type');
-  return URL.createObjectURL(body);
+  const verified = etag && /^"sha256-[a-f0-9]{64}"$/.test(etag) && Number(res.headers.get('content-length')) === body.size;
+  return { blob: body, etag: verified ? etag : null };
 }

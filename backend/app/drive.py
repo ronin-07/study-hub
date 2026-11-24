@@ -14,8 +14,8 @@ from urllib.parse import urlencode
 
 import httpx
 from cryptography.fernet import Fernet
-from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi.responses import RedirectResponse, Response, StreamingResponse
 
 from .security import User, current_user
 from .deployment import require_drive_available
@@ -26,6 +26,9 @@ GOOGLE_TOKEN = 'https://oauth2.googleapis.com/token'
 DRIVE_FILES = 'https://www.googleapis.com/drive/v3/files'
 SCOPE = 'https://www.googleapis.com/auth/drive.readonly'
 DRIVE_ID = re.compile(r'^[A-Za-z0-9_-]{5,200}$')
+PDF_CHECKSUM = re.compile(r'[a-f0-9]{64}')
+MAX_PREVIEW_BYTES = 50 * 1024 * 1024
+PRIVATE_PDF_HEADERS = {'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'}
 
 
 def _config():
@@ -78,7 +81,7 @@ def _save_token(store, uid, config, token):
 
 async def access_token(store, uid):
     cfg = _config()
-    token = _token(store, uid, cfg)
+    token = await asyncio.to_thread(_token, store, uid, cfg)
     if token.get('expires_at', 0) < time.time() + 90:
         if not token.get('refresh_token'):
             raise HTTPException(409, 'Google authorization has expired; reconnect Drive')
@@ -92,7 +95,7 @@ async def access_token(store, uid):
         refreshed = response.json()
         token['access_token'] = refreshed['access_token']
         token['expires_at'] = int(time.time()) + int(refreshed.get('expires_in', 3600))
-        _save_token(store, uid, cfg, token)
+        await asyncio.to_thread(_save_token, store, uid, cfg, token)
     return token['access_token']
 
 
@@ -104,7 +107,8 @@ def _store():
 @router.get('/status')
 async def status(user: User = Depends(current_user)):
     store = _store()
-    return {'connected': bool(store.get(user.uid, 'secrets', 'drive-token')),
+    saved = await asyncio.to_thread(store.get, user.uid, 'secrets', 'drive-token')
+    return {'connected': bool(saved),
             'configured': not (os.getenv('VERCEL_ENV') == 'preview' and os.getenv('STUDY_HUB_ALLOW_PREVIEW_DRIVE_OAUTH') != 'true') and all(os.getenv(x) for x in ('GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REDIRECT_URI', 'APP_SIGNING_SECRET', 'OAUTH_ENCRYPTION_KEY'))}
 
 
@@ -179,64 +183,88 @@ async def files(folder_id: str = 'root', page_token: str | None = None, user: Us
 
 
 @router.get('/files/{file_id}/pdf')
-async def pdf(file_id: str, user: User = Depends(current_user)):
-    """Stream Drive PDFs through our authenticated same-origin API.
-
-    Streaming avoids Vercel's buffered response limit and avoids holding large
-    Goodnotes PDFs in the Python process. Nothing is persisted on Vercel disk.
-    """
+async def pdf(file_id: str, user: User = Depends(current_user), if_none_match: str | None = Header(default=None)):
+    """Authorize every open and stream the bytes only when the client needs them."""
     if not DRIVE_ID.fullmatch(file_id):
         raise HTTPException(400, 'Invalid Google Drive file ID')
     token = await access_token(_store(), user.uid)
     headers = {'Authorization': f'Bearer {token}'}
-    async with httpx.AsyncClient(timeout=30) as meta_client:
-        meta = await meta_client.get(f'{DRIVE_FILES}/{file_id}',
-                                     params={'fields': 'id,mimeType,size'}, headers=headers)
-    if meta.status_code != 200:
-        raise HTTPException(404, 'Cannot access this Google Drive file')
-    info = meta.json()
-    if info.get('mimeType') != 'application/pdf':
-        raise HTTPException(415, 'Only PDFs may be previewed')
-    max_bytes = 50 * 1024 * 1024
-    if int(info.get('size', 0)) > max_bytes:
-        raise HTTPException(413, 'PDF exceeds the 50 MB preview limit')
-
+    url = f'{DRIVE_FILES}/{file_id}'
     client = httpx.AsyncClient(timeout=90, follow_redirects=False)
+    upstream = None
+    streaming = False
     try:
-        request = client.build_request('GET', f'{DRIVE_FILES}/{file_id}',
-                                       params={'alt': 'media'}, headers=headers)
+        meta = await client.get(url, params={'fields': 'mimeType,size,trashed,capabilities(canDownload),sha256Checksum'},
+                                headers=headers, timeout=30)
+        if meta.status_code != 200:
+            raise HTTPException(404, 'Cannot access this Google Drive file')
+        info = meta.json()
+        if info.get('trashed'):
+            raise HTTPException(404, 'Cannot access this Google Drive file')
+        if info.get('mimeType') != 'application/pdf':
+            raise HTTPException(415, 'Only PDFs may be previewed')
+        can_download = (info.get('capabilities') or {}).get('canDownload')
+        if can_download is False:
+            raise HTTPException(403, 'Google Drive does not permit downloading this PDF')
+        size = int(info.get('size') or 0)
+        if size > MAX_PREVIEW_BYTES:
+            raise HTTPException(413, 'PDF exceeds the 50 MB preview limit')
+        checksum = str(info.get('sha256Checksum') or '').lower()
+        etag = f'"sha256-{checksum}"' if can_download is True and size > 0 and PDF_CHECKSUM.fullmatch(checksum) else None
+        response_headers = {**PRIVATE_PDF_HEADERS, 'Content-Disposition': 'inline'}
+        if etag:
+            response_headers['ETag'] = etag
+            if if_none_match == etag:
+                return Response(status_code=304, headers=response_headers)
+            response_headers['Content-Length'] = str(size)
+
+        request = client.build_request('GET', url, params={'alt': 'media'}, headers=headers)
         upstream = await client.send(request, stream=True)
         if upstream.status_code != 200:
-            await upstream.aclose()
             raise HTTPException(502, f'Could not retrieve PDF ({upstream.status_code})')
         chunks = upstream.aiter_bytes(chunk_size=65536)
         first = await anext(chunks, b'')
         if not first.startswith(b'%PDF-'):
-            await upstream.aclose()
             raise HTTPException(415, 'The file is not a valid PDF')
-    except Exception:
-        await client.aclose()
-        raise
 
-    async def read_chunks():
-        total = 0
-        try:
-            yield first
-            total += len(first)
-            async for chunk in chunks:
-                total += len(chunk)
-                if total > max_bytes:
-                    break
-                yield chunk
-        finally:
-            await upstream.aclose()
-            await client.aclose()
+        async def read_chunks():
+            total = 0
+            digest = hashlib.sha256() if etag else None
+            last = b''
+            chunk = first
+            try:
+                while chunk:
+                    total += len(chunk)
+                    if total > MAX_PREVIEW_BYTES or (digest and total > size):
+                        raise RuntimeError('Drive returned more PDF bytes than expected')
+                    if digest:
+                        digest.update(chunk)
+                    if digest and total == size:
+                        # A Drive update can race the media request. Hold the last
+                        # chunk so a mismatched stream never completes under this ETag.
+                        last = chunk
+                    else:
+                        yield chunk
+                    chunk = await anext(chunks, b'')
+                if digest:
+                    if total != size or not hmac.compare_digest(digest.hexdigest(), checksum):
+                        raise RuntimeError('Drive PDF changed during download')
+                    yield last
+            finally:
+                try:
+                    await upstream.aclose()
+                finally:
+                    await client.aclose()
 
-    return StreamingResponse(
-        read_chunks(), media_type='application/pdf',
-        headers={'Cache-Control': 'private, no-store',
-                 'X-Content-Type-Options': 'nosniff',
-                 'Content-Disposition': 'inline'})
+        streaming = True
+        return StreamingResponse(read_chunks(), media_type='application/pdf', headers=response_headers)
+    finally:
+        if not streaming:
+            try:
+                if upstream is not None:
+                    await upstream.aclose()
+            finally:
+                await client.aclose()
 
 
 @router.delete('/disconnect')
@@ -390,5 +418,9 @@ async def scan_backup(user: User = Depends(current_user)):
 @router.get('/index')
 async def indexed_backup(user: User = Depends(current_user)):
     store = _store()
-    folder = _selected_folder(store, user.uid)
-    return {'folder': folder, 'files': _index_results(store, user.uid) if folder else []}
+
+    def load_index():
+        folder = _selected_folder(store, user.uid)
+        return {'folder': folder, 'files': _index_results(store, user.uid) if folder else []}
+
+    return await asyncio.to_thread(load_index)

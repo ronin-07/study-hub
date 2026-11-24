@@ -41,7 +41,8 @@ if os.getenv('STUDY_HUB_AUTH_MODE', 'local') == 'local':
 app.add_middleware(CORSMiddleware,
                    allow_origins=[v.strip() for v in os.getenv('CORS_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000').split(',') if v.strip()],
                    allow_credentials=False, allow_methods=['GET', 'POST', 'PATCH', 'DELETE'],
-                   allow_headers=['Authorization', 'Content-Type'])
+                   allow_headers=['Authorization', 'Content-Type', 'If-None-Match'],
+                   expose_headers=['ETag'])
 
 from .drive import router as drive_router  # noqa: E402
 app.include_router(drive_router)
