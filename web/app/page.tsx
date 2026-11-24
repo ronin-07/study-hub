@@ -16,6 +16,7 @@ import { Badge, Card, EmptyState, FormRow, SectionTitle } from '@/components/com
 import { PdfOpeningOverlay } from '@/components/pdf-opening-overlay';
 import { createPdfRequestGate, createPdfSessionCache } from '@/lib/pdf-preview';
 import { ProfileName } from '@/components/profile-name';
+import { upcomingExams, examCountdown } from '@/lib/exam-prep';
 import { CoursePlanner } from '@/components/course-planner';
 import { ProgressTrack, ProgressValue } from '@/components/progress-motion';
 import { visibleCourseDoneCount } from '@/lib/progress-presentation';
@@ -164,7 +165,7 @@ export default function Page() {
   const [homeSelectedDate,setHomeSelectedDate] = useState<string|null>(null);
   const [courseLandingItem,setCourseLandingItem] = useState<{id:string;weekNumber:number|null}|null>(null);
   const [taskJump,setTaskJump] = useState<{id:string;token:number}|null>(null);
-  const [courseSectionJump,setCourseSectionJump] = useState<{courseId:string;section:'course-library'|'tasks';token:number}|null>(null);
+  const [courseSectionJump,setCourseSectionJump] = useState<{courseId:string;section:'course-library'|'tasks'|'exam';token:number}|null>(null);
   const [taskLandingMode,setTaskLandingMode] = useState<'today'|'upcoming'|'completed'>('today');
   const [focusCourse,setFocusCourse] = useState('');
   const [focusItem,setFocusItem] = useState('');
@@ -591,7 +592,7 @@ export default function Page() {
     const saved=Number(window.localStorage.getItem(`studyhub-last-week-${courseId}`));
     setWeekNumber(Number.isInteger(saved)&&saved>=1?Math.min(saved,course.week_count):1);
   },[courseId,data.courses]);
-  const openCourse=(id:string,week?:number,landingItem?:Item,section?:'course-library'|'tasks')=>{
+  const openCourse=(id:string,week?:number,landingItem?:Item,section?:'course-library'|'tasks'|'exam')=>{
     const course=data.courses.find(c=>c.id===id&&!c.archived);
     if(!course){setTab('courses');return;}
     const saved=Number(window.localStorage.getItem(`studyhub-last-week-${id}`))||1;
@@ -613,7 +614,8 @@ export default function Page() {
   // Personal deadlines stay in Tasks, highlighted without forcing an edit dialog.
   const openDeadlineDestination=(item:Item)=>{
     if(item.course_id && data.courses.some(c=>c.id===item.course_id&&!c.archived)){
-      openCourse(item.course_id,item.week_number||undefined,item);
+      if(item.kind==='revision'&&item.week_number===null)openCourse(item.course_id,undefined,item,'exam');
+      else openCourse(item.course_id,item.week_number||undefined,item);
       return;
     }
     setTaskForm(false);
@@ -1136,6 +1138,7 @@ export default function Page() {
                 </section>
               </div>
               <div className="home-side-column">
+                {upcomingExams(data.courses,today).length>0&&<section className="home-panel home-exams" aria-labelledby="home-exams-title"><div className="home-widget-heading"><span className="home-heading-icon"><GraduationCap size={20}/></span><h2 id="home-exams-title">Upcoming exams</h2></div>{upcomingExams(data.courses,today).map(c=><button className="home-deadline" key={c.id} onClick={()=>openCourse(c.id,undefined,undefined,'exam')}><span className="home-deadline-info"><strong>{c.title}</strong><small>{c.code} · {formatDate(c.exam_date)}{c.exam_time?` · ${c.exam_time.slice(0,5)}`:''}</small></span><span className="home-days-away">{examCountdown(c.exam_date!,today)}</span></button>)}</section>}
                 {upcoming.length>0&&<section className="home-panel home-deadlines" aria-labelledby="home-deadlines-title"><div className="home-widget-heading"><span className="home-heading-icon"><CalendarDays size={20}/></span><h2 id="home-deadlines-title">Upcoming deadlines</h2><button className="home-panel-link" onClick={showUpcomingTasks}>View all <ArrowRight size={14}/></button></div>{upcoming.slice(0,3).map(i=><button className="home-deadline" key={i.id} onClick={()=>openDeadlineDestination(i)}><span className="home-deadline-date"><strong>{i.due_date!.slice(8,10)}</strong>{new Intl.DateTimeFormat('en-GB',{month:'short'}).format(new Date(i.due_date!+'T12:00:00'))}</span><span className="home-deadline-info"><strong>{i.title}</strong><small>{data.courses.find(c=>c.id===i.course_id)?.code||'Personal'}{i.week_number?` · Week ${i.week_number}`:''}</small></span><span className="home-days-away">{nextDeadlineDays(today,i.due_date!)===0?'Today':`${nextDeadlineDays(today,i.due_date!)}d`}</span></button>)}</section>}
                 <section className="home-panel home-week-strip" aria-labelledby="home-calendar-title"><div className="home-widget-heading"><span className="home-heading-icon"><CalendarDays size={20}/></span><h2 id="home-calendar-title">Next 7 days</h2><button className="home-panel-link" onClick={()=>openCalendarDate(homeSelectedDate||today)}>Full calendar <ArrowRight size={14}/></button></div><div className="home-day-grid">{calendarDays.map((day,index)=><button key={day.date} className={'home-day'+(index===0?' current':'')+(homeSelectedDate===day.date?' selected':'')} aria-label={`Show ${day.weekday} ${day.day} tasks inline${day.count?`, ${day.count} scheduled items`:''}`} aria-pressed={homeSelectedDate===day.date} aria-controls={homeSelectedDate?'home-day-agenda':undefined} title={`${day.count} planned/due items`} onClick={()=>toggleHomeAgenda(day.date)}><span>{day.weekday}</span><strong>{day.day}</strong><span className={'home-day-dot'+(day.count?' has-work':'')}/></button>)}</div>{homeSelectedDate&&<div id="home-day-agenda" className="home-inline-agenda"><div className="home-inline-agenda-header"><div><strong>{new Intl.DateTimeFormat('en-GB',{weekday:'long',day:'numeric',month:'short'}).format(new Date(homeSelectedDate+'T12:00:00'))}</strong><span>{homeAgenda.length} {homeAgenda.length===1?'item':'items'}</span></div><button type="button" aria-label="Close day details" className="home-agenda-close" onClick={()=>setHomeSelectedDate(null)}><X size={16}/></button></div>{homeAgenda.length?<div className="home-inline-agenda-list">{homeAgenda.slice(0,5).map(({item,reason})=><div className={'home-inline-agenda-item task-completion-row'+(completingIds.has(item.id)?' is-completing':'')+(exitingIds.has(item.id)?' is-exiting':'')} key={item.id}><input type="checkbox" checked={item.done||completingIds.has(item.id)} disabled={busy||pendingItems.has(item.id)||completingIds.has(item.id)} className="task-completion-check" aria-label={`Complete ${item.title}`} onChange={()=>toggle(item)}/><button type="button" className="home-agenda-item-main" onClick={()=>openDeadlineDestination(item)}><strong>{item.title}</strong><small>{data.courses.find(c=>c.id===item.course_id)?.code||'Personal'}{item.week_number?` · Week ${item.week_number}`:''} · {reason==='planned-and-due'?'Planned & due':reason==='planned'?'Planned':'Due'}</small></button><ArrowRight size={15} aria-hidden="true"/></div>)}{homeAgenda.length>5&&<p className="home-agenda-more">+{homeAgenda.length-5} additional items</p>}</div>:<p className="home-side-empty">No tasks planned or due on this day.</p>}<button type="button" className="home-panel-link home-agenda-full" onClick={()=>openCalendarDate(homeSelectedDate)}>Open full day <ArrowRight size={14}/></button></div>}</section>
               </div>
@@ -1155,7 +1158,7 @@ export default function Page() {
 
           {tab==='calendar'&&<TasksPlanner items={tasks} courses={data.courses} user={user} busy={busy} pendingItems={pendingItems} completingIds={completingIds} exitingIds={exitingIds}
             run={act} onToggle={toggle} onFocus={startFrom} onOpenResource={openTaskResource} createOpen={taskForm} setCreateOpen={setTaskForm}
-            calendarOnly calendarJump={calendarJump}/>}
+            calendarOnly calendarJump={calendarJump} onOpenExam={id=>openCourse(id,undefined,undefined,'exam')}/>}
 
           {tab==='focus'&&<>
             <div className="page-heading"><div><span className="eyebrow"><Target size={13}/> DEEP WORK</span><h1>Find your flow.</h1><p>Settle into a distraction-free session. Every minute counts.</p></div></div>

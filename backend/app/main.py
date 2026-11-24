@@ -13,7 +13,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import ValidationError
 
 from .workspace_models import Semester
-from .models import GenerateActivities, GenerationResult, Course, FocusSession, FinishFocus, Item, ItemPatch, PauseFocus, ResumeFocus, ReadingPosition, Resource, StartFocus, Week
+from .models import ExamAttempt, GenerateActivities, GenerationResult, Course, FocusSession, FinishFocus, Item, ItemPatch, PauseFocus, ResumeFocus, ReadingPosition, Resource, StartFocus, Week
 from .security import User, current_user, firebase_app
 from .deployment import validate_deployment_environment
 from .storage import (ActiveSessionExists, DocumentAlreadyExists, DocumentMissing,
@@ -333,6 +333,68 @@ def add_resource(value: Resource, user: User = Depends(current_user)):
         raise HTTPException(409, 'Resource ID already exists') from None
 
 
+@app.post('/api/resources/{identifier}/practice-task', response_model=Item)
+def paper_practice_task(identifier: str, user: User = Depends(current_user)):
+    def operation(tx):
+        paper = tx.get('resources', identifier)
+        if not paper or paper.get('kind') != 'exam_paper' or paper.get('week_number') is not None:
+            raise HTTPException(404, 'Shared exam paper not found')
+        course = tx.get('courses', paper['course_id'])
+        if not course or course.get('archived', False):
+            raise HTTPException(409, 'Course is unavailable or archived')
+        existing = next((i for i in tx.list('items') if i.get('resource_id') == identifier
+                         and i.get('course_id') == paper['course_id'] and i.get('week_number') is None
+                         and i.get('kind') == 'revision'), None)
+        if existing:
+            return Item.model_validate(existing)
+        value = Item(title=('Practise ' + paper['title'])[:240], kind='revision', course_id=paper['course_id'],
+                     resource_id=identifier, is_task=True)
+        tx.create('items', value.model_dump(mode='json'))
+        return value
+    return app_store.workspace_atomic(user.uid, operation)
+
+
+@app.post('/api/resources/{identifier}/exam-attempts', response_model=Resource)
+def record_exam_attempt(identifier: str, value: ExamAttempt, user: User = Depends(current_user)):
+    def operation(tx):
+        entry = tx.get('resources', identifier)
+        if not entry or entry.get('kind') != 'exam_paper':
+            raise HTTPException(404, 'Exam paper not found')
+        course = tx.get('courses', entry['course_id'])
+        if not course or course.get('archived', False):
+            raise HTTPException(409, 'Course is unavailable or archived')
+        attempts = entry.get('exam_attempts', [])
+        payload = value.model_dump(mode='json')
+        previous = next((a for a in attempts if a['id'] == value.id), None)
+        if previous:
+            if previous != payload:
+                raise HTTPException(409, 'Attempt ID already used')
+            return Resource.model_validate(entry)
+        if len(attempts) >= 100:
+            raise HTTPException(409, 'Maximum 100 attempts per paper')
+        entry['exam_attempts'] = [*attempts, payload]
+        result = Resource.model_validate(entry)
+        tx.put('resources', result.model_dump(mode='json'))
+        return result
+    return app_store.workspace_atomic(user.uid, operation)
+
+
+@app.delete('/api/resources/{identifier}/exam-attempts/{attempt_id}', response_model=Resource)
+def delete_exam_attempt(identifier: str, attempt_id: str, user: User = Depends(current_user)):
+    def operation(tx):
+        entry = tx.get('resources', identifier)
+        if not entry or entry.get('kind') != 'exam_paper':
+            raise HTTPException(404, 'Exam paper not found')
+        course = tx.get('courses', entry['course_id'])
+        if not course or course.get('archived', False):
+            raise HTTPException(409, 'Course is unavailable or archived')
+        entry['exam_attempts'] = [a for a in entry.get('exam_attempts', []) if a['id'] != attempt_id]
+        result = Resource.model_validate(entry)
+        tx.put('resources', result.model_dump(mode='json'))
+        return result
+    return app_store.workspace_atomic(user.uid, operation)
+
+
 @app.patch('/api/resources/{identifier}/reading-position', response_model=Resource)
 def update_reading_position(identifier: str, value: ReadingPosition, user: User = Depends(current_user)):
     def operation(tx):
@@ -359,6 +421,8 @@ def delete_resource(identifier: str, user: User = Depends(current_user)):
             raise HTTPException(404, 'courses not found')
         if course.get('archived', False):
             raise HTTPException(409, 'Course is archived; restore it before making changes')
+        if entry.get('exam_attempts'):
+            raise HTTPException(409, 'Remove recorded exam attempts before unlinking this paper')
         if any(i.get('resource_id') == identifier for i in tx.list('items')):
             raise HTTPException(409, 'Unlink this resource from study items before removing it')
         tx.delete('resources', identifier)

@@ -2047,3 +2047,20 @@ html[data-study-hub-theme="light"]{color-scheme:light}
   .generator-custom-type select{appearance:auto;-webkit-appearance:auto;padding-right:12px}
   .generator-select-chevron{display:none}
 }
+
+/* v0.6 exam command center — existing Mulberry Dusk theme tokens. */
+.planner-exam-hero{align-items:center;gap:18px;margin-bottom:14px}
+.exam-hero-progresses{display:grid;grid-template-columns:repeat(2,minmax(100px,1fr));gap:18px;flex:0 1 48%;min-width:0}
+.exam-hero-edit{display:inline-flex;align-items:center;gap:6px;color:#fff5ef;background:#ffffff17;border:1px solid #ffffff42;border-radius:8px;padding:7px 10px;margin-top:8px;cursor:pointer;font:inherit;font-size:.78rem}
+.planner-exam-grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:16px;align-items:start}
+.planner-exam-side{min-width:0}.planner-exam-grid .card{min-width:0}
+.exam-focus-value{font-size:1.6rem;font-weight:700;display:block;margin-top:10px}
+.exam-paper-row,.exam-agenda-row{width:100%;text-align:left;display:flex;align-items:center;gap:10px;background:transparent;border:0;border-bottom:1px solid var(--line);padding:12px 0;color:var(--text);cursor:pointer;font:inherit}
+.exam-paper-row>svg:first-child{color:var(--teal);flex-shrink:0}.exam-paper-row>span{min-width:0;flex:1;display:grid;gap:4px}.exam-paper-row strong,.exam-agenda-row strong{overflow-wrap:anywhere}.exam-paper-row small,.exam-agenda-row small,.exam-attempt-stats small{color:var(--muted);font-size:.78rem}.exam-paper-row b{white-space:nowrap;color:var(--teal)}.exam-paper-row:hover,.exam-agenda-row:hover{background:var(--soft)}
+.planner-exam-papers>.btn.full{margin-top:12px}.exam-agenda-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px 10px}.exam-agenda-row small{grid-column:1}.exam-agenda-row svg{grid-column:2;grid-row:1/3}
+.planner-v05-day-markers .exam-marker{background:#d39b7d30;color:var(--teal);font-weight:700}
+.exam-paper-dialog{position:fixed;inset:0;margin:auto;max-height:min(85dvh,760px);overflow:auto;color:var(--text);background:var(--paper);border:1px solid var(--line);width:min(560px,calc(100vw - 24px));border-radius:18px;box-shadow:var(--soft-shadow)}.exam-paper-dialog:not([open]){display:none}.exam-paper-dialog::backdrop{background:#161019b8}.exam-paper-dialog h2{padding-right:30px;overflow-wrap:anywhere}.exam-attempt-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:16px 0}.exam-attempt-stats>div{padding:12px 8px;background:var(--soft);border-radius:10px;display:grid;gap:4px}.exam-attempt-stats strong{font-size:1.15rem}.exam-attempt-row{display:flex;align-items:start;gap:10px;padding:12px 0;border-bottom:1px solid var(--line)}.exam-attempt-row>div{flex:1;min-width:0}.exam-attempt-row p{color:var(--muted);white-space:pre-wrap;overflow-wrap:anywhere;font-size:.85rem;margin:6px 0 0}.exam-attempt-fields{border:0;padding:0;margin:14px 0;min-width:0}.exam-paper-dialog>.btn.full{margin-top:14px}
+@media(max-width:1000px){.planner-exam-grid{grid-template-columns:1fr}.exam-hero-progresses{flex-basis:50%}}
+@media(max-width:650px){.planner-exam-hero{flex-wrap:wrap}.exam-hero-progresses{flex:1 1 100%;gap:12px}.exam-paper-dialog{max-height:90dvh;padding:18px}.exam-attempt-stats strong{font-size:1rem}}
+.exam-attempt-error{color:var(--text);background:#be786522;border:1px solid #be786566;border-radius:8px;padding:10px;font-size:.85rem}
+@media(min-width:1181px){.planner-learning-checklist .planner-activity-detail:not(:has(.planner-activity-metadata,.planner-activity-reference,.planner-activity-kind,.planner-activity-document,.planner-activity-notes)){align-items:center}.planner-learning-checklist .planner-activity-detail:not(:has(.planner-activity-metadata,.planner-activity-reference,.planner-activity-kind,.planner-activity-document,.planner-activity-notes)) .task-completion-check{margin-top:0}}

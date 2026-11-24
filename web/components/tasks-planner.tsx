@@ -34,13 +34,14 @@ function monthDays(year:number,month:number){
   });
 }
 
-export function TasksPlanner({items,courses,user,busy,pendingItems,completingIds,exitingIds,run,onToggle,onFocus,onOpenResource,createOpen,setCreateOpen,calendarJump,calendarOnly=false,initialTaskMode='today',taskJump,onTaskJumpHandled}:{
+export function TasksPlanner({items,courses,user,busy,pendingItems,completingIds,exitingIds,run,onToggle,onFocus,onOpenResource,createOpen,setCreateOpen,calendarJump,calendarOnly=false,initialTaskMode='today',taskJump,onTaskJumpHandled,onOpenExam}:{
   items:Item[];courses:Course[];user:User|null;busy:boolean;pendingItems:ReadonlySet<string>;completingIds:ReadonlySet<string>;exitingIds:ReadonlySet<string>;
   run:(fn:()=>Promise<unknown>,mutation?:MutationHint,feedback?:FeedbackMessage)=>Promise<boolean>;
   onToggle:(item:Item)=>void;onFocus:(item:Item)=>void;onOpenResource:(item:Item)=>void;
   createOpen:boolean;setCreateOpen:(value:boolean)=>void;
   calendarJump?:{date:string;token:number}|null;
   calendarOnly?:boolean;
+  onOpenExam?:(courseId:string)=>void;
   initialTaskMode?:'today'|'upcoming'|'completed';
   taskJump?:{id:string;token:number}|null;
   onTaskJumpHandled?:()=>void;
@@ -61,6 +62,8 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,completingIds
   const highlightedRef=useRef<HTMLDivElement|null>(null);
   const isCalendar=mode==='calendar';
   const availableCourses=useMemo(()=>courses.filter(c=>!c.archived),[courses]);
+  const exams=availableCourses.filter(c=>c.exam_date&&(selectedCourse==='all'||selectedCourse===c.id));
+  const dayExams=exams.filter(c=>c.exam_date===selectedDay);
   const filtered=useMemo(()=>selectedCourse==='all'?items:
     items.filter(i=>selectedCourse==='personal'?!i.course_id:i.course_id===selectedCourse),[items,selectedCourse]);
   const open=useMemo(()=>filtered.filter(i=>!i.done),[filtered]);
@@ -246,15 +249,16 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,completingIds
         <div className="planner-v05-weekdays">{days.map(day=><span key={day}>{day}</span>)}</div>
         <div className="planner-v05-grid">{monthCells.map(day=>{
           const counts=calendarBuckets.get(day.key);
+          const examCount=exams.filter(c=>c.exam_date===day.key).length;
           const blocked=draggedTask&&!canPlanOnDate(draggedTask,day.key);
           return <button key={day.key} className={`planner-v05-day ${day.outside?'outside':''} ${day.key===today?'today':''} ${day.key===selectedDay?'selected':''} ${draggedTask&&hoverDay===day.key?(blocked?'drop-blocked':'drop-target'):''}`}
-            title={blocked?`Cannot plan after ${formatDate(draggedTask!.due_date!)}`:`Select ${day.label}; drop tasks here to plan them`} aria-label={`${day.label} — ${counts?.planned||0} planned, ${counts?.due||0} due${blocked?' — after task deadline':''}`}
+            title={blocked?`Cannot plan after ${formatDate(draggedTask!.due_date!)}`:`Select ${day.label}; drop tasks here to plan them`} aria-label={`${day.label} — ${counts?.planned||0} planned, ${counts?.due||0} due, ${examCount} exams${blocked?' — after task deadline':''}`}
             onClick={()=>selectCalendarDay(day.key)}
             onDragOver={e=>{if(draggedTask){e.preventDefault();e.dataTransfer.dropEffect=blocked?'none':'move';setHoverDay(previous=>previous===day.key?previous:day.key);}}}
             onDragLeave={e=>{if(!e.currentTarget.contains(e.relatedTarget as Node|null))setHoverDay(previous=>previous===day.key?'':previous);}}
             onDrop={e=>drop(e,day.key)}>
             <span className="planner-v05-day-number">{day.day}</span>
-            <div className="planner-v05-day-markers">{!!counts?.planned&&<span className="planned">{counts.planned} plan</span>}{!!counts?.due&&<span className="due">{counts.due} due</span>}</div>
+            <div className="planner-v05-day-markers">{!!examCount&&<span className="exam-marker">{examCount} exam</span>}{!!counts?.planned&&<span className="planned">{counts.planned} plan</span>}{!!counts?.due&&<span className="due">{counts.due} due</span>}</div>
           </button>;
         })}</div>
         <p className="planner-v05-hint">Drag tasks to schedule. Use Edit on mobile.</p>
@@ -262,7 +266,8 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,completingIds
         {dragNotice&&<p role="alert" className="planner-v05-drop-notice"><AlertTriangle size={15} aria-hidden="true"/> {dragNotice}</p>}
       </div><div className="planner-v05-agenda"><div className="planner-v05-agenda-title"><div><span>SELECTED DAY</span><h3>{selectedDayLabel}</h3></div>
         {(scheduled.length>0||due.length>0)&&<button type="button" className="btn secondary small planner-v052-day-add" onClick={()=>startCreate(selectedDay)} aria-label={`Plan task for ${selectedDayLabel}`}><Plus size={16}/> Plan task</button>}</div>
-        {!scheduled.length&&!due.length?<PhotoEmptyState compact scene="calendar" title="Your calendar is free" detail="Nothing planned or due on this day." actionLabel="Add task" onAction={()=>startCreate(selectedDay)}/>:<>
+        {dayExams.length>0&&<><h4>Exams <span>{dayExams.length}</span></h4>{dayExams.map(c=><button key={c.id} className="exam-agenda-row" onClick={()=>onOpenExam?.(c.id)}><strong>{c.code} · {c.title}</strong><small>{[c.exam_time?.slice(0,5),c.exam_format,c.exam_location].filter(Boolean).join(' · ')||'Exam · time not set'}</small><ArrowRight size={16}/></button>)}</>}
+        {!scheduled.length&&!due.length&&!dayExams.length?<PhotoEmptyState compact scene="calendar" title="Your calendar is free" detail="Nothing planned or due on this day." actionLabel="Add task" onAction={()=>startCreate(selectedDay)}/>:<>
           {scheduled.length>0&&<><h4>Planned work <span>{scheduled.length}</span></h4>{scheduled.map(i=>showRow(i,true,false,'planned'))}</>}
           {due.length>0&&<><h4>Other deadlines <span>{due.length}</span></h4>{due.map(i=>showRow(i,false,false,'due'))}</>}
         </>}

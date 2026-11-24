@@ -12,7 +12,7 @@ const display = read('lib/activity-display.ts');
 test('Study checklist keeps full context but removes duplicate kind labels', () => {
   assert.match(study, /className="planner-activity-heading"/);
   assert.match(study, /const reference=activityReference\(i\)/);
-  assert.match(study, /const fallback=activityKindFallback\(i\)/);
+  assert.match(study, /const fallback=categoryInTitle\(i.title,i.kind\)\?null:activityKindFallback\(i\)/);
   assert.match(study, /planner-activity-reference/);
   assert.match(study, /Pages \{i\.page_start/);
   assert.match(study, /shortStudyDate\(i\.planned_date\)/);

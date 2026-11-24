@@ -39,7 +39,7 @@ test('Study photos appear only for no semester, no selected active course, or em
 });
 
 test('Calendar and Tasks photos are conditional and only expose existing add-task flow',()=>{
-  assert.match(tasks,/!scheduled\.length&&!due\.length\?<PhotoEmptyState compact scene="calendar"/);
+  assert.match(tasks,/!scheduled\.length&&!due\.length&&!dayExams\.length\?<PhotoEmptyState compact scene="calendar"/);
   assert.match(tasks,/listed\.length\?listed\.map/);
   assert.match(tasks,/:<PhotoEmptyState scene="tasks"/);
   assert.match(tasks,/onAction=\{\(\)=>startCreate\(selectedDay\)\}/);

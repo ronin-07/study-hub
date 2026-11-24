@@ -8,6 +8,8 @@ import {
   Library, ListChecks, ListFilter, LoaderCircle, NotebookPen, Pencil, Plus, RotateCcw, Timer, Trash2, X
 } from 'lucide-react';
 import { api } from '@/lib/api';
+import { ExamHero, ExamPapers } from '@/components/exam-prep';
+import { categoryInTitle, examFocusThisWeek } from '@/lib/exam-prep';
 import { ActivityGenerator } from '@/components/activity-generator';
 import type { ActivityDefinition, GenerationResult } from '@/lib/activity-generator';
 import type { MutationHint } from '@/lib/snapshot-cache';
@@ -26,11 +28,11 @@ type SemesterOption = { key: string; name: string; id: string | null; registered
 type WorkspaceTab = 'overview' | 'course-library' | 'week-resources' | 'tasks' | 'exam';
 type ResourceKind = Resource['kind'];
 type Dialog = 'semester' | 'course' | 'archive' | 'resource' | 'item' | 'plan-item' | 'week' | null;
-type CourseDraft = { code: string; title: string; semester_key: string; week_count: number; exam_date: string; goals: string };
+type CourseDraft = { code: string; title: string; semester_key: string; week_count: number; exam_date: string; exam_time:string; exam_duration_minutes:string; exam_location:string; exam_format:string; goals: string };
 type ResourceDraft = { title: string; kind: ResourceKind; source: 'link' | 'dtu'; url: string; chapter: string; page_start: string; page_end: string; item_id: string };
 type ItemDraft = { title: string; notes: string; kind: Item['kind']; is_task: boolean; hidden_from_tasks: boolean; planned_date: string; due_date: string; chapter: string; page_start: string; page_end: string; resource_id: string };
 
-const courseDraftDefaults: CourseDraft = { code: '', title: '', semester_key: '', week_count: 13, exam_date: '', goals: '' };
+const courseDraftDefaults: CourseDraft = { code: '', title: '', semester_key: '', week_count: 13, exam_date: '', exam_time:'', exam_duration_minutes:'', exam_location:'', exam_format:'', goals: '' };
 const resourceDraftDefaults: ResourceDraft = { title: '', kind: 'slides', source: 'dtu', url: '', chapter: '', page_start: '', page_end: '', item_id: '' };
 const itemDraftDefaults: ItemDraft = { title: '', notes: '', kind: 'lecture', is_task: false, hidden_from_tasks: false, planned_date: '', due_date: '', chapter: '', page_start: '', page_end: '', resource_id: '' };
 
@@ -54,7 +56,7 @@ interface Props {
   courseId: string;
   weekNumber: number;
   landingItem?: { id: string; weekNumber: number | null } | null;
-  sectionJump?: {courseId:string;section:'course-library'|'tasks';token:number}|null;
+  sectionJump?: {courseId:string;section:'course-library'|'tasks'|'exam';token:number}|null;
   selectCourse: (id: string) => void;
   selectWeek: (week: number) => void;
   run: (operation: () => Promise<unknown>, mutation?: MutationHint, feedback?: FeedbackMessage) => Promise<boolean>;
@@ -151,6 +153,7 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
   const examItems = examPreparationItems(courseItems,selectedId);
   const examProgressItems = examPreparationItems(progressItems,selectedId);
   const examDoneCount = examProgressItems.filter(i => i.done).length;
+  const examFocusSeconds=examFocusThisWeek(data.sessions,examProgressItems,selectedId);
   const actionableCourseItems = courseItems.filter(isActionable);
   const filteredCourseTasks = actionableCourseItems.filter(i=>courseTaskFilter==='all'||(courseTaskFilter==='week'?i.week_number===weekNumber:i.week_number===null));
   // UI1 holds a completed row visibly for 900ms; progress must use the canonical
@@ -196,7 +199,7 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
     setEditCourseId(course?.id || '');
     const nextDraft = course ? {
       code: course.code, title: course.title, semester_key: courseSemester(course, semesterOptions),
-      week_count: course.week_count, exam_date: course.exam_date || '', goals: course.goals || ''
+      week_count: course.week_count, exam_date: course.exam_date || '', exam_time:course.exam_time?.slice(0,5)||'', exam_duration_minutes:String(course.exam_duration_minutes||''), exam_location:course.exam_location||'', exam_format:course.exam_format||'', goals: course.goals || ''
     } : { ...courseDraftDefaults, semester_key: currentSemesterKey };
     setCourseDraft(nextDraft);
     setInitialCourseDraft(nextDraft);
@@ -232,7 +235,7 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
     let saved: Course | null = null;
     const payload = { code: courseDraft.code.trim(), title: courseDraft.title.trim(),
       semester_id: target.id, semester: target.name, week_count: courseDraft.week_count,
-      exam_date: courseDraft.exam_date || null, goals: courseDraft.goals };
+      exam_date: courseDraft.exam_date || null, exam_time:courseDraft.exam_time||null, exam_duration_minutes:numberOrNull(courseDraft.exam_duration_minutes), exam_location:courseDraft.exam_location.trim(), exam_format:courseDraft.exam_format.trim(), goals: courseDraft.goals };
     const ok = await run(async () => {
       saved = await api<Course>(editCourseId ? `/api/courses/${editCourseId}` : '/api/courses', user,
         { method: editCourseId ? 'PATCH' : 'POST', body: payload });
@@ -455,11 +458,11 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
               </>}
             </div>
           </div>
-          <div className="planner-hero planner-study-hero">
+          {workspaceTab==='exam'?<ExamHero course={selected} courseDone={courseDoneCount} courseTotal={progressCourseItems.length} revisionDone={examDoneCount} revisionTotal={examProgressItems.length} onEdit={isReadOnly?undefined:()=>openCourseForm(selected)}/>:<><div className="planner-hero planner-study-hero">
             <div><span>WEEK {weekNumber} · CONTINUE LEARNING</span><h3>{week?.title||`Continue with Week ${weekNumber}`}</h3>{week?.objectives&&<p>{week.objectives}</p>}</div>
             <div className="planner-hero-progress"><span className="planner-progress-scope">Course progress</span>{progressCourseItems.length?<><strong><ProgressValue key={selectedId} value={courseCompletion}/></strong><small>{courseDoneCount}/{progressCourseItems.length} course activities</small><ProgressTrack key={selectedId} identity={selectedId} value={courseCompletion} label="Course completion"/></>:<small className="planner-no-learning-activities">No learning activities yet</small>}</div>
           </div>
-          <div className="planner-week-toolbar planner-study-week-toolbar">{weekPicker}{weekEditButton}</div>
+          <div className="planner-week-toolbar planner-study-week-toolbar">{weekPicker}{weekEditButton}</div></>}
           <nav className="planner-tabbar planner-study-tabs" aria-label="Course workspace sections">{([
             ['overview','Overview',BookOpen],['course-library','Course library',Library],
             ['week-resources','Week resources',FolderOpen],['tasks','Study tasks',ListChecks],
@@ -479,7 +482,7 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
               {filteredItems.length?filteredItems.map(i=>{
                 const status=activityStatus(i,today);
                 const reference=activityReference(i);
-                const fallback=activityKindFallback(i)?.toLowerCase()===i.title.trim().toLowerCase()?null:activityKindFallback(i);
+                const fallback=categoryInTitle(i.title,i.kind)?null:activityKindFallback(i);
                 const document=i.resource_id?data.resources.find(r=>r.id===i.resource_id&&r.course_id===selectedId):undefined;
                 return <div className={'planner-task-row planner-study-task planner-activity-detail task-completion-row'+(status==='overdue'?' overdue':'')+(landingItem?.id===i.id?' planner-target-item':'')+(completingIds.has(i.id)?' is-completing':'')+((activityFilter==='planned'||activityFilter==='due')&&exitingIds.has(i.id)?' is-exiting':'')} ref={landingItem?.id===i.id?landingRef:undefined} key={i.id}>
                   <input type="checkbox" disabled={isReadOnly||busy||pendingItems.has(i.id)||completingIds.has(i.id)} className="task-completion-check" checked={i.done||completingIds.has(i.id)} onChange={()=>toggleItem(i)} aria-label={`Complete ${i.title}`}/>
@@ -537,13 +540,13 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
             <div className="planner-course-task-list">{filteredCourseTasks.map(renderCourseTask)}</div>
             {!filteredCourseTasks.length&&<EmptyState icon={<CalendarDays size={24}/>} title={actionableCourseItems.length?'Nothing in this filter':'No scheduled work'} detail={actionableCourseItems.length?'Choose All to see the other course tasks.':'Add assignments or schedule a revision activity.'}/>}
           </Card>}
-          {workspaceTab==='exam'&&<Card className="planner-exam-card"><SectionTitle title="Exam preparation" aside={<Badge>{examDoneCount}/{examProgressItems.length} completed</Badge>}/>
+          {workspaceTab==='exam'&&<div className="planner-exam-grid"><Card className="planner-exam-card"><SectionTitle title="Revision checklist" aside={<Badge>{examDoneCount}/{examProgressItems.length} completed</Badge>}/>
             <p className="planner-course-task-summary">Revision checklist</p>
             {examItems.length>0&&<ProgressTrack className="planner-exam-progress" identity={`${selectedId}-exam`} label="Exam revision completion" value={Math.round(examProgressItems.length?examDoneCount/examProgressItems.length*100:0)}/>}
             <div className="planner-course-task-list">{examItems.map(renderCourseTask)}</div>
             {!examItems.length&&<EmptyState icon={<BookMarked size={23}/>} title="Exam preparation starts here" detail="Add past papers, mock exams and course-wide revision plans."/>}
             {!isReadOnly&&(examEntryOpen?<form className="exam-task-form" onSubmit={e=>void saveExam(e)}><input aria-label="Exam preparation task" autoFocus placeholder="Practise old exam papers" value={examTitle} onChange={e=>setExamTitle(e.target.value)} required/><button className="btn primary small" disabled={busy||!examTitle.trim()} aria-busy={busy}>{busy?<><LoaderCircle size={14} className="spin"/> Saving…</>:'Add task'}</button><button type="button" className="btn secondary small" disabled={busy} onClick={()=>{setExamEntryOpen(false);setExamTitle('');}}>Cancel</button></form>:<button type="button" className="btn secondary planner-exam-add" onClick={()=>setExamEntryOpen(true)}><Plus size={16}/> Add revision task</button>)}
-          </Card>}
+          </Card><div className="stack planner-exam-side"><ExamPapers key={selected.id} papers={data.resources.filter(r=>r.course_id===selectedId&&r.kind==='exam_paper')} user={user} busy={busy} readOnly={isReadOnly} run={run} openResource={openResource} addPaper={()=>openResourceForm('course',undefined,'exam_paper')} browseDrive={()=>openDrive(selected.id,weekNumber,'exam_paper','course')} practice={async paper=>{let item:Item|undefined;const ok=await run(async()=>{item=await api<Item>(`/api/resources/${paper.id}/practice-task`,user,{method:'POST'});return item;},{collection:'items'});if(ok&&item)focusOn(item);}}/><Card><SectionTitle title="Exam focus this week"/><strong className="exam-focus-value">{Math.floor(examFocusSeconds/3600)}h {Math.floor(examFocusSeconds%3600/60)}m</strong><p className="planner-study-hint">Finished sessions linked to revision tasks since Monday.</p></Card><Card><SectionTitle title="Exam resources"/>{shared.filter(r=>r.kind!=='exam_paper').slice(0,3).map(resourcePreviewRow)}<button className="btn secondary full" onClick={()=>setWorkspaceTab('course-library')}>Open course library <ArrowRight size={15}/></button></Card></div></div>}
         </>}
       </div>
     </div>
@@ -552,7 +555,7 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
     {dialog&&<div className="dialog-backdrop" role="presentation"><div className="dialog planner-dialog" role="dialog" aria-modal="true" aria-label={`${dialog} configuration`}>
       <button className="dialog-close" disabled={busy} onClick={closeDialog} aria-label="Close dialog"><X size={18}/></button>
       {dialog==='semester'&&<><h2>{semDraft.id?'Edit semester':'Add semester'}</h2><form onSubmit={e=>void saveSemester(e)}><FormRow label="Semester name"><input autoFocus required maxLength={60} placeholder="Autumn 2026" value={semDraft.name} onChange={e=>setSemDraft(p=>({...p,name:e.target.value}))}/></FormRow><div className="form-grid"><FormRow label="Starts (optional)"><input type="date" value={semDraft.start_date} onChange={e=>setSemDraft(p=>({...p,start_date:e.target.value}))}/></FormRow><FormRow label="Ends (optional)"><input type="date" value={semDraft.end_date} onChange={e=>setSemDraft(p=>({...p,end_date:e.target.value}))}/></FormRow></div><div className="form-actions"><button type="button" className="btn secondary" disabled={busy} onClick={closeDialog}>Cancel</button><button type="submit" className="btn primary" disabled={busy} aria-busy={busy}>{busy?<><LoaderCircle size={15} className="spin" aria-hidden="true"/> Saving…</>:'Save semester'}</button></div></form></>}
-      {dialog==='course'&&<><h2>{editCourseId?'Edit course':'Add course'}</h2><form onSubmit={e=>void saveCourse(e)}><div className="form-grid planner-course-form-grid"><FormRow label="Course code"><input required maxLength={40} value={courseDraft.code} placeholder="02516" onChange={e=>setCourseDraft(p=>({...p,code:e.target.value}))}/></FormRow><FormRow label="Teaching weeks"><input required type="number" min={1} max={30} value={courseDraft.week_count} onChange={e=>setCourseDraft(p=>({...p,week_count:Number(e.target.value)}))}/></FormRow><div className="planner-form-full"><FormRow label="Course title"><input required maxLength={180} value={courseDraft.title} onChange={e=>setCourseDraft(p=>({...p,title:e.target.value}))} placeholder="Image Analysis & Computer Vision"/></FormRow></div><FormRow label="Semester"><select required value={courseDraft.semester_key} onChange={e=>setCourseDraft(p=>({...p,semester_key:e.target.value}))}>{semesterOptions.map(s=><option key={s.key} value={s.key}>{s.name}</option>)}</select></FormRow><FormRow label="Exam date (optional)"><input type="date" value={courseDraft.exam_date} onChange={e=>setCourseDraft(p=>({...p,exam_date:e.target.value}))}/></FormRow><div className="planner-form-full"><FormRow label="Study goals (optional)"><textarea rows={3} maxLength={2000} value={courseDraft.goals} onChange={e=>setCourseDraft(p=>({...p,goals:e.target.value}))}/></FormRow></div></div><div className="form-actions"><button type="button" className="btn secondary" disabled={busy} onClick={closeDialog}>Cancel</button><button type="submit" className="btn primary" disabled={busy} aria-busy={busy}>{busy?<><LoaderCircle size={15} className="spin" aria-hidden="true"/> Saving…</>:'Save course'}</button></div></form></>}
+      {dialog==='course'&&<><h2>{editCourseId?'Edit course':'Add course'}</h2><form onSubmit={e=>void saveCourse(e)}><div className="form-grid planner-course-form-grid"><FormRow label="Course code"><input required maxLength={40} value={courseDraft.code} placeholder="02516" onChange={e=>setCourseDraft(p=>({...p,code:e.target.value}))}/></FormRow><FormRow label="Teaching weeks"><input required type="number" min={1} max={30} value={courseDraft.week_count} onChange={e=>setCourseDraft(p=>({...p,week_count:Number(e.target.value)}))}/></FormRow><div className="planner-form-full"><FormRow label="Course title"><input required maxLength={180} value={courseDraft.title} onChange={e=>setCourseDraft(p=>({...p,title:e.target.value}))} placeholder="Image Analysis & Computer Vision"/></FormRow></div><FormRow label="Semester"><select required value={courseDraft.semester_key} onChange={e=>setCourseDraft(p=>({...p,semester_key:e.target.value}))}>{semesterOptions.map(s=><option key={s.key} value={s.key}>{s.name}</option>)}</select></FormRow><FormRow label="Exam date (optional)"><input type="date" value={courseDraft.exam_date} onChange={e=>setCourseDraft(p=>({...p,exam_date:e.target.value}))}/></FormRow><FormRow label="Exam start time (optional)"><input type="time" value={courseDraft.exam_time} onChange={e=>setCourseDraft(p=>({...p,exam_time:e.target.value}))}/></FormRow><FormRow label="Exam duration (minutes)"><input type="number" min={1} max={720} value={courseDraft.exam_duration_minutes} onChange={e=>setCourseDraft(p=>({...p,exam_duration_minutes:e.target.value}))}/></FormRow><FormRow label="Exam format (optional)"><input maxLength={80} placeholder="Written / oral" value={courseDraft.exam_format} onChange={e=>setCourseDraft(p=>({...p,exam_format:e.target.value}))}/></FormRow><FormRow label="Exam location (optional)"><input maxLength={240} value={courseDraft.exam_location} onChange={e=>setCourseDraft(p=>({...p,exam_location:e.target.value}))}/></FormRow><div className="planner-form-full"><FormRow label="Study goals (optional)"><textarea rows={3} maxLength={2000} value={courseDraft.goals} onChange={e=>setCourseDraft(p=>({...p,goals:e.target.value}))}/></FormRow></div></div><div className="form-actions"><button type="button" className="btn secondary" disabled={busy} onClick={closeDialog}>Cancel</button><button type="submit" className="btn primary" disabled={busy} aria-busy={busy}>{busy?<><LoaderCircle size={15} className="spin" aria-hidden="true"/> Saving…</>:'Save course'}</button></div></form></>}
       {dialog==='archive'&&selected&&<><h2>Archive {selected.code}?</h2><p>It will disappear from your active planner. Unfinished tasks won't appear in Today. All notes, documents, week progress and focus history will be kept.</p><div className="planner-archive-preview"><span>{linkedCounts.items} study items</span><span>{linkedCounts.documents} resource links</span><span>{linkedCounts.sessions} focus sessions</span></div><div className="form-actions"><button className="btn secondary" onClick={()=>setDialog(null)}>Cancel</button><button className="btn primary" disabled={busy} onClick={()=>void archive()}><Archive size={15}/> Archive course</button></div></>}
       {dialog==='week'&&<><h2>Week {weekNumber} details</h2><form onSubmit={e=>void saveWeek(e)}><FormRow label="Topic"><input required value={weekDraft.title} placeholder="Multiclass segmentation" onChange={e=>setWeekDraft(p=>({...p,title:e.target.value}))}/></FormRow><FormRow label="Learning objectives"><textarea rows={3} value={weekDraft.objectives} onChange={e=>setWeekDraft(p=>({...p,objectives:e.target.value}))}/></FormRow><div className="form-actions"><button type="button" className="btn secondary" disabled={busy} onClick={()=>setDialog(null)}>Cancel</button><button className="btn primary" disabled={busy} aria-busy={busy}>{busy?<><LoaderCircle size={15} className="spin"/> Saving…</>:'Save week'}</button></div></form></>}
       {dialog==='plan-item'&&planItem&&<><h2>Plan study activity</h2><p><strong>{planItem.title}</strong> · {planItem.week_number!==null?`Week ${planItem.week_number}`:'Exam preparation'}</p>

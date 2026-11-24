@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, time
 from typing import Literal
 from uuid import uuid4
 
@@ -23,6 +23,10 @@ class Course(BaseDocument):
     week_count: int = Field(default=13, ge=1, le=30)
     semester_id: str | None = None
     exam_date: date | None = None
+    exam_time: time | None = None
+    exam_duration_minutes: int | None = Field(default=None, ge=1, le=720)
+    exam_location: str = Field(default="", max_length=240)
+    exam_format: str = Field(default="", max_length=80)
     goals: str = Field(default='', max_length=2000)
     archived: bool = False
 
@@ -119,6 +123,13 @@ class ItemPatch(BaseModel):
     resource_id: str | None = None
 
 
+class ExamAttempt(BaseDocument):
+    date: date
+    minutes: int = Field(ge=1, le=1440)
+    score: float | None = Field(default=None, ge=0, le=100, allow_inf_nan=False)
+    notes: str = Field(default='', max_length=1000)
+
+
 class Resource(BaseDocument):
     course_id: str
     week_number: int | None = Field(default=None, ge=1, le=30)  # None = shared Course Library.
@@ -129,12 +140,17 @@ class Resource(BaseDocument):
     drive_file_id: str | None = Field(default=None, pattern=r'^[A-Za-z0-9_-]{5,200}$')
     item_id: str | None = None
     last_page: int = Field(default=1, ge=1, le=20000)
+    exam_attempts: list[ExamAttempt] = Field(default_factory=list, max_length=100)
     chapter: str = Field(default='', max_length=120)
     page_start: int | None = Field(default=None, ge=1, le=20000)
     page_end: int | None = Field(default=None, ge=1, le=20000)
 
     @model_validator(mode='after')
     def valid_location(self):
+        if self.exam_attempts and self.kind != 'exam_paper':
+            raise ValueError('Only exam papers can have attempts')
+        if len({a.id for a in self.exam_attempts}) != len(self.exam_attempts):
+            raise ValueError('Attempt IDs must be unique')
         if self.week_number is None and self.item_id is not None:
             raise ValueError('Shared course resources cannot be attached to one weekly item')
         if self.page_start is not None and self.page_end is not None and self.page_end < self.page_start:

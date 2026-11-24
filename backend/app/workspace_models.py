@@ -1,5 +1,5 @@
 """v0.4 backwards-compatible workspace update schemas."""
-from datetime import date
+from datetime import date, time
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 from .models import BaseDocument
 
@@ -31,6 +31,10 @@ class CoursePatch(BaseModel):
     semester_id: str | None = None
     week_count: int | None = Field(default=None, ge=1, le=30)
     exam_date: date | None = None
+    exam_time: time | None = None
+    exam_duration_minutes: int | None = Field(default=None, ge=1, le=720)
+    exam_location: str | None = Field(default=None, max_length=240)
+    exam_format: str | None = Field(default=None, max_length=80)
     goals: str | None = Field(default=None, max_length=2000)
 
 

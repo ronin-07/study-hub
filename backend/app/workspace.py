@@ -230,6 +230,8 @@ def edit_resource(identifier: str, patch: ResourcePatch, user: User = Depends(cu
         if course.get('archived', False):
             raise HTTPException(409, 'Course is archived; restore it before making changes')
         merged = {**old, **fields}
+        if old.get('exam_attempts') and merged.get('kind') != 'exam_paper':
+            raise HTTPException(409, 'Remove recorded attempts before changing the paper type')
         if merged.get('week_number') is not None and merged['week_number'] > course['week_count']:
             raise HTTPException(422, 'Resource week exceeds course length')
         if merged.get('item_id'):
