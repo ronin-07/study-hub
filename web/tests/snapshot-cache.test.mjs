@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { applyMutation } from '../lib/snapshot-cache.ts';
+import { applyMutation, preserveWorkspaceChanges } from '../lib/snapshot-cache.ts';
 
 const makeSnapshot = () => ({
   courses:[{id:'course-1',title:'Initial'}], weeks:[],
@@ -35,6 +35,30 @@ test('deletion leaves unrelated records intact, and no-change operations keep th
 
 test('a missing mutation result cannot silently corrupt the cache', () => {
   assert.throws(()=>applyMutation(makeSnapshot(),{collection:'resources'},undefined),/Unexpected response/);
+});
+
+test('an older snapshot preserves local updates, additions and deletions while merging other records',()=>{
+  const incoming=makeSnapshot();
+  incoming.items.push({id:'remote',title:'Added from another device',done:false});
+  incoming.courses.push({id:'course-2',title:'Remote course'});
+  let current=makeSnapshot();
+  current=applyMutation(current,{collection:'items'},{...current.items[0],done:true});
+  current=applyMutation(current,{collection:'items',deleteId:'item-2'},undefined);
+  current=applyMutation(current,{collection:'items'},{id:'local',title:'Locally saved',done:false});
+  const merged=preserveWorkspaceChanges(incoming,current,{items:new Set(['item-1','item-2','local'])},new Set());
+  assert.deepEqual(merged.items.map(i=>i.id),['item-1','remote','local']);
+  assert.equal(merged.items[0].done,true);
+  assert.equal(merged.items[1],incoming.items[2]);
+  assert.equal(merged.courses,incoming.courses);
+});
+
+test('pending checkboxes and a newer recurring-items refresh survive a snapshot',()=>{
+  const incoming=makeSnapshot();
+  let current=makeSnapshot();
+  current=applyMutation(current,{collection:'items'},{...current.items[0],done:true});
+  assert.equal(preserveWorkspaceChanges(incoming,current,{},new Set(['item-1'])).items[0].done,true);
+  current=applyMutation(current,{collection:'items'},{id:'next-occurrence',title:'Weekly review',done:false});
+  assert.equal(preserveWorkspaceChanges(incoming,current,{items:'all'},new Set()).items,current.items);
 });
 
 const page=readFileSync(new URL('../app/page.tsx',import.meta.url),'utf8');

@@ -13,7 +13,8 @@ test('load requests compact sessions without losing server-maintained statistics
 });
 
 test('local focus completion preserves summary and in-flight snapshot cannot overwrite it', () => {
-  assert.match(page, /const focus_stats = focusUnchanged \? snap\.focus_stats : previous\.focus_stats/);
+  assert.match(page, /focusRevisionAtStart===focusRevisionRef\.current&&!focusBusyRef\.current/);
+  assert.match(page, /return focusUnchanged\?next:\{\.\.\.next,sessions:previous\.sessions,focus_stats:previous\.focus_stats\}/);
   assert.match(page, /const changedToFinished = saved\.status==='finished'/);
   assert.match(page, /total_seconds:previous\.focus_stats\.total_seconds \+ Math\.max\(0,saved\.focus_seconds\|\|0\)/);
 });

@@ -10,8 +10,8 @@ import {
 } from 'lucide-react';
 import { api, pdfBlob } from '@/lib/api';
 import { formatLocalClock, formatLocalDate } from '@/lib/clock';
-import { applyMutation, type MutationHint } from '@/lib/snapshot-cache';
-import { describeSnapshotFailure, fetchSnapshotWithRetry, type SnapshotLoadProblem } from '@/lib/snapshot-loading';
+import { applyMutation, preserveWorkspaceChanges, type MutationHint } from '@/lib/snapshot-cache';
+import { createSnapshotCoordinator, describeSnapshotFailure, fetchSnapshotWithRetry, type SnapshotLoadProblem } from '@/lib/snapshot-loading';
 import { Badge, Card, EmptyState, FormRow, SectionTitle } from '@/components/common';
 import { PdfOpeningOverlay } from '@/components/pdf-opening-overlay';
 import { createPdfRequestGate, createPdfSessionCache } from '@/lib/pdf-preview';
@@ -73,7 +73,7 @@ export default function Page() {
   const [refreshing,setRefreshing] = useState(false);
   const [snapshotIssue,setSnapshotIssue] = useState<SnapshotLoadProblem|null>(null);
   const loadedUserRef=useRef<string|null>(null);
-  const loadRequestRef=useRef(0);
+  const [snapshotCoordinator]=useState(createSnapshotCoordinator);
   const [busy,setBusy] = useState(false);
   const mutationBusyRef = useRef(false);
   const { messages: feedbackMessages, notify, dismiss: dismissFeedback, clearAll: clearFeedback } = useFeedbackToasts();
@@ -251,11 +251,13 @@ export default function Page() {
       pdfBookmarkPendingRef.current=null;
       if(pdfObjectUrlRef.current)URL.revokeObjectURL(pdfObjectUrlRef.current);
       pdfObjectUrlRef.current=null;setPdf(null);setPdfOpening(null);
-      loadRequestRef.current++;setSnapshotReady(false);
+      snapshotCoordinator.cancel();
+      loadedUserRef.current=null;lastLoadedAtRef.current=0;
+      setSnapshotReady(false);setRefreshing(false);
       clearFeedback();
       setUser(u);setAuthReady(true);
     });
-  },[pdfCache,resetDriveDiscovery]);
+  },[pdfCache,resetDriveDiscovery,snapshotCoordinator]);
   useEffect(()=>{
     // Render the clock only after hydration to avoid server/client time mismatches.
     setNow(Math.floor(Date.now()/1000));
@@ -330,78 +332,81 @@ export default function Page() {
     if (stored && Number(stored)>=1 && Number(stored)<=80) setWeeklyGoal(Number(stored));
   },[]);
 
-  const load = useCallback(async():Promise<boolean>=>{
+  const load = useCallback(async(fresh=false):Promise<boolean>=>{
     // Do not finish the initial loading state while Firebase is still restoring
     // authentication: otherwise the error screen flashes before the first request.
     if (!authReady) return false;
     if (useFirebase && !user) {
-      loadRequestRef.current++;
+      snapshotCoordinator.cancel();
       loadedUserRef.current=null;
-      setData(empty);setSnapshotReady(false);setSnapshotIssue(null);setLoading(false);
+      setData(empty);setSnapshotReady(false);setSnapshotIssue(null);setLoading(false);setRefreshing(false);
       return false;
     }
     const uid=user?.uid||'local';
-    const hadSnapshot=loadedUserRef.current===uid;
-    const requestNumber=++loadRequestRef.current;
-    const focusRevisionAtStart=focusRevisionRef.current;
-    if (!hadSnapshot) {
-      // Never show data from a previously signed-in account.
-      setData(empty);setSnapshotReady(false);setSnapshotIssue(null);setLoading(true);
-    } else setRefreshing(true);
-    try {
-      // Compact response preserves all-time totals while loading only this
-      // week's sessions, five recent completions, and the active session.
-      const localDay = new Date();
-      localDay.setHours(0,0,0,0);
-      localDay.setDate(localDay.getDate() - (localDay.getDay()+6)%7);
-      const weekStart = Math.floor(localDay.getTime()/1000);
-      const snap=await fetchSnapshotWithRetry(()=>api<Snapshot>(`/api/snapshot?compact=true&week_start=${weekStart}`,user,{timeoutMs:15000}));
-      if (requestNumber!==loadRequestRef.current) return false;
-      // Keep pending checkbox changes visible if a manual refresh finishes mid-save.
-      setData(previous=>{
-        const items=pendingItemsRef.current.size ? snap.items.map(item=>
-          pendingItemsRef.current.has(item.id)?previous.items.find(old=>old.id===item.id)||item:item
-        ) : snap.items;
-        // An older snapshot must not undo a Focus mutation that committed while it was loading.
-        const focusUnchanged = focusRevisionAtStart===focusRevisionRef.current;
-        const sessions = focusUnchanged ? snap.sessions : previous.sessions;
-        // A snapshot launched before Finish must not roll back its new totals.
-        const focus_stats = focusUnchanged ? snap.focus_stats : previous.focus_stats;
-        return {...snap,items,sessions,focus_stats};
-      });
-      lastLoadedAtRef.current=Date.now();
-      loadedUserRef.current=uid;
-      setSnapshotReady(true);
-      setSnapshotIssue(null);
-      setCourseId(previous=>{
-        const saved=window.localStorage.getItem('studyhub-last-course')||'';
-        const preferred=previous||saved;
-        return snap.courses.some(c=>c.id===preferred&&!c.archived)?preferred:(snap.courses.find(c=>!c.archived)?.id||'');
-      });
-      setLinkCourse(previous=>snap.courses.some(c=>c.id===previous&&!c.archived)?previous:(snap.courses.find(c=>!c.archived)?.id||''));
-      setError('');
-      return true;
-    } catch(e) {
-      if (requestNumber!==loadRequestRef.current) return false;
-      const issue=describeSnapshotFailure(e);
-      setSnapshotIssue(issue);
-      if (hadSnapshot) setError(`Refresh failed: ${issue.title}. Your last loaded data is still displayed.`);
-      else setError('');
-      return false;
-    } finally {
-      if (requestNumber===loadRequestRef.current) {setLoading(false);setRefreshing(false);}
-    }
-  },[authReady,user]);
+    const localDay = new Date();
+    localDay.setHours(0,0,0,0);
+    localDay.setDate(localDay.getDate() - (localDay.getDay()+6)%7);
+    const weekStart = Math.floor(localDay.getTime()/1000);
+    return snapshotCoordinator.run(`${uid}:${weekStart}`,async (signal,changes)=>{
+      const hadSnapshot=loadedUserRef.current===uid;
+      const focusRevisionAtStart=focusRevisionRef.current;
+      if (!hadSnapshot) {
+        // Never show data from a previously signed-in account.
+        setData(empty);setSnapshotReady(false);setSnapshotIssue(null);setLoading(true);setRefreshing(false);
+      } else setRefreshing(true);
+      try {
+        const snap=await fetchSnapshotWithRetry(
+          ()=>api<Snapshot>(`/api/snapshot?compact=true&week_start=${weekStart}`,user,{timeoutMs:15000,signal}),
+          undefined,signal,
+        );
+        if (signal.aborted) return false;
+        const retained={...changes};
+        const pendingItems=new Set(pendingItemsRef.current);
+        const bookmark=pdfBookmarkPendingRef.current;
+        if(bookmark && retained.resources!=='all')retained.resources=new Set([...(retained.resources??[]),bookmark.id]);
+        const focusUnchanged=focusRevisionAtStart===focusRevisionRef.current&&!focusBusyRef.current;
+        setData(previous=>{
+          const next=preserveWorkspaceChanges(snap,previous,retained,pendingItems);
+          // An older response must not roll back the timer or a just-saved total.
+          return focusUnchanged?next:{...next,sessions:previous.sessions,focus_stats:previous.focus_stats};
+        });
+        lastLoadedAtRef.current=Date.now();
+        loadedUserRef.current=uid;
+        setSnapshotReady(true);
+        setSnapshotIssue(null);
+        if(!retained.courses){
+          const firstActiveCourse=snap.courses.find(c=>!c.archived)?.id||'';
+          setCourseId(previous=>{
+            const preferred=previous||window.localStorage.getItem('studyhub-last-course')||'';
+            return snap.courses.some(c=>c.id===preferred&&!c.archived)?preferred:firstActiveCourse;
+          });
+          setLinkCourse(previous=>snap.courses.some(c=>c.id===previous&&!c.archived)?previous:firstActiveCourse);
+        }
+        setError('');
+        return true;
+      } catch(e) {
+        if (signal.aborted) return false;
+        const issue=describeSnapshotFailure(e);
+        setSnapshotIssue(issue);
+        if (hadSnapshot) setError(`Refresh failed: ${issue.title}. Your last loaded data is still displayed.`);
+        else setError('');
+        return false;
+      } finally {
+        if (!signal.aborted) {setLoading(false);setRefreshing(false);}
+      }
+    },fresh);
+  },[authReady,user,snapshotCoordinator]);
+  useEffect(()=>()=>snapshotCoordinator.cancel(),[snapshotCoordinator]);
   useEffect(()=>{void load();},[load]);
   // Refresh after returning to the tab so changes from another device become visible.
   useEffect(()=>{
     const refreshOnReturn=()=>{
       // Switching browser tabs repeatedly should not download six collections each time.
-      if(document.visibilityState==='visible'&&!busy&&Date.now()-lastLoadedAtRef.current>=30000)void load();
+      if(document.visibilityState==='visible'&&!mutationBusyRef.current&&Date.now()-lastLoadedAtRef.current>=30000)void load();
     };
     document.addEventListener('visibilitychange',refreshOnReturn);
     return ()=>document.removeEventListener('visibilitychange',refreshOnReturn);
-  },[load,busy]);
+  },[load]);
 
   // Collection-scoped mutations remove an otherwise mandatory six-collection refresh.
   // Other operations keep the existing full refresh for compatibility.
@@ -418,12 +423,17 @@ export default function Page() {
       let synchronized = true;
       if(mutation){
         if(mutation.collection!=='none') {
-          if(!mutation.deleteId&&(!result||typeof result!=='object'||!('id' in result))){
+          const id=mutation.deleteId||(result&&typeof result==='object'&&'id' in result&&typeof result.id==='string'?result.id:'');
+          if(!id){
             // A write may have succeeded even if the response shape changed. Reconcile once.
-            synchronized=await load();
-          }else setData(previous=>applyMutation(previous,mutation,result));
+            synchronized=await load(true);
+          }else {
+            snapshotCoordinator.retain(mutation.collection,id);
+            setData(previous=>applyMutation(previous,mutation,result));
+          }
         }
-      } else synchronized=await load();
+      } else synchronized=await load(true);
+      if(!sameUser())return false;
       if(!synchronized) {
         notify({kind:'error',title:'Saved, but sync failed',detail:'Your change may be saved. Refresh to verify before trying again.'});
         return true; // Avoid creating a duplicate if the user retries a successful write.
@@ -516,12 +526,14 @@ export default function Page() {
     setPendingItems(new Set(pendingItemsRef.current));
     setError('');
     // Instant feedback across Home, Tasks, Calendar, Course and PDF views.
+    snapshotCoordinator.retain('items',item.id);
     setData(previous=>({...previous,items:previous.items.map(i=>i.id===item.id?{...i,done:!item.done}:i)}));
     const activeUid=user?.uid||'local';
     void (async()=>{
       try {
         const saved=await api<Item>(`/api/items/${item.id}`,user,{method:'PATCH',body:{done:!item.done}});
         if(useFirebase&&firebaseAuth?.currentUser?.uid!==activeUid)return;
+        snapshotCoordinator.retain('items',saved.id);
         setData(previous=>applyMutation(previous,{collection:'items'},saved));
         if(!item.done&&saved.done)completionSaved(item.id);
         else if(!item.done)clearCompletion(item.id);
@@ -531,6 +543,7 @@ export default function Page() {
           try {
             const allItems=await api<Item[]>('/api/items',user);
             if(useFirebase&&firebaseAuth?.currentUser?.uid!==activeUid)return;
+            snapshotCoordinator.retain('items');
             setData(previous=>({...previous,items:allItems.map(i=>
               pendingItemsRef.current.has(i.id)&&i.id!==item.id?previous.items.find(old=>old.id===i.id)||i:i)}));
           }catch{
@@ -540,6 +553,7 @@ export default function Page() {
       }catch(e){
         if(useFirebase&&firebaseAuth?.currentUser?.uid!==activeUid)return;
         // Roll back only the completion bit; don't clobber a concurrent metadata edit.
+        snapshotCoordinator.retain('items',item.id);
         clearCompletion(item.id);
         setData(previous=>({...previous,items:previous.items.map(i=>i.id===item.id?{...i,done:item.done}:i)}));
         notify({kind:'error',title:'Task update failed',detail:`${item.title}: ${e instanceof Error?e.message:'Please retry.'}`});
@@ -632,6 +646,7 @@ export default function Page() {
     try {
       const saved=await api<FocusSession>(route,user,{method:'POST',...(body!==undefined?{body}:{})});
       if(!sameUser())return false;
+      focusRevisionRef.current++;
       setData(previous=>{
         const original = previous.sessions.find(s=>s.id===saved.id);
         const changedToFinished = saved.status==='finished' && original?.status!=='finished';
@@ -750,6 +765,7 @@ export default function Page() {
       // the active-session guard atomically, without changing focus statistics.
       await api<void>(`/api/sessions/${identifier}`,user,{method:'DELETE'});
       if(!sameUser())return;
+      focusRevisionRef.current++;
       setData(previous=>({...previous,sessions:previous.sessions.filter(s=>s.id!==identifier)}));
       setFocusPreview(null);
       setFocusClock(null);
@@ -915,6 +931,7 @@ export default function Page() {
     setPdf(p=>p?{...p,page}:p);
     if (pdf.resourceId) {
       const id=pdf.resourceId;
+      snapshotCoordinator.retain('resources',id);
       setData(previous=>({...previous,resources:previous.resources.map(r=>r.id===id?{...r,last_page:page}:r)}));
       pdfBookmarkPendingRef.current={id,page};
       if(pdfBookmarkTimerRef.current)clearTimeout(pdfBookmarkTimerRef.current);

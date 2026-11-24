@@ -10,7 +10,7 @@ import { Card, FormRow } from '@/components/common';
 import { TaskActionsMenu } from '@/components/task-actions-menu';
 import { PhotoEmptyState } from '@/components/photo-empty-state';
 import { formatDate, kindLabels, localToday, type Course, type Item, type Priority } from '@/lib/types';
-import { canPlanOnDate, isOverdue, todayPriorities, upcomingWork, upcomingSections, shiftCalendarMonth } from '@/lib/task-view';
+import { canPlanOnDate, isOverdue, todayPriorities, upcomingSections, shiftCalendarMonth } from '@/lib/task-view';
 import { activityReference, activityStatus, activityStatusLabel, shortStudyDate } from '@/lib/activity-display';
 
 type Repeat = 'none'|'daily'|'weekly'|'monthly';
@@ -21,12 +21,17 @@ const dateKey = (d:Date)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(
 const asDate = (s:string)=>new Date(s+'T12:00:00');
 const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 const cadenceLabel:Record<Repeat,string>={none:'Does not repeat',daily:'Daily',weekly:'Weekly',monthly:'Monthly'};
-const fullLabel=(d:string)=>new Intl.DateTimeFormat('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'}).format(asDate(d));
+const fullDateFormatter=new Intl.DateTimeFormat('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+const monthFormatter=new Intl.DateTimeFormat('en-GB',{month:'long',year:'numeric'});
 
 function monthDays(year:number,month:number){
   const first=new Date(year,month,1,12);
   first.setDate(first.getDate()-(first.getDay()+6)%7);
-  return Array.from({length:42},(_,i)=>{const d=new Date(first);d.setDate(first.getDate()+i);return {key:dateKey(d),outside:d.getMonth()!==month,day:d.getDate()};});
+  return Array.from({length:42},(_,i)=>{
+    const d=new Date(first);
+    d.setDate(first.getDate()+i);
+    return {key:dateKey(d),outside:d.getMonth()!==month,day:d.getDate(),label:fullDateFormatter.format(d)};
+  });
 }
 
 export function TasksPlanner({items,courses,user,busy,pendingItems,completingIds,exitingIds,run,onToggle,onFocus,onOpenResource,createOpen,setCreateOpen,calendarJump,calendarOnly=false,initialTaskMode='today',taskJump,onTaskJumpHandled}:{
@@ -54,30 +59,52 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,completingIds
   // Personal-deadline deep links highlight a task without opening its edit form.
   const [highlightedTask,setHighlightedTask]=useState<string|null>(null);
   const highlightedRef=useRef<HTMLDivElement|null>(null);
-  const availableCourses=courses.filter(c=>!c.archived);
-  const filtered=items.filter(i=>selectedCourse==='all'||(selectedCourse==='personal'?!i.course_id:i.course_id===selectedCourse));
-  const open=filtered.filter(i=>!i.done);
-  const overdue=open.filter(i=>isOverdue(i,today));
-  const plannedToday=open.filter(i=>i.planned_date===today);
-  
-  const listed=mode==='completed'?filtered.filter(i=>i.done).sort((a,b)=>(b.planned_date||'').localeCompare(a.planned_date||'')):
-    mode==='today'?todayPriorities(filtered,today):upcomingWork(filtered,today);
-  const {scheduled:upcomingPlanned,unscheduled:upcomingUnscheduled}=upcomingSections(filtered,today);
-  const weekEnd=(()=>{const d=asDate(today);d.setDate(d.getDate()+6);return dateKey(d);})();
-  const dueThisWeek=open.filter(i=>i.due_date&&i.due_date>=today&&i.due_date<=weekEnd).length;
-  const monthCells=useMemo(()=>monthDays(month.year,month.index),[month.year,month.index]);
-  const scheduled=filtered.filter(i=>i.planned_date===selectedDay);
-  // Work planned and due on the same date is shown once in the agenda.
-  const due=filtered.filter(i=>i.due_date===selectedDay&&i.planned_date!==selectedDay);
-  const inbox=open.filter(i=>!i.planned_date);
+  const isCalendar=mode==='calendar';
+  const availableCourses=useMemo(()=>courses.filter(c=>!c.archived),[courses]);
+  const filtered=useMemo(()=>selectedCourse==='all'?items:
+    items.filter(i=>selectedCourse==='personal'?!i.course_id:i.course_id===selectedCourse),[items,selectedCourse]);
+  const open=useMemo(()=>filtered.filter(i=>!i.done),[filtered]);
+  const summary=useMemo(()=>{
+    const end=asDate(today);
+    end.setDate(end.getDate()+6);
+    const weekEnd=dateKey(end);
+    const deadlines=open.filter(i=>i.due_date&&i.due_date>=today);
+    return {
+      plannedToday:open.filter(i=>i.planned_date===today).length,
+      overdue:open.filter(i=>isOverdue(i,today)).length,
+      deadlines:deadlines.length,
+      dueThisWeek:deadlines.filter(i=>i.due_date&&i.due_date<=weekEnd).length,
+    };
+  },[open,today]);
+  const listed=useMemo(()=>{
+    if(mode==='completed')return filtered.filter(i=>i.done).sort((a,b)=>(b.planned_date||'').localeCompare(a.planned_date||''));
+    return mode==='today'?todayPriorities(filtered,today):[];
+  },[mode,filtered,today]);
+  const {scheduled:upcomingPlanned,unscheduled:upcomingUnscheduled}=useMemo(
+    ()=>mode==='upcoming'?upcomingSections(filtered,today):{scheduled:[],unscheduled:[]},
+    [mode,filtered,today],
+  );
+  const monthCells=useMemo(()=>isCalendar?monthDays(month.year,month.index):[],[isCalendar,month.year,month.index]);
+  const monthLabel=useMemo(()=>isCalendar?monthFormatter.format(new Date(month.year,month.index,1)):'',[isCalendar,month.year,month.index]);
+  const selectedDayLabel=useMemo(()=>isCalendar?fullDateFormatter.format(asDate(selectedDay)):'',[isCalendar,selectedDay]);
+  const {scheduled,due}=useMemo(()=>{
+    if(!isCalendar)return {scheduled:[],due:[]};
+    return {
+      scheduled:filtered.filter(i=>i.planned_date===selectedDay),
+      // Work planned and due on the same date is shown once in the agenda.
+      due:filtered.filter(i=>i.due_date===selectedDay&&i.planned_date!==selectedDay),
+    };
+  },[filtered,isCalendar,selectedDay]);
+  const inbox=useMemo(()=>isCalendar?open.filter(i=>!i.planned_date):[],[open,isCalendar]);
   const calendarBuckets=useMemo(()=>{
     const map=new Map<string,{planned:number;due:number}>();
+    if(!isCalendar)return map;
     for(const item of filtered){
       if(item.planned_date){const b=map.get(item.planned_date)||{planned:0,due:0};b.planned++;map.set(item.planned_date,b);}
       if(item.due_date){const b=map.get(item.due_date)||{planned:0,due:0};b.due++;map.set(item.due_date,b);}
     }
     return map;
-  },[filtered]);
+  },[filtered,isCalendar]);
   const changeMonth=(offset:number)=>{
     const nextDay=shiftCalendarMonth(selectedDay,offset);
     const d=asDate(nextDay);
@@ -202,26 +229,26 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,completingIds
     <div className="page-heading"><div><span className="eyebrow"><CalendarDays size={13}/> {calendarOnly?'YOUR STUDY CALENDAR':'YOUR TASKS & PLANS'}</span><h1>{calendarOnly?'Calendar':'Tasks'}</h1></div>
       {!calendarOnly&&<button className="btn primary" onClick={()=>startCreate(today)}><Plus size={16}/> New task</button>}</div>
     {!calendarOnly&&<div className="planner-v05-summary">
-      <div><span>Planned today</span><strong>{plannedToday.length}</strong></div>
-      <div><span>Upcoming deadlines</span><strong>{open.filter(i=>i.due_date&&i.due_date>=today).length}</strong></div>
-      <div className={overdue.length?'planner-overdue-summary':''}><span>Overdue</span><strong className={overdue.length?'danger':''}>{overdue.length}</strong></div>
+      <div><span>Planned today</span><strong>{summary.plannedToday}</strong></div>
+      <div><span>Upcoming deadlines</span><strong>{summary.deadlines}</strong></div>
+      <div className={summary.overdue?'planner-overdue-summary':''}><span>Overdue</span><strong className={summary.overdue?'danger':''}>{summary.overdue}</strong></div>
     </div>}
     <Card className="planner-v05-shell">
       <div className="planner-v05-toolbar">
         {!calendarOnly&&<div className="segmented">{(['today','upcoming','completed'] as const).map(m=><button key={m} className={mode===m?'selected':''} onClick={()=>setMode(m)}>{m==='today'?'Today':m==='upcoming'?'Upcoming':'Completed'}</button>)}</div>}
         <label className="planner-v05-filter"><span>Show</span><select value={selectedCourse} onChange={e=>setSelectedCourse(e.target.value)}><option value="all">All tasks</option><option value="personal">Personal only</option>{availableCourses.map(c=><option key={c.id} value={c.id}>{c.code} · {c.title}</option>)}</select></label>
       </div>
-      {mode==='calendar'?<div className="planner-v052-calendar-workspace">
-        <div className="planner-v052-calendar-summary" aria-label="Calendar work summary"><span><i className="planner-v052-dot planned" aria-hidden="true"/>{plannedToday.length} planned today</span><span><i className="planner-v052-dot due" aria-hidden="true"/>{dueThisWeek} deadlines next 7 days</span>{overdue.length>0&&<span className="overdue"><i className="planner-v052-dot overdue" aria-hidden="true"/>{overdue.length} overdue</span>}</div>
+      {isCalendar?<div className="planner-v052-calendar-workspace">
+        <div className="planner-v052-calendar-summary" aria-label="Calendar work summary"><span><i className="planner-v052-dot planned" aria-hidden="true"/>{summary.plannedToday} planned today</span><span><i className="planner-v052-dot due" aria-hidden="true"/>{summary.dueThisWeek} deadlines next 7 days</span>{summary.overdue>0&&<span className="overdue"><i className="planner-v052-dot overdue" aria-hidden="true"/>{summary.overdue} overdue</span>}</div>
         <div className="planner-v05-calendar-layout"><div>
-        <div className="planner-v05-calendar-heading"><h3>{new Intl.DateTimeFormat('en-GB',{month:'long',year:'numeric'}).format(new Date(month.year,month.index,1))}</h3>
+        <div className="planner-v05-calendar-heading"><h3>{monthLabel}</h3>
           <div className="planner-v05-cal-nav"><button className="btn secondary small" onClick={()=>changeMonth(-1)} aria-label="Previous month"><ArrowLeft size={16}/></button><button className="btn secondary small" onClick={gotoToday}>Today</button><button className="btn secondary small" onClick={()=>changeMonth(1)} aria-label="Next month"><ArrowRight size={16}/></button></div></div>
         <div className="planner-v05-weekdays">{days.map(day=><span key={day}>{day}</span>)}</div>
         <div className="planner-v05-grid">{monthCells.map(day=>{
           const counts=calendarBuckets.get(day.key);
           const blocked=draggedTask&&!canPlanOnDate(draggedTask,day.key);
           return <button key={day.key} className={`planner-v05-day ${day.outside?'outside':''} ${day.key===today?'today':''} ${day.key===selectedDay?'selected':''} ${draggedTask&&hoverDay===day.key?(blocked?'drop-blocked':'drop-target'):''}`}
-            title={blocked?`Cannot plan after ${formatDate(draggedTask!.due_date!)}`:`Select ${fullLabel(day.key)}; drop tasks here to plan them`} aria-label={`${fullLabel(day.key)} — ${counts?.planned||0} planned, ${counts?.due||0} due${blocked?' — after task deadline':''}`}
+            title={blocked?`Cannot plan after ${formatDate(draggedTask!.due_date!)}`:`Select ${day.label}; drop tasks here to plan them`} aria-label={`${day.label} — ${counts?.planned||0} planned, ${counts?.due||0} due${blocked?' — after task deadline':''}`}
             onClick={()=>selectCalendarDay(day.key)}
             onDragOver={e=>{if(draggedTask){e.preventDefault();e.dataTransfer.dropEffect=blocked?'none':'move';setHoverDay(previous=>previous===day.key?previous:day.key);}}}
             onDragLeave={e=>{if(!e.currentTarget.contains(e.relatedTarget as Node|null))setHoverDay(previous=>previous===day.key?'':previous);}}
@@ -233,8 +260,8 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,completingIds
         <p className="planner-v05-hint">Drag tasks to schedule. Use Edit on mobile.</p>
         {draggedTask&&hoverDay&&!canPlanOnDate(draggedTask,hoverDay)&&<p role="status" className="planner-v05-drop-notice"><AlertTriangle size={15} aria-hidden="true"/> Cannot plan after {formatDate(draggedTask.due_date!)}. Choose an earlier day.</p>}
         {dragNotice&&<p role="alert" className="planner-v05-drop-notice"><AlertTriangle size={15} aria-hidden="true"/> {dragNotice}</p>}
-      </div><div className="planner-v05-agenda"><div className="planner-v05-agenda-title"><div><span>SELECTED DAY</span><h3>{fullLabel(selectedDay)}</h3></div>
-        {(scheduled.length>0||due.length>0)&&<button type="button" className="btn secondary small planner-v052-day-add" onClick={()=>startCreate(selectedDay)} aria-label={`Plan task for ${fullLabel(selectedDay)}`}><Plus size={16}/> Plan task</button>}</div>
+      </div><div className="planner-v05-agenda"><div className="planner-v05-agenda-title"><div><span>SELECTED DAY</span><h3>{selectedDayLabel}</h3></div>
+        {(scheduled.length>0||due.length>0)&&<button type="button" className="btn secondary small planner-v052-day-add" onClick={()=>startCreate(selectedDay)} aria-label={`Plan task for ${selectedDayLabel}`}><Plus size={16}/> Plan task</button>}</div>
         {!scheduled.length&&!due.length?<PhotoEmptyState compact scene="calendar" title="Your calendar is free" detail="Nothing planned or due on this day." actionLabel="Add task" onAction={()=>startCreate(selectedDay)}/>:<>
           {scheduled.length>0&&<><h4>Planned work <span>{scheduled.length}</span></h4>{scheduled.map(i=>showRow(i,true,false,'planned'))}</>}
           {due.length>0&&<><h4>Other deadlines <span>{due.length}</span></h4>{due.map(i=>showRow(i,false,false,'due'))}</>}

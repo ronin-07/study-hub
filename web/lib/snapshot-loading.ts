@@ -1,4 +1,6 @@
-/** Recovery policy for the initial private workspace read. No user data is cached here. */
+import type { SnapshotChanges, SnapshotCollection } from './snapshot-cache';
+
+/** Recovery policy for the private workspace read. No user data is cached here. */
 export type SnapshotLoadProblem = {
   title: string;
   description: string;
@@ -21,15 +23,56 @@ export function canRetrySnapshot(error: unknown): boolean {
 /** One bounded retry for transient cold starts or temporary network failures. */
 export async function fetchSnapshotWithRetry<T>(
   request: () => Promise<T>,
-  pause: (milliseconds: number) => Promise<void> = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds))
+  pause: (milliseconds: number) => Promise<void> = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
+  signal?: AbortSignal,
 ): Promise<T> {
+  signal?.throwIfAborted();
   try {
     return await request();
   } catch (error) {
+    signal?.throwIfAborted();
     if (!canRetrySnapshot(error)) throw error;
     await pause(500);
+    signal?.throwIfAborted();
     return request();
   }
+}
+
+/** Coalesce reads for the same account and week, tracking writes during each read. */
+export function createSnapshotCoordinator() {
+  let active: {
+    key: string;
+    controller: AbortController;
+    changes: SnapshotChanges;
+    promise: Promise<boolean>;
+  } | undefined;
+
+  function cancel() {
+    active?.controller.abort();
+    active = undefined;
+  }
+
+  return {
+    run(key: string, read: (signal: AbortSignal, changes: SnapshotChanges) => Promise<boolean>, fresh = false) {
+      if (active?.key === key && !fresh) return active.promise;
+      cancel();
+      const controller = new AbortController();
+      const changes: SnapshotChanges = {};
+      const promise = Promise.resolve()
+        .then(() => controller.signal.aborted ? false : read(controller.signal, changes))
+        .finally(() => { if (active?.controller === controller) active = undefined; });
+      active = { key, controller, changes, promise };
+      return promise;
+    },
+    cancel,
+    retain(collection: SnapshotCollection, id?: string) {
+      if (!active || collection === 'sessions' || collection === 'focus_stats') return;
+      const changed = active.changes[collection];
+      if (changed === 'all') return;
+      if (id === undefined) active.changes[collection] = 'all';
+      else active.changes[collection] = new Set([...(changed ?? []), id]);
+    },
+  };
 }
 
 export function describeSnapshotFailure(error: unknown): SnapshotLoadProblem {

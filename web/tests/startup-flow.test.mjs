@@ -12,7 +12,8 @@ test('initial auth resolution never marks the page as failed before fetching',()
 test('failed background refresh does not replace last valid dashboard',()=>{
  assert.match(page,/if \(hadSnapshot\) setError\(/);
  assert.match(page,/setSnapshotIssue\(issue\)/);
- assert.match(page,/loadRequestRef/);
+ assert.match(page,/snapshotCoordinator\.run/);
+ assert.match(page,/if \(signal\.aborted\) return false;/);
 });
 test('initial load diagnostic is visible and does not expose raw API response',()=>{
  assert.match(page,/snapshotIssue.diagnostics/);
