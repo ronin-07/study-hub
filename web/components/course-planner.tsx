@@ -462,7 +462,8 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
                 <span className="planner-semester-count" aria-label={`${activeCourses.length} active courses`}>{activeCourses.length}</span>
               </button>
               {expanded&&<div id={`planner-semester-children-${index}`} className="planner-semester-children">
-                {listedCourses.map(c=><button type="button" className={'planner-semester-course'+(selectedId===c.id&&isCurrent?' selected':'')} key={c.id} onClick={()=>chooseCourse(c)}>
+                {listedCourses.map(c=><button type="button" className={'planner-semester-course'+(selectedId===c.id&&isCurrent?' selected':'')}
+                  key={c.id} title={`${c.code} · ${c.title}`} onClick={()=>chooseCourse(c)}>
                   <strong className="planner-semester-code">{c.code}</strong><span className="planner-semester-course-name">{c.title}</span>
                 </button>)}
                 {!listedCourses.length&&<p className="planner-semester-no-courses">{isCurrent&&showArchived?'No archived courses.':'No active courses.'}</p>}
