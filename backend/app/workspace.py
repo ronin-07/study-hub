@@ -351,3 +351,52 @@ def edit_resource(identifier: str, patch: ResourcePatch, user: User = Depends(cu
         return value
 
     return store().workspace_atomic(user.uid, operation)
+
+
+class ExamDetailsPatch(BaseModel):
+    display_name: str = Field(min_length=1, max_length=160)
+    year: int | None = Field(default=None, ge=1900, le=2100)
+
+
+class PairExistingSolution(BaseModel):
+    solution_id: str = Field(pattern=r'^[a-zA-Z0-9_-]{1,80}$')
+
+
+@router.patch('/resources/{identifier}/exam-details', response_model=Resource)
+def edit_exam_details(identifier: str, patch: ExamDetailsPatch, user: User = Depends(current_user)):
+    name = patch.display_name.strip()
+    if not name:
+        raise HTTPException(422, 'Exam name cannot be blank')
+    def operation(tx):
+        paper = tx.get('resources', identifier)
+        if not paper or paper.get('kind') != 'exam_paper':
+            raise HTTPException(404, 'Question paper not found')
+        course = tx.get('courses', paper['course_id'])
+        if not course or course.get('archived', False):
+            raise HTTPException(409, 'Course is unavailable or archived')
+        result = validate(Resource, {**paper, 'exam_display_name': name, 'exam_year': patch.year})
+        if paper.get('exam_display_name') != name or paper.get('exam_year') != patch.year:
+            tx.put('resources', result.model_dump(mode='json'))
+        return result
+    return store().workspace_atomic(user.uid, operation)
+
+
+@router.post('/resources/{identifier}/pair-existing-solution', response_model=Resource)
+def pair_existing_solution(identifier: str, value: PairExistingSolution, user: User = Depends(current_user)):
+    def operation(tx):
+        paper = tx.get('resources', identifier)
+        solution = tx.get('resources', value.solution_id)
+        if not paper or paper.get('kind') != 'exam_paper' or not solution or solution.get('kind') != 'exam_solution':
+            raise HTTPException(404, 'Question paper or solution not found')
+        if paper['course_id'] != solution['course_id']:
+            raise HTTPException(422, 'Choose a solution in the same course')
+        course = tx.get('courses', paper['course_id'])
+        if not course or course.get('archived', False):
+            raise HTTPException(409, 'Course is unavailable or archived')
+        if solution.get('exam_paper_id') not in (None, identifier):
+            raise HTTPException(409, 'This solution is already paired with another paper')
+        result = validate(Resource, {**solution, 'exam_paper_id': identifier})
+        if solution.get('exam_paper_id') != identifier:
+            tx.put('resources', result.model_dump(mode='json'))
+        return result
+    return store().workspace_atomic(user.uid, operation)

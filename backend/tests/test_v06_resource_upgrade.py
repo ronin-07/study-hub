@@ -172,3 +172,60 @@ def test_firestore_removal_failure_rolls_back_all_links_and_keeps_focus(firestor
     assert result.items[0].resource_id is None
     assert store.get(uid,'sessions','focus')==focus.model_dump(mode='json')
     assert store.get(uid,'focus_stats','state')=={'id':'state','total_seconds':99,'completed_sessions':1}
+
+
+def test_exam_polish_rename_and_pair_preserve_documents(client):
+    c=create_course(client,{'code':'TEST','title':'Course'}).json()
+    paper=add(client,c,'02450ex_Fall2017',kind='exam_paper',last_page=12)
+    sol=add(client,c,'02450ex_Fall2017_sol',kind='exam_solution',last_page=19)
+    other=add(client,c,'other-paper',kind='exam_paper')
+    url='/api/resources/'+paper['id'];surl='/api/resources/'+sol['id']
+    saved=client.post(url+'/exam-attempts',json={'date':'2026-11-24','minutes':30,'score':80}).json()
+    old=preview(client,surl)
+    pair=client.post(url+'/pair-existing-solution',json={'solution_id':sol['id']});assert pair.status_code==200,pair.text
+    assert pair.json()=={**sol,'exam_paper_id':paper['id']}
+    assert client.post('/api/resources/'+other['id']+'/pair-existing-solution',json={'solution_id':sol['id']}).status_code==409
+    assert remove(client,surl,old).status_code==409
+    details=client.patch(url+'/exam-details',json={'display_name':'  Mock exam 3  ','year':2017});assert details.status_code==200,details.text
+    assert details.json()=={**saved,'exam_display_name':'Mock exam 3','exam_year':2017}
+    assert client.patch(url+'/exam-details',json={'display_name':'  ','year':2017}).status_code==422
+    assert client.patch(url+'/exam-details',json={'display_name':'Valid','year':100}).status_code==422
+    assert client.patch(surl+'/exam-details',json={'display_name':'Invalid','year':2017}).status_code==404
+    assert preview(client,url)['blockers']
+    assert remove(client,surl,preview(client,surl)).status_code==200
+    snap=client.get('/api/snapshot').json();assert next(r for r in snap['resources'] if r['id']==paper['id'])==details.json()
+
+
+def test_exam_polish_pair_vs_removal_and_cross_course(client):
+    c=create_course(client,{'code':'TEST','title':'Course'}).json();other=create_course(client,{'code':'ELSE','title':'Other'}).json()
+    paper=add(client,c,'paper-file',kind='exam_paper');sol=add(client,c,'sol-file',kind='exam_solution');wrong=add(client,other,'wrong-sol',kind='exam_solution')
+    url='/api/resources/'+paper['id'];p=preview(client,url)
+    assert client.post(url+'/pair-existing-solution',json={'solution_id':wrong['id']}).status_code==422
+    def operation(n):return (remove(client,url,p) if n==0 else client.post(url+'/pair-existing-solution',json={'solution_id':sol['id']})).status_code
+    assert race(2,operation) in ([200,404],[409,200])
+    resources=client.get('/api/snapshot').json()['resources'];ids={r['id'] for r in resources}
+    assert all(not r.get('exam_paper_id') or r['exam_paper_id'] in ids for r in resources)
+
+
+def test_exam_polish_firestore_pair_rename_and_safe_removal(firestore_store, monkeypatch):
+    from app import main, workspace
+    from app.models import Resource
+    from app.security import User
+    from fastapi import HTTPException
+    import pytest
+    store=firestore_store; uid='alice'; user=User(uid); monkeypatch.setattr(main,'app_store',store)
+    store.db.docs[store.col(uid,'courses').document('target').path]={'id':'target','code':'TEST','week_count':13}
+    paper=Resource(id='paper',course_id='target',title='Paper',source='drive',drive_file_id='paper-file',kind='exam_paper',last_page=14)
+    sol=Resource(id='solution',course_id='target',title='Solution',source='drive',drive_file_id='solution-file',kind='exam_solution',last_page=23)
+    main.bulk_resources(main.BulkResources(resources=[paper,sol]),user)
+    old=main.preview_resource_removal('solution',user)
+    paired=workspace.pair_existing_solution('paper',workspace.PairExistingSolution(solution_id='solution'),user)
+    assert paired.last_page==23 and paired.exam_paper_id=='paper'
+    renamed=workspace.edit_exam_details('paper',workspace.ExamDetailsPatch(display_name='Autumn 2017',year=2017),user)
+    assert renamed.last_page==14 and renamed.title=='Paper'
+    with pytest.raises(HTTPException):main.remove_resource_with_links('solution',main.ResourceRemovalConfirmation(preview_token=old['preview_token']),user)
+    assert main.preview_resource_removal('paper',user)['blockers']
+    current=main.preview_resource_removal('solution',user)
+    main.remove_resource_with_links('solution',main.ResourceRemovalConfirmation(preview_token=current['preview_token']),user)
+    assert store.get(uid,'resources','paper')==renamed.model_dump(mode='json')
+    assert store.get(uid,'resources','solution') is None

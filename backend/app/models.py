@@ -146,6 +146,8 @@ class Resource(BaseDocument):
     drive_file_id: str | None = Field(default=None, pattern=r'^[A-Za-z0-9_-]{5,200}$')
     item_id: str | None = None
     exam_paper_id: str | None = Field(default=None, pattern=r'^[a-zA-Z0-9_-]{1,80}$')
+    exam_display_name: str | None = Field(default=None, min_length=1, max_length=160)
+    exam_year: int | None = Field(default=None, ge=1900, le=2100)
     last_page: int = Field(default=1, ge=1, le=20000)
     exam_attempts: list[ExamAttempt] = Field(default_factory=list, max_length=100)
     chapter: str = Field(default='', max_length=120)

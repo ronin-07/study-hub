@@ -2126,3 +2126,45 @@ html[data-study-hub-theme="light"]{color-scheme:light}
 @media(max-width:680px){.bulk-resource-row .form-grid{grid-template-columns:1fr}.bulk-resource-heading{flex-wrap:wrap}.bulk-resource-heading strong{flex-basis:70%}}
 
 .bulk-resource-dialog:not([open]){display:none}.resources-index-row>.task-completion-check{margin-left:8px;flex-shrink:0}.folder-picker-heading{flex-wrap:wrap}
+
+/* Exam Prep polish: independent summary and full-width collection. */
+.planner-exam-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:start}
+.planner-exam-grid>.planner-exam-papers,.planner-exam-grid>.planner-exam-unpaired{grid-column:1/-1}
+.planner-exam-hero .exam-hero-progresses{flex:1 1 56%;max-width:640px;min-width:0;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.planner-exam-hero>div:first-child{flex:1 1 32%;min-width:0}
+.exam-progress-panel{display:grid;gap:7px;min-width:0;text-align:left;padding:14px;background:#23172c38;border:1px solid #ffffff30;border-radius:12px;color:#fff8f4}
+.planner-exam-hero .exam-progress-panel>span{font-size:.78rem;letter-spacing:.02em;color:#fff0e9;line-height:1.3}
+.exam-progress-panel strong{font-size:1.7rem;line-height:1.2;color:#ddf2df;font-variant-numeric:tabular-nums}
+.exam-progress-panel:nth-child(2) strong{color:#ffe1cb}
+.exam-progress-panel small{color:#fff0e9;font-size:.73rem;line-height:1.3;overflow-wrap:anywhere}
+.exam-progress-panel .progress-track{height:7px;background:#ffffff35;margin:0}
+.exam-progress-panel .progress-track>div{background:#a5d3b5}
+.exam-progress-panel:nth-child(2) .progress-track>div{background:#ffd0b2}
+.exam-papers-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:6px 0 12px}
+.exam-papers-toolbar p{margin:0}
+.exam-sort{display:flex;align-items:center;gap:8px;font-size:.76rem;color:var(--muted)}
+.exam-sort select{width:auto;max-width:100%;min-width:0}
+.exam-papers-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:12px;align-items:stretch}
+.exam-papers-grid .exam-paper-group{display:flex;flex-direction:column;gap:10px;min-width:0;margin:0;padding:13px}
+.exam-pair-heading{display:flex;align-items:center;gap:8px;min-width:0}
+.exam-pair-heading>div{flex:1;min-width:0;display:grid;gap:4px}
+.exam-pair-heading strong{overflow-wrap:anywhere;font-size:.96rem}.exam-pair-heading small{font-size:.75rem;color:var(--muted)}.exam-pair-heading b{color:var(--teal);white-space:nowrap}
+.exam-pair-documents{display:grid;gap:6px;min-width:0}.exam-pair-documents .exam-document-line{margin:0}
+.exam-link-solution{justify-content:flex-start;min-height:34px;width:100%}
+.exam-pair-actions{display:flex;gap:8px;border-top:1px solid var(--line);padding-top:10px;margin-top:auto;align-items:stretch}
+.exam-pair-actions .btn{flex:1;min-height:34px;justify-content:center}
+.planner-exam-unpaired .exam-document-line{margin:10px 0}
+.exam-solution-choice{display:flex;gap:10px;align-items:center;border:1px solid var(--line);background:var(--soft);border-radius:10px;padding:10px;margin:9px 0;cursor:pointer}
+.exam-solution-choice input{width:auto;flex-shrink:0;accent-color:#91bca0}.exam-solution-choice span{min-width:0;display:grid;gap:4px}.exam-solution-choice strong{overflow-wrap:anywhere}.exam-solution-choice small{color:var(--muted);font-size:.75rem}
+@media(max-width:1000px){.planner-exam-grid{grid-template-columns:1fr}.planner-exam-hero .exam-hero-progresses{max-width:none}}
+@media(max-width:650px){.planner-exam-hero>div:first-child,.planner-exam-hero .exam-hero-progresses{flex:1 1 100%}.exam-progress-panel{padding:10px}.exam-progress-panel strong{font-size:1.35rem}.exam-papers-grid{grid-template-columns:1fr}}
+.planner-exam-papers{container-type:inline-size}
+.exam-papers-grid{grid-template-columns:minmax(0,1fr)}
+@container (min-width: 540px){.exam-papers-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@container (min-width: 830px){.exam-papers-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+.planner-exam-papers .section-title{flex-wrap:wrap}
+.planner-exam-grid .planner-exam-side{gap:12px}
+.planner-exam-hero{flex-wrap:wrap}
+.planner-exam-hero>div:first-child{flex-basis:210px}
+.planner-exam-hero .exam-hero-progresses{flex-basis:360px}
+@media(max-width:650px){.planner-exam-hero>div:first-child,.planner-exam-hero .exam-hero-progresses{flex-basis:100%}}
