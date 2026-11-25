@@ -1,21 +1,38 @@
-# Credentials, local state, and build outputs
+# Local configuration (only reviewed example files may be tracked)
 **/.env
-**/.env.example
-**/.env.preview.example
-**/.env.local
-**/.env.local.example
-**/.env.*.local.*
+**/.env.*
+!**/.env.example
+!**/.env.*.example
+
+# Credentials and private exports
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*service-account*.json
+*service_account*.json
+*serviceAccountKey*.json
+*firebase-adminsdk*.json
+credentials.json
+client_secret*.json
+*oauth-token*.json
+
+# Local state and generated files
 **/node_modules/
 **/.next/
 **/__pycache__/
 **/.pytest_cache/
 **/.venv/
 **/data/
+**/*.sqlite
 **/*.sqlite3
 **/*.db
 **/*.pyc
 **/*.log
 **/*.tsbuildinfo
-*.pem
-*service-account*.json
+**/playwright-report/
+**/test-results/
+*gitleaks*.json
+*.bundle
 .DS_Store

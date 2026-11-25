@@ -8,12 +8,26 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parents[1]
 TEXT_EXTENSIONS = {'.py', '.md', '.json', '.jsonl', '.yml', '.yaml', '.toml', '.ts', '.tsx', '.js', '.mjs', '.css', '.txt', '.html', '.sh', '.ps1', '.example'}
-BEGIN = b'-----BEGIN ' + b'PRIVATE KEY-----'
-END = b'-----END ' + b'PRIVATE KEY-----'
+PEM_MARKER = re.compile(
+    rb"-----" + rb"(?:BEGIN|END) (?:[A-Z0-9]+ )*PRIVATE KEY" + rb"-----"
+)
+PRIVATE_SUFFIXES = {'.pem', '.key', '.p12', '.pfx', '.jks', '.bundle', '.db', '.sqlite', '.sqlite3'}
+
+
+def private_path(path: PurePosixPath) -> bool:
+    name = path.name.lower()
+    if name == '.env' or (name.startswith('.env.') and not name.endswith('.example')):
+        return True
+    if path.suffix.lower() in PRIVATE_SUFFIXES:
+        return True
+    return name.endswith('.json') and (
+        name == 'credentials.json' or name.startswith('client_secret')
+        or any(part in name for part in ('service-account', 'service_account', 'serviceaccountkey', 'firebase-adminsdk', 'oauth-token'))
+    )
 
 
 def should_check(path: Path) -> bool:
@@ -22,8 +36,8 @@ def should_check(path: Path) -> bool:
 
 def issues(contents: bytes) -> list[str]:
     findings = []
-    if BEGIN in contents or END in contents:
-        findings.append('embedded unencrypted private key')
+    if PEM_MARKER.search(contents):
+        findings.append('embedded private key marker')
     # Real JSON service accounts contain both a key-id string and a private key.
     # The 'example' style env files must contain only comments/placeholders.
     if (re.search(rb'"private_key_id"\s*:\s*"[a-fA-F0-9]{24,}"', contents)
@@ -33,19 +47,31 @@ def issues(contents: bytes) -> list[str]:
 
 
 def main():
-    paths = subprocess.check_output(['git', 'ls-files', '-z'], cwd=ROOT).split(b'\0')
+    entries = subprocess.check_output(['git', 'ls-files', '--stage', '-z'], cwd=ROOT).split(b'\0')
     failures = []
-    for raw in paths:
+    checked = 0
+    for raw in entries:
         if not raw:
             continue
-        rel = Path(raw.decode('utf-8'))
-        full = ROOT / rel
-        if not full.is_file() or not should_check(rel):
+        metadata, filename = raw.split(b'\t', 1)
+        mode, oid, stage = metadata.split()
+        rel = PurePosixPath(filename.decode('utf-8', errors='surrogateescape'))
+        if stage != b'0':
+            failures.append(f'{rel}: unresolved index entry')
+            continue
+        if private_path(rel):
+            failures.append(f'{rel}: forbidden tracked local or credential file')
+            continue
+        if mode not in (b'100644', b'100755') or not should_check(rel):
             continue
         try:
-            matches = issues(full.read_bytes())
-        except OSError:
+            # Read the staged blob, not the possibly different working-tree file.
+            contents = subprocess.check_output(['git', 'cat-file', 'blob', oid.decode('ascii')], cwd=ROOT)
+        except subprocess.CalledProcessError:
+            failures.append(f'{rel}: unable to read staged blob')
             continue
+        checked += 1
+        matches = issues(contents)
         if matches:
             failures.append(f'{rel}: {", ".join(matches)}')
     if failures:
@@ -53,7 +79,7 @@ def main():
         for finding in failures:
             print(' -', finding)
         return 1
-    print(f'Credential scan passed ({len(paths)} index entries checked for eligible text files).')
+    print(f'Credential scan passed ({checked} staged text files checked).')
     return 0
 
 
