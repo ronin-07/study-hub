@@ -372,7 +372,6 @@ def create_resource_in_workspace(tx, value: Resource, *, skip_identical=False):
             raise HTTPException(404, 'Linked study item not found')
         if item.get('course_id') != value.course_id or item.get('week_number') != value.week_number:
             raise HTTPException(422, 'Linked study item belongs to a different course/week')
-    validate_exam_pair(tx, value.model_dump(mode='json'))
     if value.source == 'drive':
         for existing in tx.list_equal('resources', 'course_id', value.course_id):
             if (existing.get('source') == 'drive' and existing.get('drive_file_id') == value.drive_file_id
@@ -380,7 +379,9 @@ def create_resource_in_workspace(tx, value: Resource, *, skip_identical=False):
                 if skip_identical and all(existing.get(field) == getattr(value, field) for field in ('week_number', 'kind', 'item_id', 'exam_paper_id')):
                     return Resource.model_validate(existing), False
                 raise HTTPException(409, 'This PDF is already linked in this course; edit the existing link instead')
-    tx.create('resources', value.model_dump(mode='json'))
+    document = value.model_dump(mode='json')
+    validate_exam_pair(tx, document)
+    tx.create('resources', document)
     return value, True
 
 
@@ -455,6 +456,8 @@ def paper_practice_task(identifier: str, user: User = Depends(current_user)):
         course = tx.get('courses', paper['course_id'])
         if not course or course.get('archived', False):
             raise HTTPException(409, 'Course is unavailable or archived')
+        if tx.get('focus_guard', 'active'):
+            raise HTTPException(409, 'A focus session is already active; resume or finish it first')
         existing = next((i for i in tx.list_equal('items', 'resource_id', identifier) if i.get('resource_id') == identifier
                          and i.get('course_id') == paper['course_id'] and i.get('week_number') is None
                          and i.get('kind') == 'revision'), None)

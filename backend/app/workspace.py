@@ -297,7 +297,7 @@ def edit_week(identifier: str, patch: WeekPatch, user: User = Depends(current_us
     return store().workspace_atomic(user.uid, operation)
 
 
-def validate_exam_pair(tx, resource):
+def validate_exam_pair(tx, resource, previous_paper_id=None):
     paper_id = resource.get('exam_paper_id')
     if not paper_id:
         return
@@ -306,6 +306,8 @@ def validate_exam_pair(tx, resource):
         raise HTTPException(422, 'Choose an existing question paper in the same course')
     if resource.get('kind') != 'exam_solution' or paper_id == resource.get('id'):
         raise HTTPException(422, 'Only a solution can be paired with a question paper')
+    if paper_id != previous_paper_id and tx.list_equal('resources', 'exam_paper_id', paper_id):
+        raise HTTPException(409, 'This question paper already has a solution')
 
 
 @router.patch('/resources/{identifier}', response_model=Resource)
@@ -346,7 +348,7 @@ def edit_resource(identifier: str, patch: ResourcePatch, user: User = Depends(cu
         if old.get('kind') == 'exam_paper' and merged.get('kind') != 'exam_paper' and tx.list_equal('resources', 'exam_paper_id', identifier):
             raise HTTPException(409, 'Unpair solutions before changing the question paper type')
         value = validate(Resource, merged)
-        validate_exam_pair(tx, value.model_dump(mode='json'))
+        validate_exam_pair(tx, value.model_dump(mode='json'), old.get('exam_paper_id'))
         tx.put('resources', value.model_dump(mode='json'))
         return value
 
@@ -397,6 +399,28 @@ def pair_existing_solution(identifier: str, value: PairExistingSolution, user: U
             raise HTTPException(409, 'This solution is already paired with another paper')
         result = validate(Resource, {**solution, 'exam_paper_id': identifier})
         if solution.get('exam_paper_id') != identifier:
+            validate_exam_pair(tx, result.model_dump(mode='json'))
+            tx.put('resources', result.model_dump(mode='json'))
+        return result
+    return store().workspace_atomic(user.uid, operation)
+
+
+@router.delete('/resources/{identifier}/paired-solutions/{solution_id}', response_model=Resource)
+def unpair_existing_solution(identifier: str, solution_id: str, user: User = Depends(current_user)):
+    def operation(tx):
+        solution = tx.get('resources', solution_id)
+        paper = tx.get('resources', identifier)
+        if not solution or solution.get('kind') != 'exam_solution' or not paper or paper.get('kind') != 'exam_paper':
+            raise HTTPException(404, 'Question paper or solution not found')
+        if paper['course_id'] != solution['course_id']:
+            raise HTTPException(422, 'Choose a solution in the same course')
+        course = tx.get('courses', paper['course_id'])
+        if not course or course.get('archived', False):
+            raise HTTPException(409, 'Course is unavailable or archived')
+        if solution.get('exam_paper_id') not in (None, identifier):
+            raise HTTPException(409, 'This solution is now paired with a different paper')
+        result = validate(Resource, {**solution, 'exam_paper_id': None})
+        if solution.get('exam_paper_id') == identifier:
             tx.put('resources', result.model_dump(mode='json'))
         return result
     return store().workspace_atomic(user.uid, operation)

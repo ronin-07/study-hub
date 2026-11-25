@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {activityResources,isExamResource,pairedSolutions} from '../lib/resource-links.ts';
-import {bulkDrafts,validBulkRow} from '../lib/bulk-resources.ts';
+import {activityResources,availableExamPapers,isExamResource,pairedSolutions} from '../lib/resource-links.ts';
+import {bulkDrafts,bulkPairCandidates,validBulkRow} from '../lib/bulk-resources.ts';
 import {applyMutation,preserveWorkspaceChanges} from '../lib/snapshot-cache.ts';
 const activity={id:'item',course_id:'course',week_number:1,resource_id:'both',done:true};
 const resources=[{id:'both',course_id:'course',week_number:1,item_id:'item',kind:'slides'},{id:'reverse',course_id:'course',week_number:1,item_id:'item',kind:'annotated'},{id:'cross',course_id:'other',week_number:1,item_id:'item'},{id:'wrong-week',course_id:'course',week_number:2,item_id:'item'}];
@@ -34,4 +34,24 @@ test('older DTU filename conventions pair after review, and out-of-range weeks a
  const files=['02450ex_Fall2017.pdf','02450ex_Fall2017_corrected_sol.pdf','02452_lecture14_fall26.pdf'].map((name,i)=>({id:'f'+i,name,mimeType:'application/pdf'}));
  const data={courses:[{id:'course',week_count:13}],resources:[],items:[]};let n=0;
  const rows=bulkDrafts(files,data,'course',()=>String(++n));assert.equal(rows[0].kind,'exam_paper');assert.equal(rows[1].exam_paper_id,rows[0].id);assert.equal(rows[2].week_number,14);assert.equal(validBulkRow(rows[2],rows,data),false);
+});
+
+test('single and bulk choosers exclude occupied papers, including a draft alias of a linked Drive file',()=>{
+ const occupied={id:'occupied',title:'Exam Fall2017.pdf',kind:'exam_paper',course_id:'course',source:'drive',drive_file_id:'existing'};
+ const available={...occupied,id:'available',title:'Exam Fall2018.pdf',drive_file_id:'second'};
+ const resources=[occupied,available,{id:'paired',course_id:'course',kind:'exam_solution',exam_paper_id:occupied.id}];
+ const data={courses:[{id:'course',week_count:13}],resources,items:[]};
+ assert.deepEqual(availableExamPapers(resources,'course').map(r=>r.id),['available']);
+ assert.deepEqual(availableExamPapers(resources,'course',occupied.id).map(r=>r.id),['occupied','available']);
+ const files=[{id:'existing',name:occupied.title},{id:'first-solution',name:'Exam Fall2017 sol.pdf'},{id:'fresh',name:'Exam Spring2019.pdf'},
+   {id:'second-solution',name:'Exam Spring2019 sol.pdf'},{id:'third-solution',name:'Exam Spring2019 answer.pdf'}];
+ let n=0;
+ const rows=bulkDrafts(files,data,'course',()=>String(++n));
+ assert.equal(rows[1].exam_paper_id,'');
+ assert.equal(rows[3].exam_paper_id,rows[2].id);
+ assert.equal(rows[4].exam_paper_id,'');
+ assert.deepEqual(bulkPairCandidates(rows[4],rows,resources).map(r=>r.id),['available']);
+ rows[4].exam_paper_id=rows[2].id;
+ assert.equal(validBulkRow(rows[4],rows,data),false);
+ assert.equal(validBulkRow(rows[3],rows,data),false);
 });

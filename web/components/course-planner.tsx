@@ -8,10 +8,12 @@ import {
   Library, ListChecks, ListFilter, LoaderCircle, NotebookPen, Pencil, Plus, RotateCcw, Timer, Trash2, Unlink, X
 } from 'lucide-react';
 import { api } from '@/lib/api';
-import {activityResources,isExamResource} from '@/lib/resource-links';
+import {activityResources,availableExamPapers,isExamResource} from '@/lib/resource-links';
 import { ResourceRemovalDialog } from '@/components/resource-removal-dialog';
 import { CourseDeletionDialog } from '@/components/course-deletion-dialog';
 import { ExamHero, ExamPapers } from '@/components/exam-prep';
+import { checklistPercent } from '@/lib/progress-presentation';
+import type { FocusMode } from '@/lib/types';
 import { categoryInTitle, examFocusThisWeek } from '@/lib/exam-prep';
 import { ActivityGenerator } from '@/components/activity-generator';
 import type { ActivityDefinition, GenerationResult } from '@/lib/activity-generator';
@@ -65,6 +67,10 @@ interface Props {
   run: (operation: () => Promise<unknown>, mutation?: MutationHint, feedback?: FeedbackMessage) => Promise<boolean>;
   toggleItem: (item: Item) => void;
   focusOn: (item: Item) => void;
+  preparePractice: (paper: Resource, mode: FocusMode) => Promise<boolean>;
+  activeFocus: boolean;
+  focusBusy: boolean;
+  openFocus: () => void;
   openResource: (resource: Resource) => void;
   openDrive: (courseId: string, weekNumber: number, kind: ResourceKind, scope: 'course' | 'week', paperId?:string) => void;
 }
@@ -75,7 +81,7 @@ function CourseTaskActionMenu(props: {
 }) { return <TaskActionsMenu {...props}/>; }
 
 /** Single registered semester -> course -> week navigation source of truth. */
-export function CoursePlanner({ data, progressItems, user, busy, pendingItems, completingIds, exitingIds, courseId, weekNumber, selectCourse, selectWeek, run, toggleItem, focusOn, openResource, openDrive, landingItem, sectionJump }: Props) {
+export function CoursePlanner({ data, progressItems, user, busy, pendingItems, completingIds, exitingIds, courseId, weekNumber, selectCourse, selectWeek, run, toggleItem, focusOn, preparePractice, activeFocus, focusBusy, openFocus, openResource, openDrive, landingItem, sectionJump }: Props) {
   const semesterOptions = useMemo(() => makeSemesters(data), [data]);
   const [semesterKey, setSemesterKey] = useState('');
   const [showArchived, setShowArchived] = useState(false);
@@ -169,10 +175,10 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
   // Course-wide Exam Prep has its own count and must not inflate this metric.
   const progressCourseItems=courseLearningItems(progressItems,selectedId);
   const courseDoneCount=progressCourseItems.filter(i=>i.done).length;
-  const courseCompletion=progressCourseItems.length?Math.round(100*courseDoneCount/progressCourseItems.length):0;
+  const courseCompletion=checklistPercent(courseDoneCount,progressCourseItems.length);
   const progressWeekItems=progressCourseItems.filter(i=>i.week_number===weekNumber);
   const weekDoneCount=progressWeekItems.filter(i=>i.done).length;
-  const weekCompletion=progressWeekItems.length?Math.round(100*weekDoneCount/progressWeekItems.length):0;
+  const weekCompletion=checklistPercent(weekDoneCount,progressWeekItems.length);
   const today=localToday();
   const filteredItems=items.filter(i=>activityFilter==='all'||(activityFilter==='completed'?i.done:!i.done&&(activityFilter==='planned'?Boolean(i.planned_date):Boolean(i.due_date))));
   const isReadOnly = Boolean(selected?.archived);
@@ -336,7 +342,7 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
     setDialog('resource');
   };
   const saveResource = async (e:FormEvent) => {
-    e.preventDefault(); if (!selected) return;
+    e.preventDefault(); if (!selected || unavailableEditPaper) return;
     const existing = data.resources.find(r=>r.id===resourceEditId);
     const preserveLegacyExam=existing&&existing.week_number!=null&&resourceScope==='week'&&isExamResource(resourceDraft.kind);
     const existingWeek=existing?.week_number??weekNumber;
@@ -397,6 +403,10 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
 
   const activeSemester = (data.semesters||[]).find(s=>s.id===semester?.id);
   const editingResource = data.resources.find(r=>r.id===resourceEditId);
+  const editPaperOptions = dialog==='resource'&&resourceDraft.kind==='exam_solution'
+    ? availableExamPapers(data.resources,selectedId,editingResource?.exam_paper_id) : [];
+  const unavailableEditPaper = resourceDraft.kind==='exam_solution'&&Boolean(resourceDraft.exam_paper_id)
+    && !editPaperOptions.some(p=>p.id===resourceDraft.exam_paper_id);
   const linkedCounts = selected ? {
     items:courseItems.length, documents:data.resources.filter(r=>r.course_id===selected.id).length,
     sessions:data.sessions.filter(s=>s.course_id===selected.id).length
@@ -548,11 +558,29 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
           </Card>}
           {workspaceTab==='exam'&&<div className="planner-exam-grid"><Card className="planner-exam-card"><SectionTitle title="Revision checklist" aside={<Badge>{examDoneCount}/{examProgressItems.length} completed</Badge>}/>
 
-            {examItems.length>0&&<ProgressTrack className="planner-exam-progress" identity={`${selectedId}-exam`} label="Exam revision completion" value={Math.round(examProgressItems.length?examDoneCount/examProgressItems.length*100:0)}/>}
+            {examItems.length>0&&<ProgressTrack className="planner-exam-progress" identity={`${selectedId}-exam`} label="Exam revision completion" value={checklistPercent(examDoneCount,examProgressItems.length)}/>}
             <div className="planner-course-task-list">{examItems.map(renderCourseTask)}</div>
             {!examItems.length&&<EmptyState icon={<BookMarked size={23}/>} title="Exam preparation starts here" detail="Add topics and course-wide revision tasks."/>}
             {!isReadOnly&&(examEntryOpen?<form className="exam-task-form" onSubmit={e=>void saveExam(e)}><input aria-label="Exam preparation task" autoFocus placeholder="Practise old exam papers" value={examTitle} onChange={e=>setExamTitle(e.target.value)} required/><button className="btn primary small" disabled={busy||!examTitle.trim()} aria-busy={busy}>{busy?<><LoaderCircle size={14} className="spin"/> Saving…</>:'Add task'}</button><button type="button" className="btn secondary small" disabled={busy} onClick={()=>{setExamEntryOpen(false);setExamTitle('');}}>Cancel</button></form>:<button type="button" className="btn secondary planner-exam-add" onClick={()=>setExamEntryOpen(true)}><Plus size={16}/> Add revision task</button>)}
-          </Card><div className="stack planner-exam-side"><Card><SectionTitle title="Exam focus this week"/><strong className="exam-focus-value">{Math.floor(examFocusSeconds/3600)}h {Math.floor(examFocusSeconds%3600/60)}m</strong><p className="planner-study-hint">Finished sessions linked to revision tasks since Monday.</p></Card><Card><SectionTitle title="Exam resources"/>{shared.filter(r=>r.kind!=='exam_paper').slice(0,3).map(resourcePreviewRow)}<button className="btn secondary full" onClick={()=>setWorkspaceTab('course-library')}>Open course library <ArrowRight size={15}/></button></Card></div><ExamPapers key={selected.id} papers={examResources.filter(r=>r.kind==='exam_paper')} solutions={examResources.filter(r=>r.kind==='exam_solution')} editResource={r=>openResourceForm(r.week_number==null?'course':'week',r)} removeResource={removeResource} addSolution={paper=>openDrive(selected.id,weekNumber,'exam_solution','course',paper.id)} user={user} busy={busy} readOnly={isReadOnly} run={run} openResource={openResource} browseDrive={()=>openDrive(selected.id,weekNumber,'exam_paper','course')} practice={async paper=>{let item:Item|undefined;const ok=await run(async()=>{item=await api<Item>(`/api/resources/${paper.id}/practice-task`,user,{method:'POST'});return item;},{collection:'items'});if(ok&&item)focusOn(item);}}/></div>}
+          </Card>
+            <ExamPapers key={selected.id} papers={examResources.filter(r=>r.kind==='exam_paper')}
+              solutions={examResources.filter(r=>r.kind==='exam_solution')}
+              editResource={r=>openResourceForm(r.week_number==null?'course':'week',r)} removeResource={removeResource}
+              addSolution={paper=>openDrive(selected.id,weekNumber,'exam_solution','course',paper.id)}
+              user={user} busy={busy} readOnly={isReadOnly} run={run} openResource={openResource}
+              browseDrive={()=>openDrive(selected.id,weekNumber,'exam_paper','course')} practice={preparePractice}
+              examDuration={selected.exam_duration_minutes} activeFocus={activeFocus} focusBusy={focusBusy} openFocus={openFocus}/>
+            <div className="planner-exam-side">
+              <Card><SectionTitle title="Exam focus this week"/>
+                <strong className="exam-focus-value">{Math.floor(examFocusSeconds/3600)}h {Math.floor(examFocusSeconds%3600/60)}m</strong>
+                <p className="planner-study-hint">Finished sessions linked to revision tasks since Monday.</p>
+              </Card>
+              <Card><SectionTitle title="Exam resources"/>
+                {sharedPreview.map(resourcePreviewRow)}
+                <button className="btn secondary full" onClick={()=>setWorkspaceTab('course-library')}>Open course library <ArrowRight size={15}/></button>
+              </Card>
+            </div>
+          </div>}
         </>}
       </div>
     </div>
@@ -577,7 +605,7 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
         {planItem.planned_date&&<p className="planner-plan-note">Clearing the date keeps this activity in the Tasks inbox as unscheduled work.</p>}
       </>}
       {dialog==='item'&&<><h2>{editActivityId?'Edit study activity':'New study activity'}</h2><p>Reading, notes, and questions can reference a shared book or notebook.</p><form onSubmit={e=>void saveItem(e)}><FormRow label="Title"><input required value={itemDraft.title} onChange={e=>setItemDraft(p=>({...p,title:e.target.value}))}/></FormRow><div className="form-grid"><FormRow label="Activity type">{editingExamPrep?<><input value="Exam preparation" readOnly aria-readonly="true"/></>:<select value={itemDraft.kind} onChange={e=>setItemDraft(p=>({...p,kind:e.target.value as Item['kind']}))}>{(['lecture','notes','reading','questions','revision','assignment','exercise'] as const).map(kind=><option key={kind} value={kind}>{kindLabels[kind]}</option>)}</select>}</FormRow><FormRow label="Reference a shared book or notebook"><select value={itemDraft.resource_id} onChange={e=>setItemDraft(p=>({...p,resource_id:e.target.value}))}><option value="">No linked document</option>{[...allShared,...weekResources].filter(r=>editingExamPrep||!isExamResource(r.kind)).map(r=><option value={r.id} key={r.id}>{r.title}{r.week_number!==null?` (Week ${r.week_number})`:""}</option>)}</select></FormRow><FormRow label={itemDraft.kind==='questions'?'Question numbers':'Chapter / section'}><input value={itemDraft.chapter} placeholder={itemDraft.kind==='questions'?'3, 4, 5.6, 4.2.1':undefined} onChange={e=>setItemDraft(p=>({...p,chapter:e.target.value}))}/></FormRow><FormRow label="Pages from"><input type="number" min={1} value={itemDraft.page_start} onChange={e=>setItemDraft(p=>({...p,page_start:e.target.value}))}/></FormRow><FormRow label="Pages to"><input type="number" min={1} value={itemDraft.page_end} onChange={e=>setItemDraft(p=>({...p,page_end:e.target.value}))}/></FormRow><FormRow label="Planned date"><input type="date" max={itemDraft.due_date||undefined} value={itemDraft.planned_date} onChange={e=>setItemDraft(p=>({...p,planned_date:e.target.value}))}/></FormRow><FormRow label="Due date"><input type="date" min={itemDraft.planned_date||undefined} value={itemDraft.due_date} onChange={e=>setItemDraft(p=>({...p,due_date:e.target.value}))}/></FormRow></div><FormRow label="Notes (optional)"><textarea rows={3} maxLength={5000} placeholder="Quick notes, lecture takeaways or reference details" value={itemDraft.notes} onChange={e=>setItemDraft(p=>({...p,notes:e.target.value}))}/></FormRow><label className="inline-check"><input type="checkbox" checked={!itemDraft.hidden_from_tasks&&(itemDraft.kind==='assignment'||itemDraft.is_task||!!itemDraft.planned_date||!!itemDraft.due_date)} onChange={e=>setItemDraft(p=>({...p,is_task:e.target.checked,hidden_from_tasks:!e.target.checked}))}/> Include in Tasks and Calendar</label><div className="form-actions"><button type="button" className="btn secondary" disabled={busy} onClick={()=>setDialog(null)}>Cancel</button><button className="btn primary" disabled={busy||!itemDraft.title.trim()||Boolean(itemDraft.planned_date&&itemDraft.due_date&&itemDraft.planned_date>itemDraft.due_date)} aria-busy={busy}>{busy?<><LoaderCircle size={15} className="spin"/> Saving…</>:editActivityId?'Save activity':'Add activity'}</button></div></form></>}
-      {dialog==='resource'&&<><h2>{resourceEditId?'Edit resource':'Link a resource'}</h2><p>Keep whole-course books and notebooks shared; use weekly links for lecture slides.</p><form onSubmit={e=>void saveResource(e)}><FormRow label="Resource title"><input required value={resourceDraft.title} onChange={e=>setResourceDraft(p=>({...p,title:e.target.value}))}/></FormRow><FormRow label="Available in">{isExamResource(resourceDraft.kind)?(editingResource?.week_number!=null?<select value={resourceScope} onChange={e=>setResourceScope(e.target.value as 'course'|'week')}><option value="week">Exam Prep · original Week {editingResource.week_number}</option><option value="course" disabled={Boolean(editingResource.item_id)}>Exam Prep · course-wide</option></select>:<input value="Exam Prep" readOnly/>):<select value={resourceScope} onChange={e=>setResourceScope(e.target.value as 'course'|'week')}><option value="course">Course Library — all weeks</option><option value="week">Only Week {editingResource?.week_number??weekNumber}</option></select>}</FormRow>{isExamResource(resourceDraft.kind)&&editingResource?.week_number!=null&&editingResource.item_id&&<p className="planner-study-hint">Unlink this file from its weekly activity before moving it to course-wide Exam Prep.</p>}{!editingResource&&<FormRow label="Document URL (HTTPS)"><input type="url" required value={resourceDraft.url} placeholder="https://..." onChange={e=>setResourceDraft(p=>({...p,url:e.target.value}))}/></FormRow>}<div className="form-grid"><FormRow label="Document type"><select value={resourceDraft.kind} onChange={e=>setResourceDraft(p=>({...p,kind:e.target.value as ResourceKind}))}>{(['textbook','handwritten','slides','annotated','exam_paper','exam_solution','other'] as const).map(k=><option key={k} value={k}>{resourceKindLabel(k)}</option>)}</select></FormRow>{!editingResource&&<FormRow label="Source"><select value={resourceDraft.source} onChange={e=>setResourceDraft(p=>({...p,source:e.target.value as 'dtu'|'link'}))}><option value="dtu">DTU Learn</option><option value="link">Other link</option></select></FormRow>}{resourceDraft.kind==='exam_solution'&&<FormRow label="Corresponding question paper"><select value={resourceDraft.exam_paper_id} onChange={e=>setResourceDraft(p=>({...p,exam_paper_id:e.target.value}))}><option value="">Unpaired solution</option>{examResources.filter(r=>r.kind==='exam_paper').map(r=><option key={r.id} value={r.id}>{r.title}</option>)}</select></FormRow>}{resourceScope==='week'&&!isExamResource(resourceDraft.kind)&&<FormRow label="Attach to study activity"><select value={resourceDraft.item_id} onChange={e=>setResourceDraft(p=>({...p,item_id:e.target.value}))}><option value="">Whole week</option>{items.map(i=><option value={i.id} key={i.id}>{i.title}</option>)}</select></FormRow>}<FormRow label="Chapter"><input value={resourceDraft.chapter} onChange={e=>setResourceDraft(p=>({...p,chapter:e.target.value}))}/></FormRow><FormRow label="Page start"><input type="number" min={1} value={resourceDraft.page_start} onChange={e=>setResourceDraft(p=>({...p,page_start:e.target.value}))}/></FormRow><FormRow label="Page end"><input type="number" min={1} value={resourceDraft.page_end} onChange={e=>setResourceDraft(p=>({...p,page_end:e.target.value}))}/></FormRow></div><div className="form-actions"><button type="button" className="btn secondary" disabled={busy} onClick={()=>setDialog(null)}>Cancel</button><button type="submit" className="btn primary" disabled={busy} aria-busy={busy}>{busy?<><LoaderCircle size={15} className="spin" aria-hidden="true"/> Saving…</>:'Save link'}</button></div></form></>}
+      {dialog==='resource'&&<><h2>{resourceEditId?'Edit resource':'Link a resource'}</h2><p>Keep whole-course books and notebooks shared; use weekly links for lecture slides.</p><form onSubmit={e=>void saveResource(e)}><FormRow label="Resource title"><input required value={resourceDraft.title} onChange={e=>setResourceDraft(p=>({...p,title:e.target.value}))}/></FormRow><FormRow label="Available in">{isExamResource(resourceDraft.kind)?(editingResource?.week_number!=null?<select value={resourceScope} onChange={e=>setResourceScope(e.target.value as 'course'|'week')}><option value="week">Exam Prep · original Week {editingResource.week_number}</option><option value="course" disabled={Boolean(editingResource.item_id)}>Exam Prep · course-wide</option></select>:<input value="Exam Prep" readOnly/>):<select value={resourceScope} onChange={e=>setResourceScope(e.target.value as 'course'|'week')}><option value="course">Course Library — all weeks</option><option value="week">Only Week {editingResource?.week_number??weekNumber}</option></select>}</FormRow>{isExamResource(resourceDraft.kind)&&editingResource?.week_number!=null&&editingResource.item_id&&<p className="planner-study-hint">Unlink this file from its weekly activity before moving it to course-wide Exam Prep.</p>}{!editingResource&&<FormRow label="Document URL (HTTPS)"><input type="url" required value={resourceDraft.url} placeholder="https://..." onChange={e=>setResourceDraft(p=>({...p,url:e.target.value}))}/></FormRow>}<div className="form-grid"><FormRow label="Document type"><select value={resourceDraft.kind} onChange={e=>setResourceDraft(p=>({...p,kind:e.target.value as ResourceKind}))}>{(['textbook','handwritten','slides','annotated','exam_paper','exam_solution','other'] as const).map(k=><option key={k} value={k}>{resourceKindLabel(k)}</option>)}</select></FormRow>{!editingResource&&<FormRow label="Source"><select value={resourceDraft.source} onChange={e=>setResourceDraft(p=>({...p,source:e.target.value as 'dtu'|'link'}))}><option value="dtu">DTU Learn</option><option value="link">Other link</option></select></FormRow>}{resourceDraft.kind==='exam_solution'&&<FormRow label="Corresponding question paper"><select value={resourceDraft.exam_paper_id} onChange={e=>setResourceDraft(p=>({...p,exam_paper_id:e.target.value}))}><option value="">Unpaired solution</option>{unavailableEditPaper&&<option value={resourceDraft.exam_paper_id} disabled>Selected paper unavailable</option>}{editPaperOptions.map(r=><option key={r.id} value={r.id}>{r.title}</option>)}</select></FormRow>}{resourceScope==='week'&&!isExamResource(resourceDraft.kind)&&<FormRow label="Attach to study activity"><select value={resourceDraft.item_id} onChange={e=>setResourceDraft(p=>({...p,item_id:e.target.value}))}><option value="">Whole week</option>{items.map(i=><option value={i.id} key={i.id}>{i.title}</option>)}</select></FormRow>}<FormRow label="Chapter"><input value={resourceDraft.chapter} onChange={e=>setResourceDraft(p=>({...p,chapter:e.target.value}))}/></FormRow><FormRow label="Page start"><input type="number" min={1} value={resourceDraft.page_start} onChange={e=>setResourceDraft(p=>({...p,page_start:e.target.value}))}/></FormRow><FormRow label="Page end"><input type="number" min={1} value={resourceDraft.page_end} onChange={e=>setResourceDraft(p=>({...p,page_end:e.target.value}))}/></FormRow></div><div className="form-actions"><button type="button" className="btn secondary" disabled={busy} onClick={()=>setDialog(null)}>Cancel</button><button type="submit" className="btn primary" disabled={busy||unavailableEditPaper} aria-busy={busy}>{busy?<><LoaderCircle size={15} className="spin" aria-hidden="true"/> Saving…</>:'Save link'}</button></div></form></>}
       {busy&&<p className="planner-save-status" role="status" aria-live="polite"><LoaderCircle size={14} className="spin" aria-hidden="true"/> Saving changes to Study Hub…</p>}
     </div></div>}
   </>;

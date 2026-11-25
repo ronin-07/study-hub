@@ -1,5 +1,5 @@
 import type {DriveEntry,DriveIndexed,Resource,Snapshot} from './types';
-import {isExamResource} from './resource-links.ts';
+import {availableExamPapers,isExamResource} from './resource-links.ts';
 export type BulkDraft={id:string;file_id:string;title:string;course_id:string;kind:Resource['kind'];week_number:number|null;item_id:string;exam_paper_id:string;suggested:boolean;expectedActivity?:string};
 function inferredKind(name:string):Resource['kind']{
   if(/(?:^|[\W_])(?:sol(?:ution)?s?|answer(?:s)?)(?:[\W_]|$)/i.test(name))return 'exam_solution';
@@ -9,7 +9,11 @@ function inferredKind(name:string):Resource['kind']{
 }
 function pairKey(name:string){return name.toLowerCase().replace(/\.pdf$/,'').replace(/(?:corrected|solutions?|answers?|sol)(?=[\W_]|$)/g,'').replace(/[^a-z0-9]/g,'');}
 export function bulkPairCandidates(row:BulkDraft,rows:BulkDraft[],resources:Resource[]){
-  return [...resources.filter(r=>r.kind==='exam_paper'&&r.course_id===row.course_id),...rows.filter(r=>r.kind==='exam_paper'&&r.course_id===row.course_id)].map(r=>({id:r.id,title:r.title}));
+  const reserved = new Set(rows.filter(r => r.id !== row.id && r.kind === 'exam_solution').map(r => r.exam_paper_id));
+  const existing = availableExamPapers(resources, row.course_id);
+  const linkedFiles = new Set(resources.filter(r => r.course_id === row.course_id && r.source === 'drive').map(r => r.drive_file_id));
+  const newPapers = rows.filter(r => r.kind === 'exam_paper' && r.course_id === row.course_id && !linkedFiles.has(r.file_id));
+  return [...existing, ...newPapers].filter(paper => !reserved.has(paper.id)).map(({id,title}) => ({id,title}));
 }
 export function bulkDrafts(files:(DriveEntry|DriveIndexed)[],data:Snapshot,initialCourse:string,newId:()=>string):BulkDraft[]{
   const active=data.courses.filter(c=>!c.archived);

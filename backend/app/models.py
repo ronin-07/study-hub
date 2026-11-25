@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, time
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
@@ -173,11 +173,14 @@ class Resource(BaseDocument):
         return self
 
 
+FocusMode = Annotated[str, Field(pattern=r'^(?:free|[1-9][0-9]?|[1-6][0-9]{2}|7[01][0-9]|720)$')]
+
+
 class FocusSession(BaseDocument):
     course_id: str | None = None
     item_id: str | None = None
     week_number: int | None = Field(default=None, ge=1, le=30)
-    mode: Literal['25', '50', '90', 'free'] = '50'
+    mode: FocusMode = '50'
     status: Literal['running', 'paused', 'finished'] = 'running'
     started_at: int
     pause_started_at: int | None = None
@@ -190,7 +193,7 @@ class StartFocus(BaseModel):
     course_id: str | None = None
     item_id: str | None = None
     week_number: int | None = Field(default=None, ge=1, le=30)
-    mode: Literal['25', '50', '90', 'free'] = '50'
+    mode: FocusMode = '50'
     requested_at: int | None = Field(default=None, ge=1)
 
 

@@ -1,4 +1,4 @@
-import type { Course, ExamAttempt, FocusSession, Item, Resource } from './types';
+import type { Course, ExamAttempt, FocusMode, FocusSession, Item, Resource } from './types';
 
 export function examCountdown(date:string,today:string):string {
   const days=Math.round((Date.parse(date+'T00:00:00Z')-Date.parse(today+'T00:00:00Z'))/86400000);
@@ -21,8 +21,10 @@ export function attemptSummary(attempts:ExamAttempt[]) {
 }
 
 
-export type ExamSort = 'year-desc' | 'year-asc' | 'name-asc' | 'name-desc';
-export const examSortOptions: {value:ExamSort;label:string}[] = [{value:'year-desc',label:'Year: newest first'},{value:'year-asc',label:'Year: oldest first'},{value:'name-asc',label:'Name: A–Z'},{value:'name-desc',label:'Name: Z–A'}];
+export type ExamSort = 'year-desc' | 'year-asc';
+export const examSortOptions: {value:ExamSort;label:string}[] = [
+  {value:'year-desc',label:'Newest first'}, {value:'year-asc',label:'Oldest first'},
+];
 export function examFilenameDetails(title:string) {
   const match=/(fall|autumn|spring|summer|winter)[ _.-]*(19\d{2}|20\d{2}|2100)(?!\d)/i.exec(title) || /(19\d{2}|20\d{2}|2100)[ _.-]*(fall|autumn|spring|summer|winter)/i.exec(title);
   const year=match?Number(/^\d/.test(match[1])?match[1]:match[2]):null;
@@ -34,14 +36,39 @@ export function examFilenameDetails(title:string) {
 }
 export const examName=(paper:Resource)=>paper.exam_display_name||examFilenameDetails(paper.title).name;
 export const examYear=(paper:Resource)=>paper.exam_display_name?paper.exam_year??null:paper.exam_year??examFilenameDetails(paper.title).year;
-export function sortExamPapers(papers:Resource[],sort:ExamSort){
-  const name=(a:Resource,b:Resource)=>examName(a).localeCompare(examName(b),undefined,{numeric:true,sensitivity:'base'});
-  return [...papers].sort((a,b)=>{
-    if(sort==='name-asc'||sort==='name-desc')return (sort==='name-asc'?1:-1)*name(a,b)||a.id.localeCompare(b.id);
-    const x=examYear(a),y=examYear(b);
-    if(x===null||y===null)return (x===null?1:0)-(y===null?1:0)||name(a,b)||a.id.localeCompare(b.id);
-    return (sort==='year-asc'?x-y:y-x)||name(a,b)||a.id.localeCompare(b.id);
+export function sortExamPapers(papers:Resource[],sort:ExamSort) {
+  const seasons = ['Winter', 'Spring', 'Summer', 'Autumn'];
+  const direction = sort === 'year-asc' ? 1 : -1;
+  const dated = papers.map(paper => ({
+    paper,
+    year: examYear(paper),
+    season: seasons.indexOf(examFilenameDetails(examName(paper)).season ?? examFilenameDetails(paper.title).season ?? ''),
+  }));
+  return dated.sort((a,b) => {
+    if (a.year === null || b.year === null) return Number(a.year === null) - Number(b.year === null);
+    return direction * (a.year - b.year)
+      || Number(a.season < 0) - Number(b.season < 0)
+      || direction * (a.season - b.season);
+  }).map(({paper}) => paper);
+}
+
+export type ExamAttemptFilter = 'all' | 'attempted' | 'unattempted';
+export function filterExamPapers(papers: Resource[], query: string, attempts: ExamAttemptFilter,
+  missingSolution: boolean, pairedIds: ReadonlySet<string>) {
+  const terms = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  return papers.filter(paper => {
+    const attempted = Boolean(paper.exam_attempts?.length);
+    if (attempts !== 'all' && attempted !== (attempts === 'attempted')) return false;
+    if (missingSolution && pairedIds.has(paper.id)) return false;
+    const text = `${examName(paper)} ${examYear(paper) ?? ''} ${paper.title}`.toLowerCase();
+    return terms.every(term => text.includes(term));
   });
+}
+
+export function practiceFocusMode(timer: 'countdown' | 'stopwatch', minutes: string): FocusMode | null {
+  if (timer === 'stopwatch') return 'free';
+  const value = Number(minutes);
+  return Number.isInteger(value) && value >= 1 && value <= 720 ? `${value}` : null;
 }
 export function suggestedSolutions(paper:Resource,solutions:Resource[]){
   const key=(title:string)=>title.toLowerCase().replace(/\.pdf$/,'').replace(/(?:corrected|solutions?|answers?|sol)(?=[\W_]|$)/g,'').replace(/[^a-z0-9]/g,'');

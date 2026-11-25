@@ -2,12 +2,14 @@
 
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { CalendarDays, ListChecks, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
+import { CalendarDays, ListChecks, MoreHorizontal, Pencil, Trash2, type LucideIcon } from 'lucide-react';
 import type { Item } from '@/lib/types';
 
+type MenuAction = { label: string; icon: LucideIcon; run: () => void; danger?: boolean; title?: string };
+
 /** Shared menu: portalled so rows near a panel edge never clip the actions. */
-export function TaskActionsMenu({item,busy,onEdit,onPlan,onRemove,onDelete}: {
-  item:Item;busy:boolean;onEdit:()=>void;onPlan:()=>void;onRemove?:()=>void;onDelete:()=>void;
+export function WorkspaceActionsMenu({title,busy,actions,className}: {
+  title:string;busy:boolean;actions:MenuAction[];className?:string;
 }) {
   const [open,setOpen]=useState(false);
   const [coordinates,setCoordinates]=useState<{top:number;left:number}|null>(null);
@@ -33,18 +35,23 @@ export function TaskActionsMenu({item,busy,onEdit,onPlan,onRemove,onDelete}: {
   },[open,coordinates]);
   useEffect(()=>{
     if(!open)return;
-    const close=()=>setOpen(false);
+    const close=(event?:Event)=>{
+      if(event?.type==='scroll'&&event.target instanceof Node&&menuRef.current?.contains(event.target))return;
+      setOpen(false);
+    };
     const onOutside=(event:PointerEvent)=>{
       if(!menuRef.current?.contains(event.target as Node)&&
         !triggerRef.current?.contains(event.target as Node))close();
     };
     const onKey=(event:KeyboardEvent)=>{
       if(event.key==='Escape'){event.preventDefault();close();triggerRef.current?.focus();}
-      if(event.key==='ArrowDown'||event.key==='ArrowUp'){
+      if(event.key==='Tab'){close();triggerRef.current?.focus();}
+      if(['ArrowDown','ArrowUp','Home','End'].includes(event.key)){
         const entries=Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? []);
         if(!entries.length)return;
         const current=entries.indexOf(document.activeElement as HTMLButtonElement);
-        const next=event.key==='ArrowDown'?(current+1)%entries.length:(current-1+entries.length)%entries.length;
+        const next=event.key==='Home'?0:event.key==='End'?entries.length-1:
+          event.key==='ArrowDown'?(current+1)%entries.length:(current<=0?entries.length-1:current-1);
         entries[next].focus();event.preventDefault();
       }
     };
@@ -59,20 +66,29 @@ export function TaskActionsMenu({item,busy,onEdit,onPlan,onRemove,onDelete}: {
       window.removeEventListener('scroll',close,true);
     };
   },[open]);
-  const action=(handler:()=>void)=>()=>{setOpen(false);handler();};
+  const action=(handler:()=>void)=>()=>{setOpen(false);triggerRef.current?.focus();handler();};
   return <>
-    <button type="button" ref={triggerRef} className="icon-btn" disabled={busy}
-      aria-label={`More actions for ${item.title}`} aria-haspopup="menu" aria-expanded={open}
+    <button type="button" ref={triggerRef} className={className?`icon-btn ${className}`:'icon-btn'} disabled={busy}
+      aria-label={`More actions for ${title}`} aria-haspopup="menu" aria-expanded={open}
       aria-controls={open?menuId:undefined} title="More actions" onClick={()=>{setCoordinates(null);setOpen(v=>!v);}}>
       <MoreHorizontal size={17}/>
     </button>
     {open&&typeof document!=='undefined'&&createPortal(<div id={menuId} ref={menuRef}
-      className="planner-task-floating-menu" role="menu" aria-label={`Actions for ${item.title}`}
+      className={className?`planner-task-floating-menu ${className}-panel`:'planner-task-floating-menu'} role="menu" aria-label={`Actions for ${title}`}
       style={{top:coordinates?.top??0,left:coordinates?.left??0,visibility:coordinates?'visible':'hidden'}}>
-      <button type="button" role="menuitem" disabled={busy} onClick={action(onEdit)}><Pencil size={14}/> Edit task</button>
-      <button type="button" role="menuitem" disabled={busy} onClick={action(onPlan)}><CalendarDays size={14}/> Plan or reschedule</button>
-      {onRemove&&<button type="button" role="menuitem" disabled={busy} onClick={action(onRemove)}><ListChecks size={14}/> Remove from Tasks</button>}
-      <button type="button" role="menuitem" className="danger" disabled={busy} onClick={action(onDelete)}><Trash2 size={14}/> Delete permanently</button>
+      {actions.map(({label,icon:Icon,run,danger,title:tooltip})=><button key={label} type="button" role="menuitem"
+        tabIndex={-1} title={tooltip} className={danger?'danger':undefined} disabled={busy} onClick={action(run)}><Icon size={14} aria-hidden="true"/> {label}</button>)}
     </div>,document.querySelector('.app-shell')??document.body)}
   </>;
+}
+
+export function TaskActionsMenu({item,busy,onEdit,onPlan,onRemove,onDelete}: {
+  item:Item;busy:boolean;onEdit:()=>void;onPlan:()=>void;onRemove?:()=>void;onDelete:()=>void;
+}) {
+  return <WorkspaceActionsMenu title={item.title} busy={busy} actions={[
+    {label:'Edit task',icon:Pencil,run:onEdit},
+    {label:'Plan or reschedule',icon:CalendarDays,run:onPlan},
+    ...(onRemove?[{label:'Remove from Tasks',icon:ListChecks,run:onRemove}]:[]),
+    {label:'Delete permanently',icon:Trash2,run:onDelete,danger:true},
+  ]}/>;
 }

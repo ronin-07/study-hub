@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+import time
 from tests.test_phase_b2_workspace import client
 from tests.helpers import create_course
 
@@ -69,3 +70,41 @@ def test_wrong_resource_and_weekly_paper(client):
     assert client.post(url+'/exam-attempts',json=attempt()).status_code==404
     assert client.post(url+'/practice-task').status_code==404
     assert client.post('/api/resources',json={'title':'Weekly paper','course_id':course['id'],'kind':'exam_paper','source':'drive','drive_file_id':'paper456','week_number':2}).status_code==201
+
+
+def test_custom_practice_countdown_and_stopwatch_keep_the_existing_focus_guard(client,monkeypatch):
+    from app import main
+    course,paper=setup(client)
+    practice='/api/resources/'+paper['id']+'/practice-task'
+    start='/api/sessions/start'
+    monkeypatch.setattr(main,'now_s',lambda:1000)
+    for invalid in ('0','721','17.5','001','unknown',25):
+        assert client.post(start,json={'mode':invalid}).status_code==422
+    stopwatch=client.post(start,json={'mode':'free'}).json()
+    assert client.post(practice).status_code==409
+    assert client.get('/api/snapshot').json()['items']==[]
+    session='/api/sessions/'+stopwatch['id']
+    assert client.post(session+'/pause').json()['status']=='paused'
+    assert client.post(practice).status_code==409
+    assert client.post(start,json={'mode':'137'}).status_code==409
+    assert client.delete(session).status_code==204
+
+    task=client.post(practice).json()
+    assert client.post(practice).json()==task
+    countdown=client.post(start,json={'mode':'137','item_id':task['id']})
+    assert countdown.status_code==201,countdown.text
+    running=countdown.json()
+    assert (running['course_id'],running['item_id'],running['mode'])==(course['id'],task['id'],'137')
+    assert client.get(f'/api/snapshot?compact=true&week_start={int(time.time())}').json()['sessions']==[running]
+
+    monkeypatch.setattr(main,'now_s',lambda:1020)
+    session='/api/sessions/'+running['id']
+    assert client.post(session+'/pause').json()['mode']=='137'
+    monkeypatch.setattr(main,'now_s',lambda:1030)
+    assert client.post(session+'/resume').json()['mode']=='137'
+    monkeypatch.setattr(main,'now_s',lambda:1050)
+    finished=client.post(session+'/finish',json={}).json()
+    assert finished['focus_seconds']==40
+    assert finished['mode']=='137' and finished['status']=='finished'
+    assert client.get('/api/snapshot').json()['resources'][0]['exam_attempts']==[]
+    assert client.post(start,json={'mode':'720'}).status_code==201

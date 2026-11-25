@@ -61,7 +61,7 @@ test('Focus goal and actual session statistics are visual-only animations', () =
   assert.match(page,/formatFocusDuration\(weekSeconds\)/);
   assert.match(page,/formatFocusDuration\(totalSeconds\)/);
   assert.match(component,/setTimeout\(\(\) => setCelebrating\(false\), 2200\)/);
-  assert.match(css,/\.planner-study-hero:has\(\.progress-celebrating\)/);
+  assert.match(css,/\.planner-study-hero:has\(\.planner-hero-progress \.progress-celebrating\)/);
 });
 
 test('held completion is counted once immediately, and a failed save rolls it back', () => {

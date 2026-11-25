@@ -41,8 +41,8 @@ export function ProgressValue({value, suffix='%', decimals=0}: {
 }
 
 /** Uses the existing track appearance, with a milestone effect only on real updates. */
-export function ProgressTrack({value, label, className='progress-track', identity='default'}: {
-  value: number; label: string; className?: string; identity?: string;
+export function ProgressTrack({value, label, className='progress-track', identity='default', completionMessage}: {
+  value: number; label: string; className?: string; identity?: string; completionMessage?: string;
 }) {
   const percentage = clampPercent(value);
   const previousRef = useRef({identity, percentage});
@@ -54,7 +54,7 @@ export function ProgressTrack({value, label, className='progress-track', identit
       setCelebrating(false);
       return;
     }
-    if (!reachedMilestone(previous.percentage, percentage) || prefersReducedMotion()) {
+    if (!reachedMilestone(previous.percentage, percentage)) {
       setCelebrating(false);
       return;
     }
@@ -62,8 +62,8 @@ export function ProgressTrack({value, label, className='progress-track', identit
     const timeout = window.setTimeout(() => setCelebrating(false), 2200);
     return () => window.clearTimeout(timeout);
   }, [percentage, identity]);
-  return <div className={`${className} progress-motion-track${percentage===100?' progress-complete':''}${celebrating?' progress-celebrating':''}`}
+  return <><div className={`${className} progress-motion-track${percentage===100?' progress-complete':''}${celebrating&&!prefersReducedMotion()?' progress-celebrating':''}`}
     role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percentage}>
     <div style={{width:'100%',transform:`scaleX(${percentage/100})`}}/>
-  </div>;
+  </div>{completionMessage&&<small className="exam-completion-message" role="status">{celebrating?completionMessage:''}</small>}</>;
 }

@@ -39,11 +39,18 @@ def test_removing_one_of_multiple_links_keeps_others_and_activity(client):
 
 
 def test_pair_and_remove_solution_preserves_attempts_and_other_solution(client):
+    from app import main
     c=create_course(client,{'code':'TEST','title':'Course'}).json();paper=add(client,c,'paper-file',kind='exam_paper')
-    sol=add(client,c,'solution-file',kind='exam_solution',exam_paper_id=paper['id']);other=add(client,c,'other-solution',kind='exam_solution',exam_paper_id=paper['id'])
+    sol=add(client,c,'solution-file',kind='exam_solution',exam_paper_id=paper['id'])
+    other={**add(client,c,'other-solution',kind='exam_solution',last_page=23),'exam_paper_id':paper['id']}
+    # Simulate a second solution stored before the one-solution limit.
+    main.app_store.put('local-owner','resources',other)
     purl='/api/resources/'+paper['id'];surl='/api/resources/'+sol['id']
     saved=client.post(purl+'/exam-attempts',json={'date':'2026-11-24','minutes':30,'score':80}).json()
     assert preview(client,purl)['blockers']
+    assert client.post(purl+'/pair-existing-solution',json={'solution_id':other['id']}).json()==other
+    assert client.patch('/api/resources/'+other['id'],json={'title':'Legacy solution'}).json()=={**other,'title':'Legacy solution'}
+    other={**other,'title':'Legacy solution'}
     assert client.patch(purl,json={'kind':'slides'}).status_code==409
     assert client.delete(surl).status_code==409
     p=preview(client,surl);assert p['paired_paper_title']==paper['title'] and not p['blockers']
@@ -101,6 +108,11 @@ def test_firestore_bulk_and_removal_operations(firestore_store,monkeypatch):
     sol=Resource(id='solution',course_id='target',title='Solution',source='drive',drive_file_id='solution-file',kind='exam_solution',exam_paper_id='paper')
     bulk=main.BulkResources(resources=[sol,paper]);assert main.bulk_resources(bulk,user)['created']==2
     before=dict(store.db.docs);assert main.bulk_resources(bulk,user)['skipped']==2;assert store.db.docs==before
+    duplicate=sol.model_copy(update={'id':'duplicate','drive_file_id':'duplicate-file'})
+    unrelated=paper.model_copy(update={'id':'unrelated','drive_file_id':'unrelated-file'})
+    with pytest.raises(HTTPException,match='already has a solution') as conflict:
+        main.bulk_resources(main.BulkResources(resources=[unrelated,duplicate]),user)
+    assert conflict.value.status_code==409 and store.db.docs==before
     p=main.preview_resource_removal('paper',user);assert p['blockers'];assert store.db.docs==before
     with pytest.raises(HTTPException):main.remove_resource_with_links('paper',main.ResourceRemovalConfirmation(preview_token=p['preview_token']),user)
     assert store.db.docs==before
@@ -229,3 +241,79 @@ def test_exam_polish_firestore_pair_rename_and_safe_removal(firestore_store, mon
     main.remove_resource_with_links('solution',main.ResourceRemovalConfirmation(preview_token=current['preview_token']),user)
     assert store.get(uid,'resources','paper')==renamed.model_dump(mode='json')
     assert store.get(uid,'resources','solution') is None
+
+
+def test_concurrent_creating_editing_pairing_and_bulk_can_only_fill_one_slot(client):
+    course=create_course(client,{'code':'EXAM','title':'Course'}).json()
+    paper=add(client,course,'paper-file',kind='exam_paper')
+    editable=add(client,course,'edit-file',kind='exam_solution',last_page=4)
+    pairable=add(client,course,'pair-file',kind='exam_solution',last_page=7)
+    attributes={'kind':'exam_solution','exam_paper_id':paper['id']}
+    url='/api/resources/'+paper['id']
+    operations=[
+        lambda:client.post('/api/resources',json=doc(course,'direct',**attributes)),
+        lambda:client.patch('/api/resources/'+editable['id'],json={'exam_paper_id':paper['id']}),
+        lambda:client.post(url+'/pair-existing-solution',json={'solution_id':pairable['id']}),
+        lambda:client.post('/api/resources/bulk',json={'resources':[doc(course,'bulk-file',**attributes)]}),
+    ]
+    codes=race(len(operations),lambda index:operations[index]().status_code)
+    assert codes.count(409)==3 and any(code in (200,201) for code in codes)
+    resources=client.get('/api/snapshot').json()['resources']
+    linked=[entry for entry in resources if entry['exam_paper_id']==paper['id']]
+    assert len(linked)==1
+    assert {entry['id']:entry['last_page'] for entry in resources if entry['id'] in (editable['id'],pairable['id'])}=={
+        editable['id']:4,pairable['id']:7,
+    }
+
+
+def test_bulk_double_target_rolls_back_new_paper_and_resolves_existing_paper_alias(client):
+    course=create_course(client,{'code':'EXAM','title':'Course'}).json()
+    paper=doc(course,'new-paper',id='paper',kind='exam_paper')
+    first=doc(course,'first-solution',id='first',kind='exam_solution',exam_paper_id='paper')
+    second=doc(course,'second-solution',id='second',kind='exam_solution',exam_paper_id='paper')
+    url='/api/resources/bulk'
+    assert client.post(url,json={'resources':[paper,first,second]}).status_code==409
+    assert client.get('/api/snapshot').json()['resources']==[]
+    assert client.post(url,json={'resources':[paper,first]}).status_code==200
+    before=client.get('/api/snapshot').json()['resources']
+    assert client.post(url,json={'resources':[
+        {**paper,'id':'alias'}, doc(course,'unrelated-pdf'), {**second,'exam_paper_id':'alias'},
+    ]}).status_code==409
+    assert client.get('/api/snapshot').json()['resources']==before
+
+
+def test_unpair_replace_preserves_bookmarks_attempts_and_focus_history(client,monkeypatch):
+    from app import main
+    course=create_course(client,{'code':'EXAM','title':'Course'}).json()
+    paper=add(client,course,'paper-file',kind='exam_paper',last_page=17)
+    first=add(client,course,'first-solution',kind='exam_solution',last_page=11,exam_paper_id=paper['id'])
+    replacement=add(client,course,'replacement',kind='exam_solution',last_page=2)
+    other=add(client,course,'other-paper',kind='exam_paper')
+    url='/api/resources/'+paper['id']
+    first_url='/api/resources/'+first['id']
+    unpair=url+'/paired-solutions/'+first['id']
+    task=client.post(url+'/practice-task').json()
+    monkeypatch.setattr(main,'now_s',lambda:1000)
+    started=client.post('/api/sessions/start',json={'item_id':task['id'],'mode':'137'})
+    assert started.status_code==201,started.text
+    monkeypatch.setattr(main,'now_s',lambda:1200)
+    finished=client.post('/api/sessions/'+started.json()['id']+'/finish',json={})
+    assert finished.status_code==200,finished.text
+    attempt=client.post(url+'/exam-attempts',json={'date':'2025-01-01','minutes':30,'score':0})
+    assert attempt.status_code==200,attempt.text
+    stale=preview(client,first_url)
+    assert client.delete(unpair).json()=={**first,'exam_paper_id':None}
+    assert client.delete(unpair).status_code==200
+    assert remove(client,first_url,stale).status_code==409
+    assert client.post(url+'/pair-existing-solution',json={'solution_id':replacement['id']}).json()=={
+        **replacement,'exam_paper_id':paper['id'],
+    }
+    assert client.post('/api/resources/'+other['id']+'/pair-existing-solution',json={'solution_id':first['id']}).status_code==200
+    assert client.delete(unpair).status_code==409
+    assert preview(client,url)['blockers']
+    snapshot=client.get('/api/snapshot').json()
+    resources={entry['id']:entry for entry in snapshot['resources']}
+    assert resources[paper['id']]==attempt.json()
+    assert resources[first['id']]=={**first,'exam_paper_id':other['id']}
+    assert snapshot['sessions']==[finished.json()]
+    assert snapshot['items']==[task]

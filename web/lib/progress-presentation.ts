@@ -15,6 +15,11 @@ export function reachedMilestone(previous: number, next: number): boolean {
   return clampPercent(previous) < 100 && clampPercent(next) === 100 && next > 0;
 }
 
+export function checklistPercent(done: number, total: number): number {
+  if (total <= 0) return 0;
+  return done === total ? 100 : Math.min(99, Math.round(100 * done / total));
+}
+
 /** Count optimistic completions while UI1 temporarily displays their rows as unchecked. */
 export function visibleCourseDoneCount(
   projectedDone: number, activityCount: number, displayedTasks: readonly {id: string}[],

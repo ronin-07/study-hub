@@ -28,7 +28,7 @@ test('Focus statistics and recent sessions use adaptive display; target remains 
 test('Resources selects by immutable file ID and links only the selected document',()=>{
   assert.match(page,/setSelectedPdfId\(entry\.id\)/);
   assert.match(page,/setLinkCourse\(intended\?\.paperId\?intended\.courseId:suggestion\?\.course_id\|\|intended\?\.courseId\|\|'\'\)/);
-  assert.match(page,/selectedPdfId!==file\.id\|\|resourceLinks\.has\(file\.id\)\)return/);
+  assert.match(page,/selectedPdfId!==file\.id\|\|resourceLinks\.has\(file\.id\)\|\|unavailableLinkPaper\)return/);
   assert.match(page,/onClick=\{\(\)=>linkDriveFile\(selectedPdf\)\}/);
   assert.match(page,/Nothing is linked automatically/);
   assert.match(page,/resourceLinks\.has\(selectedPdf\.id\)/);

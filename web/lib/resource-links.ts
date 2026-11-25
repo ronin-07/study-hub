@@ -9,3 +9,9 @@ export function isExamResource(kind: Resource['kind']): boolean { return kind ==
 export function pairedSolutions(paper: Resource, resources: Resource[]): Resource[] {
   return resources.filter(r=>r.kind==='exam_solution' && r.course_id===paper.course_id && r.exam_paper_id===paper.id);
 }
+
+export function availableExamPapers(resources: Resource[], courseId: string, currentPaperId?: string | null): Resource[] {
+  const occupied = new Set(resources.map(resource => resource.exam_paper_id).filter(Boolean));
+  return resources.filter(paper => paper.kind === 'exam_paper' && paper.course_id === courseId
+    && (paper.id === currentPaperId || !occupied.has(paper.id)));
+}

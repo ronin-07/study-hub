@@ -35,11 +35,11 @@ import { FeedbackToasts, useFeedbackToasts, type FeedbackMessage } from '@/compo
 import { COMPLETION_HOLD_MS, COMPLETION_EXIT_MS, presentCompletingItems, type CompletionPhase } from '@/lib/task-completion-presentation';
 import { isActionable, isOverdue, todayPriorities, upcomingDeadlines, focusTasksForContext } from '@/lib/task-view';
 import { activityReference } from '@/lib/activity-display';
-import {activityResources,isExamResource} from '@/lib/resource-links';
+import {activityResources,availableExamPapers,isExamResource} from '@/lib/resource-links';
 import {BulkResourceLinker} from '@/components/bulk-resource-linker';
 import { todayStudyCourses, completedHomePriorities, nextSevenDays, nextDeadlineDays, agendaForDate } from '@/lib/home-view';
 import { firebaseAuth, onAuthStateChanged, signIn, signOutUser, useFirebase } from '@/lib/auth';
-import { type DriveEntry, type DriveList, type FocusSession, type Item,
+import { type DriveEntry, type DriveList, type FocusMode, type FocusSession, type Item,
   type Resource, type Snapshot, type Tab, type DriveIndexed, type DriveSource, type DriveIndexResponse, type DriveScanResponse, duration,
   formatDate, kindLabels, localToday } from '@/lib/types';
 
@@ -173,6 +173,8 @@ export default function Page() {
   const [focusCourse,setFocusCourse] = useState('');
   const [focusItem,setFocusItem] = useState('');
   const [focusMode,setFocusMode] = useState<'25'|'50'|'90'|'free'>('50');
+  const [practiceMode,setPracticeMode] = useState<FocusMode|null>(null);
+  const preparedFocusMode=practiceMode??focusMode;
   const [finishReview,setFinishReview] = useState(false);
   const [finishSeconds,setFinishSeconds] = useState('0');
   const [reviewLimit,setReviewLimit] = useState(0);
@@ -255,6 +257,7 @@ export default function Page() {
       completionTimersRef.current.clear();setCompletionPhases({});
       focusBusyRef.current=false;focusRevisionRef.current++;setFocusBusy(false);setFocusPreview(null);setFocusClock(null);
       setFinishReview(false);setQuickFocusOpen(false);
+      setPracticeMode(null);
       // A previous account's pending PDF must never appear after an auth switch.
       pdfRequestGateRef.current.cancel();pdfPendingFileRef.current=null;
       pdfCache.clear();resetDriveDiscovery();
@@ -698,8 +701,8 @@ export default function Page() {
       }
     }
   };
-  const startFocus=async(course:string,itemId:string,mode:'25'|'50'|'90'|'free')=>{
-    if(active||focusBusyRef.current||busy)return;
+  const startFocus=async(course:string,itemId:string,mode:FocusMode)=>{
+    if(active||focusBusyRef.current||busy||mutationBusyRef.current)return;
     const item=data.items.find(i=>i.id===itemId);
     const wallMs=Date.now();
     const monoMs=performance.now();
@@ -721,20 +724,34 @@ export default function Page() {
   };
   // Explicit course action starts the currently selected timer mode. Existing sessions are never replaced.
   const focusOnCourse=(id:string)=>{
-    setFocusCourse(id);setFocusItem('');setTab('focus');
+    setFocusCourse(id);setFocusItem('');setPracticeMode(null);setTab('focus');
     if(!active&&!busy&&!focusBusyRef.current)void startFocus(id,'',focusMode);
   };
   const startQuickFocus=async()=>{
     if(active){setQuickFocusOpen(false);return;}
+    setPracticeMode(null);
     setFocusCourse(quickFocusCourse);setFocusItem(quickFocusItem);setFocusMode(quickFocusMode);
     await startFocus(quickFocusCourse,quickFocusItem,quickFocusMode);
   };
   const startFrom=(i?:Item)=>{
     // Personal tasks have no course; the selector still needs to retain their item ID.
     setFocusCourse(i?.course_id||'');setFocusItem(i?.id||'');
+    setPracticeMode(null);
     setTab('focus');
   };
-  const beginFocus=()=>void startFocus(focusCourse,focusItem,focusMode);
+  const prepareExamPractice=async(paper:Resource,mode:FocusMode)=>{
+    if(active||focusBusyRef.current||mutationBusyRef.current)return false;
+    let task:Item|undefined;
+    const ready=await act(async()=>{
+      task=await api<Item>(`/api/resources/${paper.id}/practice-task`,user,{method:'POST'});
+      return task;
+    },{collection:'items'});
+    if(!ready||!task)return false;
+    startFrom(task);
+    setPracticeMode(mode);
+    return true;
+  };
+  const beginFocus=()=>void startFocus(focusCourse,focusItem,preparedFocusMode);
   const sessionAction=(verb:'pause'|'resume')=>{
     if(!active||focusBusyRef.current)return;
     const wallMs=Date.now();
@@ -968,8 +985,10 @@ export default function Page() {
   };
   const resourceLinks=useMemo(()=>driveLinksByFile(data.resources),[data.resources]);
   const driveIndex=useMemo(()=>indexedFiles.map(file=>({...file,links:resourceLinks.get(file.id)??[]})),[indexedFiles,resourceLinks]);
+  const linkPaperOptions=linkKind==='exam_solution'?availableExamPapers(data.resources,linkCourse):[];
+  const unavailableLinkPaper=linkKind==='exam_solution'&&Boolean(linkPaper)&&!linkPaperOptions.some(p=>p.id===linkPaper);
   const linkDriveFile=(file:DriveEntry)=>{
-    if(mutationBusyRef.current||selectedPdfId!==file.id||resourceLinks.has(file.id))return;
+    if(mutationBusyRef.current||selectedPdfId!==file.id||resourceLinks.has(file.id)||unavailableLinkPaper)return;
     const generation=driveGeneration.current;
     setLinkingFileId(file.id);
     void act(async()=>{
@@ -1179,7 +1198,8 @@ export default function Page() {
 
           {tab==='courses'&&<CoursePlanner data={data.items===presentedItems?data:{...data,items:presentedItems}} progressItems={data.items} user={user} busy={busy} pendingItems={pendingItems} completingIds={completingIds} exitingIds={exitingIds}
             courseId={courseId} weekNumber={weekNumber} landingItem={courseLandingItem} sectionJump={courseSectionJump} selectCourse={rememberCourse} selectWeek={rememberWeek}
-            run={act} toggleItem={toggle} focusOn={startFrom}
+            run={act} toggleItem={toggle} focusOn={startFrom} preparePractice={prepareExamPractice}
+            activeFocus={!!active} focusBusy={focusBusy} openFocus={()=>setTab('focus')}
             openResource={r=>{if(r.source==='drive'&&r.drive_file_id)previewPdf(r.drive_file_id,r.title,r.id,r.last_page);else if(r.url)window.open(r.url,'_blank','noopener,noreferrer');}}
             openDrive={(id,week,kind,scope,paperId)=>{linkIntentRef.current={courseId:id,week,kind,scope,paperId};setSelectedPdfId(null);setLinkCourse(id);setLinkWeek(week);setLinkScope(scope);setLinkKind(kind);setLinkItem('');setLinkPaper(paperId||'');clearBulk();setTab('library');}}
           />}
@@ -1196,16 +1216,19 @@ export default function Page() {
             <div className="page-heading"><div><span className="eyebrow"><Target size={13}/> DEEP WORK</span><h1>Find your flow.</h1><p>Settle into a distraction-free session. Every minute counts.</p></div></div>
             <div className="focus-layout"><Card className="focus-card">
               {!active&&<div className="focus-settings">
-                <FormRow label="Course (optional)"><select value={focusCourse} onChange={e=>{setFocusCourse(e.target.value);setFocusItem('');}}><option value="">General / personal</option>{data.courses.filter(c=>!c.archived).map(c=><option key={c.id} value={c.id}>{c.code} · {c.title}</option>)}</select></FormRow>
-                <FormRow label="Focus task (optional)"><select value={focusItem} onChange={e=>setFocusItem(e.target.value)}><option value="">No linked task</option>{focusTasksForContext(data.items,focusCourse).map(i=><option key={i.id} value={i.id}>{i.title}</option>)}</select></FormRow>
+                <FormRow label="Course (optional)"><select value={focusCourse} onChange={e=>{setFocusCourse(e.target.value);setFocusItem('');setPracticeMode(null);}}><option value="">General / personal</option>{data.courses.filter(c=>!c.archived).map(c=><option key={c.id} value={c.id}>{c.code} · {c.title}</option>)}</select></FormRow>
+                <FormRow label="Focus task (optional)"><select value={focusItem} onChange={e=>{setFocusItem(e.target.value);setPracticeMode(null);}}><option value="">No linked task</option>{focusTasksForContext(data.items,focusCourse).map(i=><option key={i.id} value={i.id}>{i.title}</option>)}</select></FormRow>
               </div>}
               {active&&<div className="focus-context">
                 <Badge tone={active.status==='paused'?'warning':'good'}>{active.status==='paused'?'Paused':'Focusing'}</Badge>
                 <strong>{data.items.find(i=>i.id===active.item_id)?.title||data.courses.find(c=>c.id===active.course_id)?.title||'General focus'}</strong>
               </div>}
               {active?<div className="focus-target-summary">{active.mode==='free'?'Stopwatch session':`${active.mode}-minute target`}</div>
-                :<div className="focus-modes">{(['25','50','90','free'] as const).map(m=><button key={m} className={focusMode===m?'current':''} onClick={()=>setFocusMode(m)}>{m==='free'?'Stopwatch':`${m} min`}</button>)}</div>}
-              {active?<FocusDial session={active} anchor={focusClock}/>:<div className="timer-dial"><span className="dial-label">{focusMode==='free'?'STOPWATCH':'FOCUS TARGET'}</span><strong>{focusMode==='free'?'00:00:00':duration(Number(focusMode)*60)}</strong><span className="dial-sub">Ready when you are</span></div>}
+                :<div className="focus-modes">
+                  {practiceMode&&<div className="focus-target-summary">Exam practice · {practiceMode==='free'?'Stopwatch':`${practiceMode} min`}</div>}
+                  {(['25','50','90','free'] as const).map(m=><button key={m} className={preparedFocusMode===m?'current':''} aria-pressed={preparedFocusMode===m} onClick={()=>{setFocusMode(m);setPracticeMode(practiceMode?m:null);}}>{m==='free'?'Stopwatch':`${m} min`}</button>)}
+                </div>}
+              {active?<FocusDial session={active} anchor={focusClock}/>:<div className="timer-dial"><span className="dial-label">{preparedFocusMode==='free'?'STOPWATCH':'FOCUS TARGET'}</span><strong>{preparedFocusMode==='free'?'00:00:00':duration(Number(preparedFocusMode)*60)}</strong><span className="dial-sub">Ready when you are</span></div>}
               {active?<div className="focus-buttons"><button className="btn secondary" onClick={()=>sessionAction(active.status==='running'?'pause':'resume')} disabled={focusBusy}>{active.status==='running'?<Pause size={17}/>:<Play size={17}/>} {active.status==='running'?'Pause':'Resume'}</button><button className="btn primary" disabled={focusBusy} onClick={reviewFinish}><Square size={15}/> Finish & review</button></div>
                 :<button className="btn primary focus-start" disabled={busy||focusBusy} onClick={beginFocus}><Play size={18}/> Start focusing</button>}
               <p className="focus-tip">{active?.status==='paused'?'Paused time is excluded from your focus total.':active?'Keep this session open or return when you are ready to review it.':'Timed sessions end manually. Pause or review a session whenever you need.'}</p>
@@ -1297,8 +1320,8 @@ export default function Page() {
                     {linkScope==='week'&&!isExamResource(linkKind)&&<FormRow label="Week"><select value={linkWeek} onChange={e=>{setLinkWeek(Number(e.target.value));setLinkItem('');}}>{Array.from({length:data.courses.find(c=>c.id===linkCourse)?.week_count||13},(_,n)=><option key={n+1} value={n+1}>Week {n+1}</option>)}</select></FormRow>}
                     <FormRow label="Material type"><select value={linkKind} onChange={e=>{setLinkKind(e.target.value as Resource['kind']);setLinkPaper('');}}>{(['handwritten','annotated','slides','textbook','exam_paper','exam_solution','other'] as const).map(k=><option key={k} value={k}>{k==='handwritten'?'Handwritten notes':k==='annotated'?'Annotated slides':k==='slides'?'Original slides':k==='textbook'?'Textbook':k==='exam_paper'?'Previous exam paper':k==='exam_solution'?'Exam solution':'Other'}</option>)}</select></FormRow>
                     {linkScope==='week'&&!isExamResource(linkKind)&&<FormRow label="Attach to study item (optional)"><select value={linkItem} onChange={e=>setLinkItem(e.target.value)}><option value="">Entire week</option>{data.items.filter(i=>i.course_id===linkCourse&&i.week_number===linkWeek).map(i=><option key={i.id} value={i.id}>{i.title}</option>)}</select></FormRow>}
-                    {linkKind==='exam_solution'&&<FormRow label="Corresponding question paper"><select value={linkPaper} onChange={e=>setLinkPaper(e.target.value)}><option value="">Link question paper later</option>{data.resources.filter(r=>r.kind==='exam_paper'&&r.course_id===linkCourse).map(r=><option key={r.id} value={r.id}>{r.title}</option>)}</select></FormRow>}
-                    <button className="btn primary full" disabled={!linkCourse||busy||!!linkingFileId} aria-busy={linkingFileId===selectedPdf.id} onClick={()=>linkDriveFile(selectedPdf)}>{linkingFileId===selectedPdf.id?<LoaderCircle size={16} className="spin"/>:<Link2 size={16}/>} {linkingFileId===selectedPdf.id?'Linking…':'Confirm link'}</button>
+                    {linkKind==='exam_solution'&&<FormRow label="Corresponding question paper"><select value={linkPaper} onChange={e=>setLinkPaper(e.target.value)}><option value="">Link question paper later</option>{unavailableLinkPaper&&<option value={linkPaper} disabled>Selected paper unavailable</option>}{linkPaperOptions.map(r=><option key={r.id} value={r.id}>{r.title}</option>)}</select></FormRow>}
+                    <button className="btn primary full" disabled={!linkCourse||busy||!!linkingFileId||unavailableLinkPaper} aria-busy={linkingFileId===selectedPdf.id} onClick={()=>linkDriveFile(selectedPdf)}>{linkingFileId===selectedPdf.id?<LoaderCircle size={16} className="spin"/>:<Link2 size={16}/>} {linkingFileId===selectedPdf.id?'Linking…':'Confirm link'}</button>
                     <p className="resources-link-help">Only the selected PDF will be linked. Nothing is linked automatically.</p>
                   </>}
                 </>}
