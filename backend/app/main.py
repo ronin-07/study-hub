@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import hashlib
 import json
+import re
 import time
 import asyncio
 import logging
@@ -447,6 +448,24 @@ def detach_resource(identifier: str, value: ResourceDetach, user: User = Depends
     return app_store.workspace_atomic(user.uid, operation)
 
 
+def exam_paper_display_name(paper: dict[str, Any]) -> str:
+    if paper.get('exam_display_name'):
+        return paper['exam_display_name']
+
+    # Match the filename-derived labels in web/lib/exam-prep.ts.
+    title = paper['title']
+    season = r'(?P<season>fall|autumn|spring|summer|winter)'
+    year = r'(?P<year>19\d{2}|20\d{2}|2100)'
+    flags = re.IGNORECASE | re.ASCII
+    match = re.search(season + r'[ _.-]*' + year + r'(?!\d)', title, flags)
+    if not match:
+        match = re.search(year + r'[ _.-]*' + season, title, flags)
+    if match:
+        season_name = match['season'].capitalize()
+        return f"{'Autumn' if season_name == 'Fall' else season_name} {match['year']}"
+    return re.sub(r'\.pdf$', '', title, flags=flags)
+
+
 @app.post('/api/resources/{identifier}/practice-task', response_model=Item)
 def paper_practice_task(identifier: str, user: User = Depends(current_user)):
     def operation(tx):
@@ -463,7 +482,7 @@ def paper_practice_task(identifier: str, user: User = Depends(current_user)):
                          and i.get('kind') == 'revision'), None)
         if existing:
             return Item.model_validate(existing)
-        value = Item(title=('Practise ' + paper['title'])[:240], kind='revision', course_id=paper['course_id'],
+        value = Item(title=('Practise ' + exam_paper_display_name(paper))[:240], kind='revision', course_id=paper['course_id'],
                      resource_id=identifier, is_task=True)
         tx.create('items', value.model_dump(mode='json'))
         return value

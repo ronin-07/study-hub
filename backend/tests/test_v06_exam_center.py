@@ -72,6 +72,30 @@ def test_wrong_resource_and_weekly_paper(client):
     assert client.post('/api/resources',json={'title':'Weekly paper','course_id':course['id'],'kind':'exam_paper','source':'drive','drive_file_id':'paper456','week_number':2}).status_code==201
 
 
+def test_practice_task_uses_exam_display_name_and_keeps_its_existing_title(client):
+    course, paper = setup(client)
+    url = f"/api/resources/{paper['id']}"
+    assert client.patch(url+'/exam-details', json={'display_name':'Final mock', 'year':None}).status_code == 200
+    task = client.post(url+'/practice-task').json()
+    assert task['title'] == 'Practise Final mock'
+    assert client.patch(url+'/exam-details', json={'display_name':'New mock label', 'year':None}).status_code == 200
+    assert client.post(url+'/practice-task').json() == task
+
+    for index, (title, display_name) in enumerate([
+        ('02450ex_Spring2017.pdf', 'Spring 2017'),
+        ('02450_2017-Fall_corrected.PDF', 'Autumn 2017'),
+        ('Undated mock.PDF', 'Undated mock'),
+    ]):
+        response = client.post('/api/resources', json={
+            'title':title, 'course_id':course['id'], 'kind':'exam_paper',
+            'source':'drive', 'drive_file_id':f'paper-{index}',
+        })
+        assert response.status_code == 201, response.text
+        task_response = client.post(f"/api/resources/{response.json()['id']}/practice-task")
+        assert task_response.status_code == 200, task_response.text
+        assert task_response.json()['title'] == f'Practise {display_name}'
+
+
 def test_custom_practice_countdown_and_stopwatch_keep_the_existing_focus_guard(client,monkeypatch):
     from app import main
     course,paper=setup(client)

@@ -1,8 +1,8 @@
 'use client';
 
-import {useEffect,useRef,useState,type FormEvent} from 'react';
+import {useEffect,useId,useRef,useState,type CSSProperties,type FormEvent} from 'react';
 import type {User} from 'firebase/auth';
-import {Cloud,FileText,History,LoaderCircle,Pencil,Plus,Timer,Trash2,Unlink,X} from 'lucide-react';
+import {ChevronLeft,ChevronRight,Cloud,FileText,History,ListFilter,LoaderCircle,Pencil,Plus,Timer,Trash2,Unlink,X} from 'lucide-react';
 import {Card,FormRow,SectionTitle} from '@/components/common';
 import {ProgressTrack,ProgressValue} from '@/components/progress-motion';
 import {WorkspaceActionsMenu} from '@/components/task-actions-menu';
@@ -12,13 +12,15 @@ import type {MutationHint} from '@/lib/snapshot-cache';
 import {type Course,type Resource,type ExamAttempt,type FocusMode,formatDate,localToday} from '@/lib/types';
 import {checklistPercent} from '@/lib/progress-presentation';
 import {
-  attemptSummary,examCountdown,examName,examYear,examSortOptions,filterExamPapers,
-  practiceFocusMode,sortExamPapers,suggestedSolutions,type ExamSort,type ExamAttemptFilter,
+  attemptSummary,examCountdown,examName,examPaperPage,examPageSizes,examYear,examSortOptions,filterExamPapers,
+  practiceFocusMode,sortExamPapers,suggestedSolutions,type ExamSort,type ExamAttemptFilter,type ExamPageSize,
 } from '@/lib/exam-prep';
 import {pairedSolutions} from '@/lib/resource-links';
 
-export function ExamHero({course,courseDone,courseTotal,revisionDone,revisionTotal,onEdit}:{
-  course:Course;courseDone:number;courseTotal:number;revisionDone:number;revisionTotal:number;onEdit?:()=>void;
+const timeLabel=(minutes:number)=>`${Math.floor(minutes/60)}h ${minutes%60}m`;
+
+export function ExamHero({course,courseDone,courseTotal,revisionDone,revisionTotal,focusSeconds,onEdit}:{
+  course:Course;courseDone:number;courseTotal:number;revisionDone:number;revisionTotal:number;focusSeconds:number;onEdit?:()=>void;
 }) {
   const countdown=course.exam_date?examCountdown(course.exam_date,localToday()):null;
   const headline=countdown===null?'Exam date not set':countdown==='Today'?'Exam today':countdown==='Exam passed'?'Exam date passed':`${countdown.slice(0,-1)} ${countdown==='1d'?'day':'days'} to go`;
@@ -41,7 +43,13 @@ export function ExamHero({course,courseDone,courseTotal,revisionDone,revisionTot
         <ProgressTrack identity={`${course.id}-${p.scope}`} label={`${p.label} completion`} value={percent} completionMessage={p.complete}/>
         <small>{p.total?`${p.done} of ${p.total} completed`:p.empty}</small>
       </div>;
-    })}</div>
+    })}
+      <div className="exam-progress-panel exam-focus-panel">
+        <span>Exam Focus</span>
+        <strong>{timeLabel(Math.floor(focusSeconds/60))}</strong>
+        <small>This week</small>
+      </div>
+    </div>
   </div>;
 }
 
@@ -54,7 +62,6 @@ type Props={
 };
 type DialogMode='attempts'|'rename'|'pair'|'practice';
 const blank=()=>({id:'',date:localToday(),minutes:'',score:'',notes:''});
-const timeLabel=(m:number)=>`${Math.floor(m/60)}h ${m%60}m`;
 
 export function ExamPapers({papers,solutions,editResource,removeResource,addSolution,user,busy,readOnly,run,
   openResource,browseDrive,practice,examDuration,activeFocus,focusBusy,openFocus}:Props) {
@@ -64,6 +71,9 @@ export function ExamPapers({papers,solutions,editResource,removeResource,addSolu
   const [query,setQuery]=useState('');
   const [attemptFilter,setAttemptFilter]=useState<ExamAttemptFilter>('all');
   const [missingSolution,setMissingSolution]=useState(false);
+  const [filtersOpen,setFiltersOpen]=useState(false);
+  const [pageSize,setPageSize]=useState<ExamPageSize>('6');
+  const [requestedPage,setRequestedPage]=useState(1);
   const [mode,setMode]=useState<DialogMode>('attempts');
   const [name,setName]=useState('');
   const [year,setYear]=useState('');
@@ -73,6 +83,10 @@ export function ExamPapers({papers,solutions,editResource,removeResource,addSolu
   const [issue,setIssue]=useState('');
   const [draft,setDraft]=useState(blank);
   const dialogRef=useRef<HTMLDialogElement>(null);
+  const filterButton=useRef<HTMLButtonElement>(null);
+  const resultsStatus=useRef<HTMLParagraphElement>(null);
+  const filtersId=useId();
+  const resultsId=useId();
   const paper=papers.find(p=>p.id===paperId);
   const linked=paper?pairedSolutions(paper,solutions):[];
   const pairedIds=new Set(solutions.flatMap(s=>s.exam_paper_id?[s.exam_paper_id]:[]));
@@ -84,6 +98,8 @@ export function ExamPapers({papers,solutions,editResource,removeResource,addSolu
       const saved=localStorage.getItem('studyhub.exam-sort');
       const option=examSortOptions.find(o=>o.value===saved);
       if(option)setSort(option.value);
+      const savedSize=examPageSizes.find(size=>size===localStorage.getItem('studyhub.exam-page-size'));
+      if(savedSize)setPageSize(savedSize);
     } catch {}
   },[]);
   useEffect(()=>{
@@ -94,7 +110,13 @@ export function ExamPapers({papers,solutions,editResource,removeResource,addSolu
 
   const changeSort=(value:ExamSort)=>{
     setSort(value);
+    setRequestedPage(1);
     try {localStorage.setItem('studyhub.exam-sort',value);} catch {}
+  };
+  const changePageSize=(value:ExamPageSize)=>{
+    setPageSize(value);
+    setRequestedPage(1);
+    try {localStorage.setItem('studyhub.exam-page-size',value);} catch {}
   };
   const close=()=>{dialogRef.current?.close();setPaperId('');setEntry(false);setIssue('');};
   const open=(r:Resource,next:DialogMode='attempts')=>{
@@ -151,6 +173,29 @@ export function ExamPapers({papers,solutions,editResource,removeResource,addSolu
   const summary=attemptSummary(paper?.exam_attempts||[]);
   const unpaired=solutions.filter(s=>!papers.some(p=>p.id===s.exam_paper_id));
   const visible=sortExamPapers(filterExamPapers(papers,query,attemptFilter,missingSolution,pairedIds),sort);
+  const page=examPaperPage(visible,requestedPage,pageSize);
+  useEffect(()=>{
+    setRequestedPage(current=>Math.min(current,page.pageCount));
+  },[page.pageCount]);
+  const changePage=(next:number)=>{
+    if(next<1||next>page.pageCount)return;
+    setRequestedPage(next);
+    const status=resultsStatus.current;
+    if(status&&status.getBoundingClientRect().top<0){
+      status.focus({preventScroll:true});
+      status.scrollIntoView({block:'center'});
+    }
+  };
+  const activeFilters=Number(attemptFilter!=='all')+Number(missingSolution);
+  // Reserve the unfiltered page, with a six-paper floor for the unbounded All view.
+  const reservedCards=Math.min(papers.length,Number(pageSize==='all'?'6':pageSize));
+  const resultsStyle={
+    '--exam-rows-one':reservedCards,
+    '--exam-rows-two':Math.ceil(reservedCards/2),
+    '--exam-rows-three':Math.ceil(reservedCards/3),
+  } as CSSProperties;
+  const showNavigation=pageSize!=='all'&&papers.length>Number(pageSize);
+  const resultRange=page.first===page.last ? String(page.first) : `${page.first}–${page.last}`;
   const openDocument=(r:Resource,label:string,fromDialog=false)=>(
     <button key={r.id} className="btn secondary small exam-document-open" title={r.title}
       aria-label={label===r.title?r.title:`${label}: ${r.title}`} onClick={()=>{if(fromDialog)close();openResource(r);}}>
@@ -167,22 +212,39 @@ export function ExamPapers({papers,solutions,editResource,removeResource,addSolu
       <p className="planner-study-hint">{papers.length} {papers.length===1?'paper':'papers'} · {solutions.length-unpaired.length} paired {solutions.length-unpaired.length===1?'solution':'solutions'}</p>
       {papers.length>0&&<>
         <div className="exam-papers-toolbar">
-          <FormRow label="Search exams"><input type="search" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Name, year or filename"/></FormRow>
+          <FormRow label="Search exams"><input type="search" value={query} onChange={e=>{setQuery(e.target.value);setRequestedPage(1);}} placeholder="Name, year or filename"/></FormRow>
           <FormRow label="Sort papers"><select value={sort} onChange={e=>changeSort(e.target.value as ExamSort)}>{examSortOptions.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}</select></FormRow>
-          <FormRow label="Attempts"><select value={attemptFilter} onChange={e=>setAttemptFilter(e.target.value as ExamAttemptFilter)}>
-            <option value="all">All papers</option><option value="unattempted">Not attempted</option><option value="attempted">Attempted</option>
-          </select></FormRow>
-          <label className="inline-check exam-missing-filter"><input type="checkbox" checked={missingSolution} onChange={e=>setMissingSolution(e.target.checked)}/> Missing solution only</label>
+          <div className="exam-filter-control"
+            onBlur={e=>{if(!e.currentTarget.contains(e.relatedTarget))setFiltersOpen(false);}}
+            onKeyDown={e=>{
+              if(e.key==='Escape'&&filtersOpen){e.preventDefault();setFiltersOpen(false);filterButton.current?.focus();}
+            }}>
+            <button type="button" className="btn secondary small exam-filters-button" ref={filterButton}
+              aria-expanded={filtersOpen} aria-controls={filtersId}
+              onClick={e=>{e.currentTarget.focus();setFiltersOpen(open=>!open);}}>
+              <ListFilter size={16} aria-hidden="true"/> Filters{activeFilters>0&&` (${activeFilters})`}
+            </button>
+            <div className="exam-filter-panel" id={filtersId} hidden={!filtersOpen}>
+              <FormRow label="Attempts"><select value={attemptFilter} onChange={e=>{setAttemptFilter(e.target.value as ExamAttemptFilter);setRequestedPage(1);}}>
+                <option value="all">All papers</option><option value="unattempted">Not attempted</option><option value="attempted">Attempted</option>
+              </select></FormRow>
+              <label className="inline-check exam-missing-filter"><input type="checkbox" className="task-completion-check" checked={missingSolution}
+                onChange={e=>{setMissingSolution(e.target.checked);setRequestedPage(1);}}/> Missing solution only</label>
+            </div>
+          </div>
         </div>
-        <p className="planner-study-hint exam-results" role="status">Showing {visible.length} of {papers.length} {papers.length===1?'paper':'papers'}</p>
-        {visible.length===0&&<p className="planner-study-hint">No papers match your search and filters.</p>}
-        {visible.length>0&&<div className="exam-papers-grid">{visible.map(p=>{
+        <p className="planner-study-hint exam-results" role="status" ref={resultsStatus} tabIndex={-1}>
+          {visible.length>0
+            ? `Showing ${resultRange} of ${visible.length} ${visible.length===1?'paper':'papers'}`
+            : 'No papers match your search and filters.'}
+        </p>
+        <div className="exam-papers-grid" id={resultsId} style={resultsStyle}>{page.papers.map(p=>{
           const stats=attemptSummary(p.exam_attempts||[]);
           const paired=pairedSolutions(p,solutions);
           const solutionLabel=(index:number)=>paired.length>1?`solution ${index+1}`:'solution';
           return <article className="exam-paper-group" key={p.id}>
             <div className="exam-pair-heading">
-              <div><h4 title={p.title}>{examName(p)}</h4><small>{stats.count?`${stats.count} ${stats.count===1?'attempt':'attempts'}`:'Not attempted'}{stats.best===null?'':` · Best ${stats.best}%`}</small></div>
+              <div><h4 title={examName(p)}>{examName(p)}</h4><small>{stats.count?`${stats.count} ${stats.count===1?'attempt':'attempts'}`:'Not attempted'}{stats.best===null?'':` · Best ${stats.best}%`}</small></div>
               {!readOnly&&<WorkspaceActionsMenu className="exam-action-menu" title={examName(p)} busy={busy} actions={[
                 {label:'Rename exam',icon:Pencil,run:()=>open(p,'rename')},
                 editDocument(p,'question paper'),
@@ -203,7 +265,21 @@ export function ExamPapers({papers,solutions,editResource,removeResource,addSolu
               {!readOnly&&p.week_number==null&&<button className="btn primary small" aria-label={`Practise ${examName(p)}`} disabled={busy} onClick={()=>open(p,'practice')}><Timer size={15} aria-hidden="true"/> Practice</button>}
             </div>
           </article>;
-        })}</div>}
+        })}</div>
+        <div className="exam-pagination">
+          {showNavigation&&<nav aria-label="Exam paper pages">
+            <button type="button" className="btn secondary small" aria-label="Previous page" aria-controls={resultsId}
+              aria-disabled={page.page===1} onClick={()=>changePage(page.page-1)}><ChevronLeft size={18} aria-hidden="true"/></button>
+            <span>Page {page.page} of {page.pageCount}</span>
+            <button type="button" className="btn secondary small" aria-label="Next page" aria-controls={resultsId}
+              aria-disabled={page.page===page.pageCount} onClick={()=>changePage(page.page+1)}><ChevronRight size={18} aria-hidden="true"/></button>
+          </nav>}
+          <FormRow label="Papers per page">
+            <select value={pageSize} onChange={e=>changePageSize(e.target.value as ExamPageSize)}>
+              {examPageSizes.map(size=><option key={size} value={size}>{size==='all'?'All':size}</option>)}
+            </select>
+          </FormRow>
+        </div>
       </>}
       {!papers.length&&<p className="planner-study-hint">Link past papers and solutions through Drive to start practising.</p>}
     </Card>

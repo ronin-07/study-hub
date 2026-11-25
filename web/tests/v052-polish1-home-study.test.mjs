@@ -30,7 +30,7 @@ test('Study header is contextual and the weekly checklist hides duplicated check
 });
 test('Study Tasks has correct current-week and exam filters without duplicating activities',()=>{
   assert.match(study,/courseTaskFilter==='week'\?i\.week_number===weekNumber:i\.week_number===null/);
-  assert.match(study,/filteredCourseTasks\.map\(renderCourseTask\)/);
+  assert.match(study,/filteredCourseTasks\.map\(item=>renderCourseTask\(item\)\)/);
   assert.match(study,/All':filter==='week'\?'This week':'Exam prep'/);
   assert.match(study,/activityReference\(i\)/);
   assert.match(menu,/Remove from Tasks/);
@@ -38,7 +38,7 @@ test('Study Tasks has correct current-week and exam filters without duplicating 
   assert.match(study,/toggleItem\(i\)/);
 });
 test('Exam Prep keeps one shared row style and uses on-demand creation with progress',()=>{
-  assert.match(study,/examItems\.map\(renderCourseTask\)/);
+  assert.match(study,/examItems\.map\(item=>renderCourseTask\(item,true\)\)/);
   assert.match(study,/planner-exam-progress/);
   assert.match(study,/examEntryOpen\?<form/);
   assert.match(study,/Add revision task/);

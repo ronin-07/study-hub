@@ -65,6 +65,23 @@ export function filterExamPapers(papers: Resource[], query: string, attempts: Ex
   });
 }
 
+export const examPageSizes = ['6', '12', 'all'] as const;
+export type ExamPageSize = (typeof examPageSizes)[number];
+
+export function examPaperPage(papers: Resource[], requestedPage: number, pageSize: ExamPageSize) {
+  const limit = pageSize === 'all' ? Math.max(1, papers.length) : Number(pageSize);
+  const pageCount = Math.max(1, Math.ceil(papers.length / limit));
+  const page = Math.max(1, Math.min(requestedPage, pageCount));
+  const offset = (page - 1) * limit;
+  return {
+    page,
+    pageCount,
+    papers: papers.slice(offset, offset + limit),
+    first: papers.length ? offset + 1 : 0,
+    last: Math.min(offset + limit, papers.length),
+  };
+}
+
 export function practiceFocusMode(timer: 'countdown' | 'stopwatch', minutes: string): FocusMode | null {
   if (timer === 'stopwatch') return 'free';
   const value = Number(minutes);

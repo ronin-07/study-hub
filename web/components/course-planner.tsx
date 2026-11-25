@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react';
 import type { User } from 'firebase/auth';
 import {
   Archive, ArrowRight, BookMarked, BookOpen, CalendarDays, CheckCircle2,
@@ -112,6 +112,16 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
   const [weekDraft, setWeekDraft] = useState({ title: '', objectives: '' });
   const [examTitle, setExamTitle] = useState('');
   const [examEntryOpen, setExamEntryOpen] = useState(false);
+  const [revisionCollapsed, setRevisionCollapsed] = useState(false);
+  const revisionContentId = useId();
+  useEffect(()=>{
+    try {setRevisionCollapsed(localStorage.getItem('studyhub.exam-revision-collapsed')==='true');} catch {}
+  },[]);
+  const toggleRevision=()=>{
+    const collapsed=!revisionCollapsed;
+    setRevisionCollapsed(collapsed);
+    try {localStorage.setItem('studyhub.exam-revision-collapsed',String(collapsed));} catch {}
+  };
   const [courseTaskFilter, setCourseTaskFilter] = useState<'all'|'week'|'exam'>('all');
   const [initialCourseDraft, setInitialCourseDraft] = useState<CourseDraft>(courseDraftDefaults);
   const [initialSemesterDraft, setInitialSemesterDraft] = useState({ id: '', name: '', start_date: '', end_date: '' });
@@ -382,14 +392,18 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
     {!isReadOnly&&<button type="button" className="icon-btn danger-hover" title="Remove resource" disabled={busy||pendingItems.size>0} onClick={()=>void removeResource(r)}><X size={15}/></button>}
   </div>;
 
-  const renderCourseTask = (i: Item) => {
+  const renderCourseTask = (i: Item, inRevisionChecklist=false) => {
     const reference = activityReference(i);
-    const context = i.week_number!==null ? `Week ${i.week_number}` : 'Exam prep';
+    const metadata = [
+      inRevisionChecklist ? '' : i.week_number!==null ? `Week ${i.week_number}` : 'Exam prep',
+      i.planned_date ? `Planned ${shortStudyDate(i.planned_date)}` : '',
+      i.due_date ? `Due ${shortStudyDate(i.due_date)}` : '',
+    ].filter(Boolean).join(' · ');
     return <div className={'planner-task-row planner-course-task-row task-completion-row'+(i.done?' is-done':'')+(landingItem?.id===i.id?' planner-target-item':'')+(completingIds.has(i.id)?' is-completing':'')} ref={landingItem?.id===i.id?landingRef:undefined} key={i.id}>
       <input type="checkbox" className="task-completion-check" aria-label={`Complete ${i.title}`} disabled={isReadOnly||busy||pendingItems.has(i.id)||completingIds.has(i.id)} checked={i.done||completingIds.has(i.id)} onChange={()=>toggleItem(i)}/>
       <div className="planner-course-task-info"><strong className={i.done?'complete':''}>{i.title}</strong>
         {reference&&<span className="planner-course-task-reference">{reference}</span>}
-        <small>{context}{i.planned_date?` · Planned ${shortStudyDate(i.planned_date)}`:''}{i.due_date?` · Due ${shortStudyDate(i.due_date)}`:''}</small>
+        {metadata&&<small>{metadata}</small>}
       </div>
       {!isReadOnly&&<div className="planner-course-task-actions">
         <button type="button" className="icon-btn" disabled={busy} onClick={()=>focusOn(i)} aria-label={`Start focus for ${i.title}`} title="Start focus"><Timer size={16}/></button>
@@ -474,7 +488,7 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
               </>}
             </div>
           </div>
-          {workspaceTab==='exam'?<ExamHero course={selected} courseDone={courseDoneCount} courseTotal={progressCourseItems.length} revisionDone={examDoneCount} revisionTotal={examProgressItems.length} onEdit={isReadOnly?undefined:()=>openCourseForm(selected)}/>:<><div className="planner-hero planner-study-hero">
+          {workspaceTab==='exam'?<ExamHero course={selected} courseDone={courseDoneCount} courseTotal={progressCourseItems.length} revisionDone={examDoneCount} revisionTotal={examProgressItems.length} focusSeconds={examFocusSeconds} onEdit={isReadOnly?undefined:()=>openCourseForm(selected)}/>:<><div className="planner-hero planner-study-hero">
             <div><span>WEEK {weekNumber} · CONTINUE LEARNING</span><h3>{week?.title||`Continue with Week ${weekNumber}`}</h3>{week?.objectives&&<p>{week.objectives}</p>}</div>
             <div className="planner-hero-progress"><span className="planner-progress-scope">Course progress</span>{progressCourseItems.length?<><strong><ProgressValue key={selectedId} value={courseCompletion}/></strong><small>{courseDoneCount}/{progressCourseItems.length} course activities</small><ProgressTrack key={selectedId} identity={selectedId} value={courseCompletion} label="Course completion"/></>:<small className="planner-no-learning-activities">No learning activities yet</small>}</div>
           </div>
@@ -553,16 +567,26 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
           {workspaceTab==='tasks'&&<Card className="planner-course-tasks-card"><SectionTitle title="Course study tasks" aside={!isReadOnly&&<button className="btn primary small" onClick={()=>{openActivityForm();setItemDraft({...itemDraftDefaults,kind:'assignment',is_task:true});}}><Plus size={14}/> Add task</button>}/>
             <p className="planner-course-task-summary">{actionableCourseItems.length} {actionableCourseItems.length===1?'task':'tasks'} · {actionableCourseItems.filter(i=>i.done).length} completed</p>
             <div className="planner-course-task-filters" role="group" aria-label="Filter course study tasks">{(['all','week','exam'] as const).map(filter=><button key={filter} type="button" className={courseTaskFilter===filter?'active':''} aria-pressed={courseTaskFilter===filter} onClick={()=>setCourseTaskFilter(filter)}>{filter==='all'?'All':filter==='week'?'This week':'Exam prep'}</button>)}</div>
-            <div className="planner-course-task-list">{filteredCourseTasks.map(renderCourseTask)}</div>
+            <div className="planner-course-task-list">{filteredCourseTasks.map(item=>renderCourseTask(item))}</div>
             {!filteredCourseTasks.length&&<EmptyState icon={<CalendarDays size={24}/>} title={actionableCourseItems.length?'Nothing in this filter':'No scheduled work'} detail={actionableCourseItems.length?'Choose All to see the other course tasks.':'Add assignments or schedule a revision activity.'}/>}
           </Card>}
-          {workspaceTab==='exam'&&<div className="planner-exam-grid"><Card className="planner-exam-card"><SectionTitle title="Revision checklist" aside={<Badge>{examDoneCount}/{examProgressItems.length} completed</Badge>}/>
-
-            {examItems.length>0&&<ProgressTrack className="planner-exam-progress" identity={`${selectedId}-exam`} label="Exam revision completion" value={checklistPercent(examDoneCount,examProgressItems.length)}/>}
-            <div className="planner-course-task-list">{examItems.map(renderCourseTask)}</div>
-            {!examItems.length&&<EmptyState icon={<BookMarked size={23}/>} title="Exam preparation starts here" detail="Add topics and course-wide revision tasks."/>}
-            {!isReadOnly&&(examEntryOpen?<form className="exam-task-form" onSubmit={e=>void saveExam(e)}><input aria-label="Exam preparation task" autoFocus placeholder="Practise old exam papers" value={examTitle} onChange={e=>setExamTitle(e.target.value)} required/><button className="btn primary small" disabled={busy||!examTitle.trim()} aria-busy={busy}>{busy?<><LoaderCircle size={14} className="spin"/> Saving…</>:'Add task'}</button><button type="button" className="btn secondary small" disabled={busy} onClick={()=>{setExamEntryOpen(false);setExamTitle('');}}>Cancel</button></form>:<button type="button" className="btn secondary planner-exam-add" onClick={()=>setExamEntryOpen(true)}><Plus size={16}/> Add revision task</button>)}
-          </Card>
+          {workspaceTab==='exam'&&<div className="planner-exam-grid">
+            <Card className="planner-exam-card">
+              <h3 className="exam-checklist-heading">
+                <button type="button" className="exam-checklist-toggle" aria-expanded={!revisionCollapsed}
+                  aria-controls={revisionContentId} onClick={toggleRevision}>
+                  <span>Revision checklist</span>
+                  <Badge>{examDoneCount}/{examProgressItems.length} completed</Badge>
+                  <ChevronDown size={18} aria-hidden="true"/>
+                </button>
+              </h3>
+              <div id={revisionContentId} hidden={revisionCollapsed}>
+                {examItems.length>0&&<ProgressTrack className="progress-track planner-exam-progress" identity={`${selectedId}-exam`} label="Exam revision completion" value={checklistPercent(examDoneCount,examProgressItems.length)}/>}
+                <div className="planner-course-task-list">{examItems.map(item=>renderCourseTask(item,true))}</div>
+                {!examItems.length&&<EmptyState icon={<BookMarked size={23}/>} title="Exam preparation starts here" detail="Add topics and course-wide revision tasks."/>}
+                {!isReadOnly&&(examEntryOpen?<form className="exam-task-form" onSubmit={e=>void saveExam(e)}><input aria-label="Exam preparation task" autoFocus placeholder="Practise old exam papers" value={examTitle} onChange={e=>setExamTitle(e.target.value)} required/><button className="btn primary small" disabled={busy||!examTitle.trim()} aria-busy={busy}>{busy?<><LoaderCircle size={14} className="spin"/> Saving…</>:'Add task'}</button><button type="button" className="btn secondary small" disabled={busy} onClick={()=>{setExamEntryOpen(false);setExamTitle('');}}>Cancel</button></form>:<button type="button" className="btn secondary planner-exam-add" onClick={()=>setExamEntryOpen(true)}><Plus size={16}/> Add revision task</button>)}
+              </div>
+            </Card>
             <ExamPapers key={selected.id} papers={examResources.filter(r=>r.kind==='exam_paper')}
               solutions={examResources.filter(r=>r.kind==='exam_solution')}
               editResource={r=>openResourceForm(r.week_number==null?'course':'week',r)} removeResource={removeResource}
@@ -570,16 +594,6 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
               user={user} busy={busy} readOnly={isReadOnly} run={run} openResource={openResource}
               browseDrive={()=>openDrive(selected.id,weekNumber,'exam_paper','course')} practice={preparePractice}
               examDuration={selected.exam_duration_minutes} activeFocus={activeFocus} focusBusy={focusBusy} openFocus={openFocus}/>
-            <div className="planner-exam-side">
-              <Card><SectionTitle title="Exam focus this week"/>
-                <strong className="exam-focus-value">{Math.floor(examFocusSeconds/3600)}h {Math.floor(examFocusSeconds%3600/60)}m</strong>
-                <p className="planner-study-hint">Finished sessions linked to revision tasks since Monday.</p>
-              </Card>
-              <Card><SectionTitle title="Exam resources"/>
-                {sharedPreview.map(resourcePreviewRow)}
-                <button className="btn secondary full" onClick={()=>setWorkspaceTab('course-library')}>Open course library <ArrowRight size={15}/></button>
-              </Card>
-            </div>
           </div>}
         </>}
       </div>

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {examName,examYear,examSortOptions,filterExamPapers,practiceFocusMode,sortExamPapers,suggestedSolutions} from '../lib/exam-prep.ts';
+import {examName,examPaperPage,examYear,examSortOptions,filterExamPapers,practiceFocusMode,sortExamPapers,suggestedSolutions} from '../lib/exam-prep.ts';
 import {checklistPercent,reachedMilestone} from '../lib/progress-presentation.ts';
 import {focusClockDisplaySeconds,startFocusClock} from '../lib/focus-timing.ts';
 const paper=(id,title,rest={})=>({id,title,kind:'exam_paper',course_id:'c',...rest});
@@ -30,6 +30,32 @@ test('search combines display name, year and filename with attempt and missing-s
  assert.deepEqual(filterExamPapers(papers,'fall','all',false,paired).map(p=>p.id),['a']);
  assert.deepEqual(filterExamPapers(papers,'2017','unattempted',true,paired).map(p=>p.id),['b']);
  assert.deepEqual(filterExamPapers(papers,'2017','attempted',true,paired),[]);
+});
+
+test('paper pages cover empty, small, full and larger collections',()=>{
+ const papers=Array.from({length:30},(_,i)=>paper(String(i+1),`Exam ${i+1}`));
+ for(const [size,pages] of [[0,1],[1,1],[6,1],[11,2],[30,5]]){
+   const collection=papers.slice(0,size);
+   const first=examPaperPage(collection,1,'6');
+   assert.equal(first.pageCount,pages);
+   assert.equal(first.first,size?1:0);
+   assert.equal(first.last,Math.min(6,size));
+   assert.deepEqual(first.papers,collection.slice(0,6));
+ }
+ assert.deepEqual(examPaperPage(papers,2,'12').papers,papers.slice(12,24));
+ assert.deepEqual(examPaperPage(papers,3,'all').papers,papers);
+});
+
+test('paper pagination clamps when filtered results or a deletion remove the current page',()=>{
+ const papers=Array.from({length:7},(_,i)=>paper(String(i+1),`Exam ${i+1}`));
+ const last=examPaperPage(papers,2,'6');
+ assert.deepEqual([last.page,last.first,last.last],[2,7,7]);
+ const smaller=examPaperPage(papers.slice(0,6),2,'6');
+ assert.deepEqual([smaller.page,smaller.first,smaller.last],[1,1,6]);
+ const filtered=filterExamPapers(papers,'Exam 2','all',false,new Set());
+ assert.deepEqual(examPaperPage(filtered,2,'6').papers,[papers[1]]);
+ const empty=examPaperPage([],2,'all');
+ assert.deepEqual([empty.page,empty.pageCount,empty.first,empty.last],[1,1,0,0]);
 });
 
 test('a nonempty checklist must be fully complete even when the percentage would round up',()=>{
