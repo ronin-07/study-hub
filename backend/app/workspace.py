@@ -1,6 +1,8 @@
 """Course, semester and resource editing API; additive to v0.3 for existing data."""
+import hashlib
+import json
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import ValidationError
+from pydantic import BaseModel, Field, ValidationError
 from .models import Course, Resource, Week
 from .storage import DocumentAlreadyExists
 from .security import User, current_user
@@ -194,6 +196,84 @@ def restore_course(identifier: str, user: User = Depends(current_user)):
 def remove_course(identifier: str, user: User = Depends(current_user)):
     require(user.uid, 'courses', identifier)
     raise HTTPException(405, 'Permanent deletion is disabled; archive the course instead')
+
+
+# Keep the old unconfirmed DELETE endpoint disabled. Permanent deletion uses
+# a separate preview and confirmation contract, scoped to the signed-in user.
+class CourseDeletionConfirmation(BaseModel):
+    confirmation: str
+    preview_token: str = Field(pattern=r'^[0-9a-f]{64}$')
+
+
+def course_deletion_plan(tx, identifier: str):
+    course = tx.get('courses', identifier)
+    if not course:
+        raise HTTPException(404, 'Course not found')
+    if not course.get('archived', False):
+        raise HTTPException(409, 'Archive the course before deleting it permanently')
+    # A deletion is rare. Scan references once to catch even legacy cross-course
+    # links and older Focus sessions omitted from the compact browser snapshot.
+    all_items = tx.list('items')
+    all_resources = tx.list('resources')
+    items = [r for r in all_items if r.get('course_id') == identifier]
+    resources = [r for r in all_resources if r.get('course_id') == identifier]
+    weeks = tx.list_equal('weeks', 'course_id', identifier)
+    item_ids = {r['id'] for r in items}
+    resource_ids = {r['id'] for r in resources}
+    sessions = [r for r in tx.list('sessions') if r.get('course_id') == identifier
+                or r.get('item_id') in item_ids]
+    # The same guard is read by archive and Focus start; never delete history.
+    guard = tx.get('focus_guard', 'active')
+    if guard:
+        active = tx.get('sessions', guard['session_id'])
+        if active and (active.get('course_id') == identifier or active.get('item_id') in item_ids):
+            if not any(r['id'] == active['id'] for r in sessions):
+                sessions.append(active)
+    cross_links = sum(r.get('course_id') != identifier and r.get('resource_id') in resource_ids for r in all_items)
+    cross_links += sum(r.get('course_id') != identifier and r.get('item_id') in item_ids for r in all_resources)
+    records = {'courses': [course], 'items': items, 'weeks': weeks, 'resources': resources}
+    total = sum(map(len, records.values()))
+    attempts = sum(len(r.get('exam_attempts') or []) for r in resources)
+    blockers = []
+    if sessions:
+        blockers.append('This course has Focus history. Keep it archived to preserve your study statistics.')
+    if cross_links:
+        blockers.append('Other coursework references this course. Resolve those links before deleting.')
+    # Leave room for the workspace guard write; never split a destructive operation.
+    if total > 450:
+        blockers.append('This course has too many records for one safe deletion. Keep it archived.')
+    payload = json.dumps({k: sorted(v, key=lambda r: r['id']) for k, v in records.items()},
+                         sort_keys=True, separators=(',', ':'), ensure_ascii=False)
+    if len(payload.encode('utf-8')) > 4 * 1024 * 1024:
+        blockers.append('This course contains too much data for one safe deletion. Keep it archived.')
+    return records, {'course_id': identifier, 'code': course['code'], 'title': course['title'],
+                     'items': len(items), 'weeks': len(weeks), 'resources': len(resources),
+                     'exam_attempts': attempts, 'focus_sessions': len(sessions),
+                     'total_documents': total, 'blockers': blockers,
+                     'preview_token': hashlib.sha256(payload.encode('utf-8')).hexdigest()}
+
+
+@router.get('/courses/{identifier}/deletion-preview')
+def preview_course_deletion(identifier: str, user: User = Depends(current_user)):
+    return store().workspace_atomic(user.uid, lambda tx: course_deletion_plan(tx, identifier)[1])
+
+
+@router.post('/courses/{identifier}/permanent-delete', status_code=204)
+def permanently_delete_course(identifier: str, value: CourseDeletionConfirmation, user: User = Depends(current_user)):
+    if value.confirmation != 'DELETE':
+        raise HTTPException(422, 'Type DELETE to confirm permanent deletion')
+
+    def operation(tx):
+        records, preview = course_deletion_plan(tx, identifier)
+        if preview['blockers']:
+            raise HTTPException(409, ' '.join(preview['blockers']))
+        if value.preview_token != preview['preview_token']:
+            raise HTTPException(409, 'Course data changed. Reopen the deletion preview and review it again.')
+        for kind, rows in records.items():
+            for row in rows:
+                tx.delete(kind, row['id'])
+
+    store().workspace_atomic(user.uid, operation)
 
 
 @router.patch('/weeks/{identifier}', response_model=Week)

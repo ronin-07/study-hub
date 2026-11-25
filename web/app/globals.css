@@ -2075,3 +2075,19 @@ html[data-study-hub-theme="light"]{color-scheme:light}
 .home-completed-icon{color:#426e50;flex-shrink:0;}
 .home-priority-completed .home-priority-info strong{text-decoration:line-through;text-decoration-thickness:1px;}
 .home-completed-priorities summary:focus-visible{outline:2px solid #8db59a;outline-offset:3px;border-radius:6px;}
+
+/* v0.6: explicit archived-course deletion, using existing dialog controls. */
+.planner-delete-course-trigger{color:var(--urgent)!important}
+.planner-delete-course-heading{display:flex;gap:10px;align-items:center;padding-right:24px;color:var(--urgent)}
+.planner-delete-course-heading h2{margin:0;color:var(--text)}
+.planner-delete-course-counts{margin:16px 0;border:1px solid var(--line);border-radius:12px;padding:4px 14px}
+.planner-delete-course-counts>div{display:flex;gap:14px;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--line)}
+.planner-delete-course-counts>div:last-child{border-bottom:0;font-weight:700}
+.planner-delete-course-counts dt{font-size:.84rem;color:var(--muted)}
+.planner-delete-course-counts dd{margin:0;font-weight:650;font-variant-numeric:tabular-nums}
+.planner-delete-course-warning{border:1px solid var(--urgent-border);border-radius:12px;padding:12px;margin:12px 0;color:var(--urgent);overflow-wrap:anywhere}
+.planner-delete-course-warning p{margin:0 0 8px}
+.planner-delete-course-warning p:last-child{margin-bottom:0}
+.btn.planner-delete-course-confirm{background:#a43251;color:#fff;border:1px solid #a43251}
+.btn.planner-delete-course-confirm:disabled{opacity:.48;cursor:not-allowed}
+@media(max-width:560px){.planner-delete-course-dialog .form-actions{flex-wrap:wrap}.planner-delete-course-dialog .form-actions .btn{flex:1}}

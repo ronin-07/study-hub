@@ -8,6 +8,7 @@ import {
   Library, ListChecks, ListFilter, LoaderCircle, NotebookPen, Pencil, Plus, RotateCcw, Timer, Trash2, X
 } from 'lucide-react';
 import { api } from '@/lib/api';
+import { CourseDeletionDialog } from '@/components/course-deletion-dialog';
 import { ExamHero, ExamPapers } from '@/components/exam-prep';
 import { categoryInTitle, examFocusThisWeek } from '@/lib/exam-prep';
 import { ActivityGenerator } from '@/components/activity-generator';
@@ -86,6 +87,7 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
   const landingRef=useRef<HTMLDivElement|null>(null);
   useEffect(()=>{landingRef.current?.scrollIntoView({behavior:'smooth',block:'center'});},[landingItem?.id,workspaceTab]);
   const [dialog, setDialog] = useState<Dialog>(null);
+  const [deletionCourse,setDeletionCourse]=useState<Course|null>(null);
   const [generator,setGenerator]=useState<{course:Course;offerSetup:boolean}|null>(null);
   const [editCourseId, setEditCourseId] = useState('');
   const [courseDraft, setCourseDraft] = useState<CourseDraft>(courseDraftDefaults);
@@ -451,7 +453,7 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
           <div className="planner-course-header planner-study-course-header">
             <div><span className="eyebrow">{selected.code} · COURSE WORKSPACE</span><h2>{selected.title}</h2><p>{semester.name} · {selected.week_count} teaching weeks{selected.exam_date?` · Exam ${formatDate(selected.exam_date)}`:''}</p>{selected.goals&&<p className="planner-goal">{selected.goals}</p>}</div>
             <div className="planner-course-actions">
-              {isReadOnly?<><Badge>Archived · read only</Badge><button className="btn primary small" onClick={()=>void restore(selected)}><RotateCcw size={14}/> Restore</button></>:<>
+              {isReadOnly?<><Badge>Archived · read only</Badge><button className="btn primary small" disabled={busy} onClick={()=>void restore(selected)}><RotateCcw size={14}/> Restore</button><button className="btn secondary small planner-delete-course-trigger" disabled={busy} onClick={()=>setDeletionCourse(selected)}><Trash2 size={15}/> Delete permanently</button></>:<>
                 <button className="btn primary small" disabled={busy} onClick={()=>setGenerator({course:selected,offerSetup:false})}><ListChecks size={15}/> Generate activities</button>
                 <button className="btn secondary small" onClick={()=>openCourseForm(selected)}><Pencil size={15}/> Edit</button>
                 <button className="btn secondary small" onClick={()=>setDialog('archive')} disabled={busy}><Archive size={15}/> Archive</button>
@@ -551,6 +553,11 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
       </div>
     </div>
 
+    {deletionCourse&&<CourseDeletionDialog key={deletionCourse.id} course={deletionCourse} user={user} busy={busy} run={run} onClose={()=>setDeletionCourse(null)} onDeleted={()=>{
+      setDeletionCourse(null);setWorkspaceTab('overview');
+      const next=matching.find(c=>c.id!==deletionCourse.id&&c.archived);
+      if(next){selectCourse(next.id);}else{setShowArchived(false);selectCourse(matching.find(c=>!c.archived)?.id||'');}
+    }}/>}
     {generator&&<ActivityGenerator key={generator.course.id} course={data.courses.find(c=>c.id===generator.course.id)||generator.course} items={progressItems} busy={busy} offerSetup={generator.offerSetup} onClose={()=>setGenerator(null)} onGenerate={(activities,weeks)=>generate(generator.course,activities,weeks)}/>}
     {dialog&&<div className="dialog-backdrop" role="presentation"><div className="dialog planner-dialog" role="dialog" aria-modal="true" aria-label={`${dialog} configuration`}>
       <button className="dialog-close" disabled={busy} onClick={closeDialog} aria-label="Close dialog"><X size={18}/></button>
