@@ -35,6 +35,7 @@ class CoursePatch(BaseModel):
     exam_duration_minutes: int | None = Field(default=None, ge=1, le=720)
     exam_location: str | None = Field(default=None, max_length=240)
     exam_format: str | None = Field(default=None, max_length=80)
+    exam_aids: str | None = Field(default=None, max_length=2000)
     goals: str | None = Field(default=None, max_length=2000)
 
 

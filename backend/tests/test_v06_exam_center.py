@@ -17,6 +17,7 @@ def attempt(id='first', **kwargs):
 def test_exam_details_optional_and_clearable(client):
     course,_=setup(client)
     assert course['exam_date'] is None
+    assert course['exam_aids'] == ''
     url=f"/api/courses/{course['id']}"
     r=client.patch(url,json={'exam_date':'2026-12-08','exam_time':'09:00','exam_duration_minutes':240,'exam_format':'Written','exam_location':'Building 101'})
     assert r.status_code==200,r.text
@@ -24,6 +25,28 @@ def test_exam_details_optional_and_clearable(client):
     assert r.json()['exam_location']=='Building 101'
     assert client.patch(url,json={'exam_duration_minutes':0}).status_code==422
     assert client.patch(url,json={'exam_date':None,'exam_time':None}).json()['exam_date'] is None
+
+
+def test_exam_aids_save_multiline_and_clear_independently_of_duration(client):
+    notes = 'Non-programmable calculator\nOne double-sided formula sheet'
+    created = create_course(client, {
+        'code':'02452', 'title':'Machine learning', 'exam_aids':notes, 'exam_duration_minutes':95,
+    })
+    assert created.status_code == 201, created.text
+    course = created.json()
+    assert course['exam_aids'] == notes
+    url = f"/api/courses/{course['id']}"
+    assert client.patch(url,json={'exam_aids':'a'*2001}).status_code == 422
+    response = client.patch(url,json={'exam_aids':notes+'\nPrinted notes'})
+    assert response.status_code == 200, response.text
+    snapshot = client.get(f'/api/snapshot?compact=true&week_start={int(time.time())}')
+    assert snapshot.status_code == 200, snapshot.text
+    stored = next(row for row in snapshot.json()['courses'] if row['id'] == course['id'])
+    assert stored['exam_aids'] == response.json()['exam_aids'] == notes+'\nPrinted notes'
+    assert stored['exam_duration_minutes'] == 95
+    cleared = client.patch(url,json={'exam_aids':''}).json()
+    assert cleared['exam_aids'] == ''
+    assert cleared['exam_duration_minutes'] == 95
 
 
 def test_attempts_and_bookmarks_preserve_each_other(client):

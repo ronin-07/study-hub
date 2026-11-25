@@ -24,7 +24,8 @@
 .backup-source>div{display:flex;flex-direction:column;gap:5px;min-width:0}
 .backup-source strong{display:flex;align-items:center;gap:8px;font-size:.85rem;color:var(--text)}
 .backup-source small{font-size:.72rem;color:var(--muted)}
-.folder-picker-heading{display:flex;justify-content:space-between;align-items:center;margin-top:24px;font-size:.8rem}
+.folder-picker-heading{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-top:24px;font-size:.8rem}
+.folder-picker-header-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px;max-width:100%;margin-inline-start:auto}
 .folder-picker-actions{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
 .index-controls{display:flex;align-items:center;justify-content:space-between;gap:11px;flex-wrap:wrap;margin:14px 0}
 .index-controls label{display:flex;align-items:center;gap:9px;color:var(--muted);font-size:.77rem}
@@ -2138,7 +2139,7 @@ html[data-study-hub-theme="light"]{color-scheme:light}
 .bulk-resource-dialog::backdrop{background:#100b13b3;backdrop-filter:blur(3px)}
 @media(max-width:680px){.bulk-resource-row .form-grid{grid-template-columns:1fr}.bulk-resource-heading{flex-wrap:wrap}.bulk-resource-heading strong{flex-basis:70%}}
 
-.bulk-resource-dialog:not([open]){display:none}.resources-index-row>.task-completion-check{margin-left:8px;flex-shrink:0}.folder-picker-heading{flex-wrap:wrap}
+.bulk-resource-dialog:not([open]){display:none}.resources-index-row>.task-completion-check{margin-left:8px;flex-shrink:0}
 
 /* Exam Prep */
 .planner-exam-collection{display:grid;gap:16px;min-width:0}
@@ -2155,6 +2156,10 @@ html[data-study-hub-theme="light"]{color-scheme:light}
 @media(prefers-reduced-motion:reduce){.exam-progress-panel:has(.progress-celebrating){animation:none}}
 .planner-exam-hero{flex-wrap:wrap}
 .planner-exam-hero>div:first-child{flex:1 1 215px;min-width:0}
+.exam-hero-aids{flex:1 0 100%;min-width:0;border-top:1px solid #ffffff42;padding-top:8px}
+.exam-hero-aids summary{width:fit-content;padding:5px 0;color:#fff5ef;font-size:.8rem;font-weight:750;cursor:pointer}
+.exam-hero-aids summary:focus-visible{outline:2px solid #fff5ef;outline-offset:3px}
+.exam-hero-aids p{white-space:pre-wrap;overflow-wrap:anywhere;color:#fff0e9;margin-top:4px}
 .exam-progress-panel{display:grid;gap:7px;min-width:0;text-align:left;padding:14px;background:#23172c38;border:1px solid #ffffff30;border-radius:12px;color:#fff8f4}
 .planner-exam-hero .exam-progress-panel>span{font-size:.78rem;letter-spacing:.02em;color:#fff0e9;line-height:1.3;overflow-wrap:anywhere}
 .exam-progress-panel strong{font-size:1.7rem;line-height:1.2;color:#ddf2df;font-variant-numeric:tabular-nums}

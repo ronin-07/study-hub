@@ -1280,7 +1280,19 @@ export default function Page() {
                     {(driveIndexState==='idle'||driveIndexState==='loading')&&<p className="muted" role="status"><LoaderCircle size={15} className="spin"/> Loading indexed PDFs…</p>}
                     {driveIndexState==='error'&&<p className="muted" role="alert">Could not load indexed PDFs. <button className="text-button" onClick={loadIndex}>Retry</button></p>}
                     {folderBrowserVisible&&<div className="resources-folder-browser">
-                      <div className="folder-picker-heading"><strong>Browse Drive folders</strong><button className="btn secondary small" onClick={()=>bulkMode?clearBulk():setBulkMode(true)}>{bulkMode?'Cancel selection':'Select files'}</button>{bulkMode&&<button className="btn secondary small" disabled={!currentFolderLoaded||selectListedPdfs(bulkFiles,driveFiles)===bulkFiles} onClick={()=>selectBulkVisible(driveFiles)}>Select visible (up to {bulkPdfLimit})</button>}<button className="icon-btn" title="Refresh folder" disabled={driveBusy} onClick={()=>void browseDrive(currentFolder.id)}><RotateCcw size={16}/></button></div>
+                      <div className="folder-picker-heading">
+                        <strong>Browse Drive folders</strong>
+                        <div className="folder-picker-header-actions">
+                          <button type="button" className="btn secondary small" onClick={()=>bulkMode?clearBulk():setBulkMode(true)}>
+                            {bulkMode?'Cancel selection':'Select files'}
+                          </button>
+                          {bulkMode&&<button type="button" className="btn secondary small"
+                            disabled={!currentFolderLoaded||selectListedPdfs(bulkFiles,driveFiles)===bulkFiles}
+                            onClick={()=>selectBulkVisible(driveFiles)}>Select visible (up to {bulkPdfLimit})</button>}
+                          <button type="button" className="icon-btn" title="Refresh folder" aria-label="Refresh folder"
+                            disabled={driveBusy} onClick={()=>void browseDrive(currentFolder.id)}><RotateCcw size={16} aria-hidden="true"/></button>
+                        </div>
+                      </div>
                       <div className="folder-path"><button onClick={()=>{if(currentFolder.id!=='root')changeFolder(folderPath.slice(0,1));}}>My Drive</button>{folderPath.slice(1).map(f=><span key={f.id}> / {f.name}</span>)}</div>
                       <div className="folder-picker-actions">{folderPath.length>1&&<button className="btn secondary small" onClick={backFolder}><ArrowLeft size={14}/> Back</button>}{currentFolder.id!=='root'&&<button className="btn secondary small" disabled={busy||scanBusy} onClick={selectBackupFolder}><FolderCheck size={14}/> Use this folder</button>}</div>
                       {driveBusy&&<p className="muted" role="status"><LoaderCircle size={15} className="spin"/> Loading Drive folders…</p>}

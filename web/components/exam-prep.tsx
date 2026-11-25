@@ -12,7 +12,7 @@ import type {MutationHint} from '@/lib/snapshot-cache';
 import {type Course,type Resource,type ExamAttempt,type FocusMode,formatDate,localToday} from '@/lib/types';
 import {checklistPercent} from '@/lib/progress-presentation';
 import {
-  attemptSummary,examCountdown,examName,examPaperPage,examPageSizes,examYear,examSortOptions,filterExamPapers,
+  attemptSummary,examCountdown,examName,examPaperPage,examPageSizes,examYear,examSortOptions,filterExamPapers,formatExamDuration,
   practiceFocusMode,sortExamPapers,suggestedSolutions,type ExamSort,type ExamAttemptFilter,type ExamPageSize,
 } from '@/lib/exam-prep';
 import {pairedSolutions} from '@/lib/resource-links';
@@ -32,7 +32,7 @@ export function ExamHero({course,courseDone,courseTotal,revisionDone,revisionTot
     <div>
       <span>EXAM PREPARATION</span><h3>{headline}</h3>
       <p>{course.exam_date?formatDate(course.exam_date):'Add the date in course settings'}{course.exam_date&&course.exam_time?` · ${course.exam_time.slice(0,5)}`:''}</p>
-      {course.exam_date&&<p>{[course.exam_format,course.exam_duration_minutes?`${course.exam_duration_minutes} min`:'',course.exam_location].filter(Boolean).join(' · ')}</p>}
+      {course.exam_date&&<p>{[course.exam_format,formatExamDuration(course.exam_duration_minutes),course.exam_location].filter(Boolean).join(' · ')}</p>}
       {onEdit&&<button className="exam-hero-edit" onClick={onEdit}><Pencil size={14} aria-hidden="true"/> {course.exam_date?'Edit exam details':'Set exam date'}</button>}
     </div>
     <div className="exam-hero-progresses">{progress.map(p=>{
@@ -50,6 +50,10 @@ export function ExamHero({course,courseDone,courseTotal,revisionDone,revisionTot
         <small>This week</small>
       </div>
     </div>
+    {course.exam_aids?.trim()&&<details className="exam-hero-aids">
+      <summary>Exam aids</summary>
+      <p>{course.exam_aids}</p>
+    </details>}
   </div>;
 }
 

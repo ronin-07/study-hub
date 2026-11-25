@@ -1,9 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {examName,examPaperPage,examYear,examSortOptions,filterExamPapers,practiceFocusMode,sortExamPapers,suggestedSolutions} from '../lib/exam-prep.ts';
+import {examDurationHoursInput,examDurationMinutes,examName,examPaperPage,examYear,examSortOptions,filterExamPapers,formatExamDuration,practiceFocusMode,sortExamPapers,suggestedSolutions} from '../lib/exam-prep.ts';
 import {checklistPercent,reachedMilestone} from '../lib/progress-presentation.ts';
 import {focusClockDisplaySeconds,startFocusClock} from '../lib/focus-timing.ts';
 const paper=(id,title,rest={})=>({id,title,kind:'exam_paper',course_id:'c',...rest});
+test('the hours editor preserves every valid stored whole-minute duration',()=>{
+ for(let minutes=1;minutes<=720;minutes++)assert.equal(examDurationMinutes(examDurationHoursInput(minutes)),minutes);
+ assert.equal(examDurationHoursInput(240),'4');
+ assert.equal(examDurationMinutes('1.5'),90);
+ assert.equal(examDurationHoursInput(null),'');
+ for(const invalid of ['', '0', '-2', '12.01', 'not a number'])assert.equal(examDurationMinutes(invalid),null);
+ assert.equal(formatExamDuration(240),'4 hours');
+ assert.equal(formatExamDuration(95),'1 hour 35 minutes');
+ assert.equal(formatExamDuration(45),'45 minutes');
+ assert.equal(formatExamDuration(null),'');
+});
 test('exam titles and years infer from filenames and respect explicit edits',()=>{
  const p=paper('p','02450ex_Fall2017_corrected.pdf');assert.equal(examName(p),'Autumn 2017');assert.equal(examYear(p),2017);
  const renamed={...p,exam_display_name:'Mock exam 3',exam_year:2017};assert.equal(examName(renamed),'Mock exam 3');assert.equal(examYear(renamed),2017);assert.equal(examYear({...renamed,exam_year:null}),null);

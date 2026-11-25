@@ -27,6 +27,7 @@ class Course(BaseDocument):
     exam_duration_minutes: int | None = Field(default=None, ge=1, le=720)
     exam_location: str = Field(default="", max_length=240)
     exam_format: str = Field(default="", max_length=80)
+    exam_aids: str = Field(default='', max_length=2000)
     goals: str = Field(default='', max_length=2000)
     archived: bool = False
 

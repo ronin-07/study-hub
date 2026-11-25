@@ -1,7 +1,7 @@
 export type Kind = 'lecture' | 'notes' | 'reading' | 'questions' | 'revision' | 'assignment' | 'exercise' | 'personal';
 export type Priority = 'low' | 'medium' | 'high';
 export type Semester = { id: string; name: string; start_date: string | null; end_date: string | null };
-export type Course = { id: string; code: string; title: string; semester: string; semester_id?: string | null; week_count: number; exam_date?: string | null; exam_time?: string | null; exam_duration_minutes?: number | null; exam_location?: string; exam_format?: string; goals?: string; archived?: boolean };
+export type Course = { id: string; code: string; title: string; semester: string; semester_id?: string | null; week_count: number; exam_date?: string | null; exam_time?: string | null; exam_duration_minutes?: number | null; exam_location?: string; exam_format?: string; exam_aids?: string; goals?: string; archived?: boolean };
 export type Week = { id: string; course_id: string; number: number; title: string; objectives: string };
 export type Item = { id: string; title: string; kind: Kind; course_id: string | null; week_number: number | null; is_task: boolean; hidden_from_tasks?: boolean; done: boolean; completed_at?: number | null; submitted: boolean; planned_date: string | null; due_date: string | null; priority: Priority; repeat?: 'none'|'daily'|'weekly'|'monthly'; repeat_series_id?: string | null; notes: string; chapter?: string; page_start?: number | null; page_end?: number | null; resource_id?: string | null };
 export type ExamAttempt = {id:string; date:string; minutes:number; score:number|null; notes:string};

@@ -1,5 +1,25 @@
 import type { Course, ExamAttempt, FocusMode, FocusSession, Item, Resource } from './types';
 
+export function examDurationHoursInput(minutes?:number|null): string {
+  // Two decimal places round-trip every whole minute in the supported range.
+  return minutes==null ? '' : String(Number((minutes/60).toFixed(2)));
+}
+
+export function examDurationMinutes(hours:string): number|null {
+  const value=Number(hours);
+  return value>=0.01&&value<=12 ? Math.round(value*60) : null;
+}
+
+export function formatExamDuration(minutes?:number|null): string {
+  if(!minutes)return '';
+  const hours=Math.floor(minutes/60);
+  const remaining=minutes%60;
+  return [
+    hours ? `${hours} ${hours===1?'hour':'hours'}` : '',
+    remaining ? `${remaining} ${remaining===1?'minute':'minutes'}` : '',
+  ].filter(Boolean).join(' ');
+}
+
 export function examCountdown(date:string,today:string):string {
   const days=Math.round((Date.parse(date+'T00:00:00Z')-Date.parse(today+'T00:00:00Z'))/86400000);
   return days===0?'Today':days<0?'Exam passed':`${days}d`;
