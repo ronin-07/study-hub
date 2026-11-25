@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { api, pdfBlob } from '@/lib/api';
 import { formatLocalClock, formatLocalDate } from '@/lib/clock';
-import { applyMutation, bulkMutationRows, preserveWorkspaceChanges, type MutationHint } from '@/lib/snapshot-cache';
+import { applyMutation, bulkMutationRows, resourceRemovalRows, preserveWorkspaceChanges, type MutationHint } from '@/lib/snapshot-cache';
 import { createSnapshotCoordinator, describeSnapshotFailure, fetchSnapshotWithRetry, type SnapshotLoadProblem } from '@/lib/snapshot-loading';
 import { Badge, Card, EmptyState, FormRow, SectionTitle } from '@/components/common';
 import { PdfOpeningOverlay } from '@/components/pdf-opening-overlay';
@@ -77,6 +77,7 @@ export default function Page() {
   const [snapshotCoordinator]=useState(createSnapshotCoordinator);
   const [busy,setBusy] = useState(false);
   const mutationBusyRef = useRef(false);
+  const resourceRemovalBusyRef = useRef(false);
   const { messages: feedbackMessages, notify, dismiss: dismissFeedback, clearAll: clearFeedback } = useFeedbackToasts();
   const [focusBusy,setFocusBusy] = useState(false);
   const [focusPreview,setFocusPreview] = useState<FocusSession|null>(null);
@@ -414,7 +415,10 @@ export default function Page() {
   const act = async(fn:()=>Promise<unknown>, mutation?:MutationHint, feedback?:FeedbackMessage):Promise<boolean>=>{
     // An immediate ref guard prevents double submits before React commits busy=true.
     if (mutationBusyRef.current) return false;
+    const removingResource=mutation?.collection==='resources'&&mutation.removeWithLinks===true;
+    if(removingResource&&pendingItemsRef.current.size){notify({kind:'error',title:'Wait for activity saves',detail:'Try removing the resource once the activity updates finish.'});return false;}
     mutationBusyRef.current=true;
+    resourceRemovalBusyRef.current=removingResource;
     setBusy(true);setError('');
     const uid=user?.uid||'local';
     const sameUser=()=>!useFirebase||firebaseAuth?.currentUser?.uid===uid;
@@ -424,7 +428,12 @@ export default function Page() {
       let synchronized = true;
       if(mutation){
         if(mutation.collection!=='none') {
-          if(mutation.bulkInsert){
+          if(mutation.removeWithLinks){
+            const rows=resourceRemovalRows(result,mutation.deleteId);
+            snapshotCoordinator.retain('resources',mutation.deleteId);
+            for(const row of rows)snapshotCoordinator.retain('items',row.id);
+            setData(previous=>applyMutation(previous,mutation,result));
+          }else if(mutation.bulkInsert){
             const rows=bulkMutationRows(result);
             for(const row of rows) snapshotCoordinator.retain(mutation.collection,row.id);
             setData(previous=>applyMutation(previous,mutation,result));
@@ -450,7 +459,7 @@ export default function Page() {
     } catch(e) {
       if(sameUser())notify({kind:'error',title:'Could not save changes',detail:e instanceof Error?e.message:'Please try again. Your edits are still here.'});
       return false;
-    } finally {mutationBusyRef.current=false;setBusy(false);}
+    } finally {resourceRemovalBusyRef.current=false;mutationBusyRef.current=false;setBusy(false);}
   };
   const scrollCourses = (direction: -1 | 1) => {
     const scroller = courseScrollerRef.current;
@@ -528,7 +537,7 @@ export default function Page() {
   },[data.sessions,data.focus_stats,currentWeekStart]);
   const weekPct=Math.min(100,Math.round((weekSeconds/(weeklyGoal*3600))*100));
   const toggle=(item:Item)=>{
-    if(pendingItemsRef.current.has(item.id)||completingIds.has(item.id))return;
+    if(resourceRemovalBusyRef.current||pendingItemsRef.current.has(item.id)||completingIds.has(item.id))return;
     if(!item.done)startCompletion(item.id);
     pendingItemsRef.current.add(item.id);
     setPendingItems(new Set(pendingItemsRef.current));

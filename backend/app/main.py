@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import os
+import hashlib
+import json
 import time
 import asyncio
 import logging
@@ -12,7 +14,7 @@ from typing import Any
 from fastapi import Depends, FastAPI, HTTPException, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from pydantic import ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from .workspace_models import Semester
 from .models import ExamAttempt, GenerateActivities, GenerationResult, ItemUpdateResult, Course, FocusSession, FinishFocus, Item, ItemPatch, PauseFocus, ResumeFocus, ReadingPosition, Resource, StartFocus, Week
@@ -265,9 +267,14 @@ def patch_item_with_successor(identifier: str, updates: ItemPatch, user: User = 
 def _patch_item(identifier: str, updates: ItemPatch, user: User, with_successor=False):
     fields = updates.model_dump(exclude_unset=True, mode='json')
 
-    def update(original: dict) -> tuple[dict, dict | None]:
+    def update(original: dict, tx=None) -> tuple[dict, dict | None]:
         if original.get('course_id'):
-            ensure_course_active(user.uid, original['course_id'])
+            if tx is None:
+                ensure_course_active(user.uid, original['course_id'])
+            else:
+                course = tx.get('courses', original['course_id'])
+                if not course or course.get('archived', False):
+                    raise HTTPException(409, 'Course is unavailable or archived')
         merged = {**original, **fields}
         if not merged.get('done'):
             merged['completed_at'] = None
@@ -277,7 +284,16 @@ def _patch_item(identifier: str, updates: ItemPatch, user: User, with_successor=
         # Enforce on date changes but keep legacy records completable/editable.
         if ('planned_date' in fields or 'due_date' in fields) and merged.get('planned_date') and merged.get('due_date') and merged['planned_date'] > merged['due_date']:
             raise HTTPException(422, 'Planned work date cannot be after the deadline')
-        validate_item_reference(user.uid, merged.get('course_id'), merged.get('week_number'), merged.get('resource_id'))
+        if tx is None:
+            validate_item_reference(user.uid, merged.get('course_id'), merged.get('week_number'), merged.get('resource_id'))
+        elif merged.get('resource_id'):
+            resource = tx.get('resources', merged['resource_id'])
+            if not resource:
+                raise HTTPException(404, 'resources not found')
+            if resource['course_id'] != merged.get('course_id'):
+                raise HTTPException(422, 'Referenced resource belongs to another course')
+            if resource.get('week_number') is not None and resource['week_number'] != merged.get('week_number'):
+                raise HTTPException(422, 'Referenced weekly resource belongs to another week')
         try:
             value = Item.model_validate(merged)
         except ValidationError as exc:
@@ -295,12 +311,13 @@ def _patch_item(identifier: str, updates: ItemPatch, user: User, with_successor=
         return None
 
     try:
-        if 'title' in fields:
+        if 'title' in fields or 'resource_id' in fields:
+            # New links and removal use the same workspace guard and transaction.
             def rename(tx):
                 original = tx.get('items', identifier)
                 if original is None:
                     raise DocumentMissing
-                updated, successor = update(original)
+                updated, successor = update(original, tx)
                 if activity_name(updated['title']) != activity_name(original['title']) and weekly_activity_matches(
                         tx, updated.get('course_id'), updated.get('week_number'), updated['title'], identifier):
                     raise HTTPException(409, 'An activity with this name already exists in this teaching week')
@@ -468,6 +485,71 @@ def delete_resource(identifier: str, user: User = Depends(current_user)):
         tx.delete('resources', identifier)
 
     app_store.workspace_atomic(user.uid, operation)
+
+
+class ResourceRemovalConfirmation(BaseModel):
+    preview_token: str = Field(pattern=r'^[0-9a-f]{64}$')
+
+
+class ResourceRemovalResult(BaseModel):
+    resource_id: str
+    items: list[Item]
+
+
+def resource_removal_plan(tx, identifier: str):
+    entry = tx.get('resources', identifier)
+    if not entry:
+        raise HTTPException(404, 'Resource not found')
+    course = tx.get('courses', entry['course_id'])
+    if not course or course.get('archived', False):
+        raise HTTPException(409, 'Course is unavailable or archived; restore it before making changes')
+    linked = sorted(tx.list_equal('items', 'resource_id', identifier), key=lambda item: item['id'])
+    attached = tx.get('items', entry['item_id']) if entry.get('item_id') else None
+    affected = {item['id']: item for item in linked}
+    if attached:
+        affected[attached['id']] = attached
+    blockers = []
+    if entry.get('exam_attempts'):
+        blockers.append('This paper contains recorded exam attempts. Remove those explicitly before removing the paper.')
+    if any(item.get('course_id') != entry['course_id'] for item in affected.values()):
+        blockers.append('This resource has an unexpected cross-course reference. Resolve it before removal.')
+    if len(linked) + 1 > 450:
+        blockers.append('Too many linked activities for one safe removal.')
+    payload = json.dumps({'resource': entry, 'items': sorted(affected.values(), key=lambda i: i['id'])},
+                         sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
+    if len(payload) > 4 * 1024 * 1024:
+        blockers.append('Linked records are too large for one safe removal.')
+    preview = {'resource_id': identifier, 'title': entry['title'], 'source': entry['source'],
+               'course_code': course['code'], 'affected_count': len(affected),
+               'activities': [{'id': i['id'], 'title': i['title'], 'week_number': i.get('week_number')}
+                              for i in list(affected.values())[:450]],
+               'blockers': blockers, 'preview_token': hashlib.sha256(payload).hexdigest()}
+    return preview, linked
+
+
+@app.get('/api/resources/{identifier}/removal-preview')
+def preview_resource_removal(identifier: str, user: User = Depends(current_user)):
+    return app_store.workspace_atomic(user.uid, lambda tx: resource_removal_plan(tx, identifier)[0])
+
+
+@app.post('/api/resources/{identifier}/remove', response_model=ResourceRemovalResult)
+def remove_resource_with_links(identifier: str, value: ResourceRemovalConfirmation, user: User = Depends(current_user)):
+    def operation(tx):
+        preview, linked = resource_removal_plan(tx, identifier)
+        if preview['blockers']:
+            raise HTTPException(409, preview['blockers'][0])
+        if value.preview_token != preview['preview_token']:
+            raise HTTPException(409, 'Resource or linked activities changed; review the removal again')
+        updated = []
+        for item in linked:
+            # Preserve the latest stored record; only clear its resource association.
+            item['resource_id'] = None
+            validated = Item.model_validate(item)
+            tx.put('items', item)
+            updated.append(validated)
+        tx.delete('resources', identifier)
+        return ResourceRemovalResult(resource_id=identifier, items=updated)
+    return app_store.workspace_atomic(user.uid, operation)
 
 
 def now_s():

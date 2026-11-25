@@ -1,7 +1,7 @@
 import type { Snapshot } from './types';
 
 export type SnapshotCollection = keyof Snapshot;
-export type MutationHint = { collection: SnapshotCollection; deleteId?: string; bulkInsert?: boolean } | { collection: 'none' };
+export type MutationHint = { collection: SnapshotCollection; deleteId?: string; bulkInsert?: boolean; removeWithLinks?: boolean } | { collection: 'none' };
 
 type Identified = { id: string };
 type WorkspaceCollection = Exclude<SnapshotCollection, 'sessions' | 'focus_stats'>;
@@ -47,6 +47,12 @@ function preserveRows<T extends Identified>(incoming: T[], current: T[], changes
 /** Apply an authoritative API response to the relevant cached collection. */
 export function applyMutation(snapshot: Snapshot, hint: MutationHint, result: unknown): Snapshot {
   if (hint.collection === 'none') return snapshot;
+  if (hint.removeWithLinks) {
+    const rows = resourceRemovalRows(result, hint.deleteId);
+    const updates = new Map(rows.map(row => [row.id, row]));
+    return {...snapshot, resources:snapshot.resources.filter(row=>row.id!==hint.deleteId),
+      items:snapshot.items.map(row=>updates.get(row.id)||row).concat(rows.filter(row=>!snapshot.items.some(item=>item.id===row.id)))};
+  }
   const collection = hint.collection;
   const existing = snapshot[collection] as Identified[];
   if (hint.bulkInsert) {
@@ -70,6 +76,15 @@ export function bulkMutationRows(result:unknown): Identified[] {
   if (!result || typeof result!=='object' || !('items' in result) || !Array.isArray(result.items)
       || result.items.some(row=>!row || typeof row.id!=='string' || !row.id)) {
     throw new Error('Unexpected bulk save response. Refresh to verify your activities.');
+  }
+  return result.items;
+}
+
+export function resourceRemovalRows(result:unknown, expectedId?:string): Snapshot['items'] {
+  if (!expectedId || !result || typeof result!=='object' || !('resource_id' in result) || result.resource_id!==expectedId
+      || !('items' in result) || !Array.isArray(result.items)
+      || result.items.some(row=>!row || typeof row.id!=='string' || !row.id || row.resource_id!==null)) {
+    throw new Error('Unexpected resource removal response. Refresh to verify the saved state.');
   }
   return result.items;
 }

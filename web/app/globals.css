@@ -2091,3 +2091,15 @@ html[data-study-hub-theme="light"]{color-scheme:light}
 .btn.planner-delete-course-confirm{background:#a43251;color:#fff;border:1px solid #a43251}
 .btn.planner-delete-course-confirm:disabled{opacity:.48;cursor:not-allowed}
 @media(max-width:560px){.planner-delete-course-dialog .form-actions{flex-wrap:wrap}.planner-delete-course-dialog .form-actions .btn{flex:1}}
+
+/* v0.6: resource removal uses the existing destructive-dialog palette. */
+.planner-resource-removal-file{display:flex;align-items:center;gap:12px;background:var(--soft);border:1px solid var(--line);border-radius:12px;padding:13px;margin:16px 0;color:var(--text);overflow-wrap:anywhere}
+.planner-resource-removal-file svg,.planner-resource-removal-scroll svg,.planner-resource-removal-safe svg{flex-shrink:0;color:var(--muted)}
+.planner-resource-removal-file small,.planner-resource-removal-scroll small{display:block;color:var(--muted);font-size:.76rem;margin-top:3px}
+.planner-resource-removal-list{border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:12px 0;font-size:.84rem}
+.planner-resource-removal-scroll{max-height:220px;overflow-y:auto;overscroll-behavior:contain;margin-top:7px}
+.planner-resource-removal-scroll>div{display:flex;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
+.planner-resource-removal-scroll>div:last-child{border-bottom:0}
+.planner-resource-removal-safe{display:flex;align-items:flex-start;gap:9px;margin:14px 0}
+.planner-resource-removal-safe p{margin:0}
+.planner-resource-removal-safe svg{color:var(--teal)}

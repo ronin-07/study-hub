@@ -31,7 +31,7 @@ test('mutation handler synchronously guards duplicate requests and shows success
   assert.match(page,/mutationBusyRef\.current=true/);
   assert.match(page,/const result=await fn\(\)/);
   assert.match(page,/if\(feedback\)notify\(\{kind:'success'/);
-  assert.match(page,/finally \{mutationBusyRef\.current=false;setBusy\(false\);\}/);
+  assert.match(page,/finally \{resourceRemovalBusyRef\.current=false;mutationBusyRef\.current=false;setBusy\(false\);\}/);
 });
 
 test('meaningful saves are labeled and course archive has an Undo action', () => {

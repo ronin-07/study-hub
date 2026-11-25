@@ -8,6 +8,7 @@ import {
   Library, ListChecks, ListFilter, LoaderCircle, NotebookPen, Pencil, Plus, RotateCcw, Timer, Trash2, X
 } from 'lucide-react';
 import { api } from '@/lib/api';
+import { ResourceRemovalDialog } from '@/components/resource-removal-dialog';
 import { CourseDeletionDialog } from '@/components/course-deletion-dialog';
 import { ExamHero, ExamPapers } from '@/components/exam-prep';
 import { categoryInTitle, examFocusThisWeek } from '@/lib/exam-prep';
@@ -88,6 +89,7 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
   useEffect(()=>{landingRef.current?.scrollIntoView({behavior:'smooth',block:'center'});},[landingItem?.id,workspaceTab]);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [deletionCourse,setDeletionCourse]=useState<Course|null>(null);
+  const [removalResource,setRemovalResource]=useState<Resource|null>(null);
   const [generator,setGenerator]=useState<{course:Course;offerSetup:boolean}|null>(null);
   const [editCourseId, setEditCourseId] = useState('');
   const [courseDraft, setCourseDraft] = useState<CourseDraft>(courseDraftDefaults);
@@ -342,11 +344,7 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
       {title:resourceEditId?'Resource updated':'Resource linked',detail:resourceDraft.title.trim()});
     if (ok) {setDialog(null);setResourceEditId('');}
   };
-  const removeResource = async (r:Resource) => {
-    if (!confirm(`Remove the Study Hub link to “${r.title}”? Your original PDF in Drive or DTU Learn will not be deleted.`))return;
-    await run(() => api(`/api/resources/${r.id}`,user,{method:'DELETE'}),{collection:'resources',deleteId:r.id},
-      {title:'Resource unlinked',detail:r.title});
-  };
+  const removeResource = (r:Resource) => {if(!busy&&!pendingItems.size)setRemovalResource(r);};
   const removeFromTasks = async (i:Item) => {
     if (i.week_number == null || busy || !confirm(`Remove “${i.title}” from Tasks and Calendar? The Week ${i.week_number} checklist activity will stay.`)) return;
     await run(() => api(`/api/items/${i.id}`,user,{method:'PATCH',body:{hidden_from_tasks:true}}),
@@ -369,7 +367,7 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
     <div className="planner-file-details"><strong>{r.title}</strong><small>{sourceLabel(r)} · {resourceKindLabel(r.kind)}{r.chapter?` · ${r.chapter}`:''}</small></div>
     <button type="button" className="icon-btn" title="Open resource" onClick={()=>openResource(r)}>{r.source==='drive'?<BookOpen size={17}/>:<ExternalLink size={17}/>}</button>
     {!isReadOnly&&<button type="button" className="icon-btn" title="Edit resource or move to Course Library" onClick={()=>openResourceForm(r.week_number==null?'course':'week',r)}><Pencil size={15}/></button>}
-    {!isReadOnly&&<button type="button" className="icon-btn danger-hover" title="Unlink resource" onClick={()=>void removeResource(r)}><X size={15}/></button>}
+    {!isReadOnly&&<button type="button" className="icon-btn danger-hover" title="Remove resource" disabled={busy||pendingItems.size>0} onClick={()=>void removeResource(r)}><X size={15}/></button>}
   </div>;
 
   const renderCourseTask = (i: Item) => {
@@ -553,6 +551,7 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
       </div>
     </div>
 
+    {removalResource&&<ResourceRemovalDialog key={removalResource.id} resource={removalResource} user={user} busy={busy||pendingItems.size>0} run={run} onClose={()=>setRemovalResource(null)}/>}
     {deletionCourse&&<CourseDeletionDialog key={deletionCourse.id} course={deletionCourse} user={user} busy={busy} run={run} onClose={()=>setDeletionCourse(null)} onDeleted={()=>{
       setDeletionCourse(null);setWorkspaceTab('overview');
       const next=matching.find(c=>c.id!==deletionCourse.id&&c.archived);
