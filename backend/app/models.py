@@ -49,6 +49,7 @@ class Item(BaseDocument):
     is_task: bool = False
     hidden_from_tasks: bool = False  # Explicit opt-out; preserves week activity and its references.
     done: bool = False
+    completed_at: int | None = Field(default=None, ge=0)  # UTC epoch seconds; absent on legacy completions.
     submitted: bool = False
     planned_date: date | None = None
     due_date: date | None = None

@@ -35,7 +35,7 @@ import { FeedbackToasts, useFeedbackToasts, type FeedbackMessage } from '@/compo
 import { COMPLETION_HOLD_MS, COMPLETION_EXIT_MS, presentCompletingItems, type CompletionPhase } from '@/lib/task-completion-presentation';
 import { isActionable, isOverdue, todayPriorities, upcomingDeadlines, focusTasksForContext } from '@/lib/task-view';
 import { activityReference } from '@/lib/activity-display';
-import { todayStudyCourses, nextSevenDays, nextDeadlineDays, agendaForDate } from '@/lib/home-view';
+import { todayStudyCourses, completedHomePriorities, nextSevenDays, nextDeadlineDays, agendaForDate } from '@/lib/home-view';
 import { firebaseAuth, onAuthStateChanged, signIn, signOutUser, useFirebase } from '@/lib/auth';
 import { type DriveEntry, type DriveList, type FocusSession, type Item,
   type Resource, type Snapshot, type Tab, type DriveIndexed, type DriveSource, type DriveIndexResponse, type DriveScanResponse, duration,
@@ -493,6 +493,7 @@ export default function Page() {
   const calendarDays=useMemo(()=>nextSevenDays(today,openTasks),[today,openTasks]);
   const homeAgenda=useMemo(()=>homeSelectedDate?agendaForDate(openTasks,homeSelectedDate):[],[homeSelectedDate,openTasks]);
   const filteredPriorities=useMemo(()=>todayWork.filter(i=>priorityFilter==='all'||(priorityFilter==='course'?!!i.course_id:!i.course_id)),[todayWork,priorityFilter]);
+  const completedPriorities=useMemo(()=>completedHomePriorities(tasks,today).filter(i=>priorityFilter==='all'||(priorityFilter==='course'?!!i.course_id:!i.course_id)),[tasks,today,priorityFilter]);
   const hour=new Date(now*1000).getHours();
   const hello=hour<12?'Good morning':hour<17?'Good afternoon':'Good evening';
   const firstName=user?.displayName?.trim().split(/\s+/)[0]||'';
@@ -534,7 +535,7 @@ export default function Page() {
     setError('');
     // Instant feedback across Home, Tasks, Calendar, Course and PDF views.
     snapshotCoordinator.retain('items',item.id);
-    setData(previous=>({...previous,items:previous.items.map(i=>i.id===item.id?{...i,done:!item.done}:i)}));
+    setData(previous=>({...previous,items:previous.items.map(i=>i.id===item.id?{...i,done:!item.done,completed_at:item.done?null:Math.floor(Date.now()/1000)}:i)}));
     const activeUid=user?.uid||'local';
     void (async()=>{
       try {
@@ -554,10 +555,10 @@ export default function Page() {
 
       }catch(e){
         if(useFirebase&&firebaseAuth?.currentUser?.uid!==activeUid)return;
-        // Roll back only the completion bit; don't clobber a concurrent metadata edit.
+        // Roll back only the completion fields; don't clobber a concurrent metadata edit.
         snapshotCoordinator.retain('items',item.id);
         clearCompletion(item.id);
-        setData(previous=>({...previous,items:previous.items.map(i=>i.id===item.id?{...i,done:item.done}:i)}));
+        setData(previous=>({...previous,items:previous.items.map(i=>i.id===item.id?{...i,done:item.done,completed_at:item.completed_at??null}:i)}));
         notify({kind:'error',title:'Task update failed',detail:`${item.title}: ${e instanceof Error?e.message:'Please retry.'}`});
       }finally{
         pendingItemsRef.current.delete(item.id);
@@ -1116,7 +1117,7 @@ export default function Page() {
                           <div className="home-course-heading"><div className="home-course-icon"><BookOpen size={24}/></div><div className="home-course-title"><h3>{group.course.code} · {group.course.title}</h3><span>{weekLabel}</span></div>{group.overdueCount>0&&<span className="home-overdue-pill">{group.overdueCount} overdue</span>}</div>
                           <div className="home-course-overview">
                             {weekTopic&&<p className="home-course-topic" title={weekTopic}>{weekTopic}</p>}
-                            <span className="home-course-workload">{todayCount>0?`${todayCount} ${todayCount===1?'activity':'activities'} today`:`${group.tasks.length} ${group.tasks.length===1?'activity':'activities'} to catch up on`}</span>
+                            <span className="home-course-workload">{doneCount===group.activityCount?"All caught up for today!":todayCount>0?`${group.activityCount} ${group.activityCount===1?'activity':'activities'} today`:`${group.overdueCount} ${group.overdueCount===1?'activity':'activities'} to catch up on`}</span>
                           </div>
                           <div className="home-course-progress"><span>{todayCount>0?"Today’s progress":"Catch-up progress"} · {doneCount}/{group.activityCount} complete · <ProgressValue value={progress}/></span><ProgressTrack className="home-progress-track" identity={group.course.id} label={`${group.course.title} ${todayCount>0?"today’s":"catch-up"} activity progress`} value={progress}/></div>
                           <div className="home-course-actions"><button className="home-open-course" onClick={()=>openCourse(group.course.id)}>Open course <ArrowRight size={16}/></button><CourseActionsMenu courseId={group.course.id} courseTitle={group.course.title} onViewTasks={()=>openCourse(group.course.id,undefined,undefined,'tasks')} onFocus={()=>focusOnCourse(group.course.id)} onLibrary={()=>openCourse(group.course.id,undefined,undefined,'course-library')}/></div>
@@ -1128,8 +1129,17 @@ export default function Page() {
                 </section>
                 <section className="home-panel home-priorities" aria-labelledby="home-priorities-title">
                   <div className="home-panel-heading"><div className="home-heading-icon"><CheckCircle2 size={21}/></div><div><h2 id="home-priorities-title">Today’s priorities</h2></div><div className="home-priority-filters" aria-label="Filter priorities">{(['all','course','personal'] as const).map(filter=><button key={filter} onClick={()=>setPriorityFilter(filter)} className={priorityFilter===filter?'active':''} aria-pressed={priorityFilter===filter}>{filter==='all'?'All':filter==='course'?'Course':'Personal'}</button>)}</div></div>
-                  {filteredPriorities.length?<div className="home-priority-list">{filteredPriorities.slice(0,6).map(i=><div key={i.id} className={'home-priority-row task-completion-row'+(isOverdue(i,today)?' overdue':'')+(completingIds.has(i.id)?' is-completing':'')+(exitingIds.has(i.id)?' is-exiting':'')}><input type="checkbox" aria-label={`Complete ${i.title}`} disabled={busy||pendingItems.has(i.id)||completingIds.has(i.id)} className="task-completion-check" checked={i.done||completingIds.has(i.id)} onChange={()=>toggle(i)}/><button type="button" className="home-priority-info" aria-label={`Open ${i.title}`} onClick={()=>openDeadlineDestination(i)}><strong>{i.title}</strong><small>{i.course_id?(data.courses.find(c=>c.id===i.course_id)?.code||'Course'):'Personal'}{i.week_number?` · Week ${i.week_number}`:''}{activityReference(i)?` · ${activityReference(i)}`:''}{i.due_date&&i.due_date<today?` · Due ${dateText(i.due_date)}`:i.planned_date&&i.planned_date<today?` · Planned ${dateText(i.planned_date)}`:''}</small></button>{isOverdue(i,today)&&<span className="home-priority-tag overdue">Overdue</span>}{i.resource_id&&<button className="home-row-action" aria-label={`Open resource for ${i.title}`} disabled={busy} onClick={()=>openTaskResource(i)} title="Open linked resource"><BookOpen size={16}/></button>}<button className="home-row-action" aria-label={`Focus on ${i.title}`} disabled={busy} onClick={()=>startFrom(i)} title="Focus on task"><Play size={15}/></button></div>)}</div>:studyGroups.length&&priorityFilter==='all'?<PhotoEmptyState compact scene="home" title="All caught up" detail="No priorities scheduled for today." actionLabel="Add task" onAction={()=>{setTaskForm(true);setTab('tasks');}}/>:<div className="home-list-empty"><CheckCircle2 size={19}/> {priorityFilter==='all'?'No priorities for today.':`No ${priorityFilter} priorities for today.`}</div>}
+                  {filteredPriorities.length?<div className="home-priority-list">{filteredPriorities.slice(0,6).map(i=><div key={i.id} className={'home-priority-row task-completion-row'+(isOverdue(i,today)?' overdue':'')+(completingIds.has(i.id)?' is-completing':'')+(exitingIds.has(i.id)?' is-exiting':'')}><input type="checkbox" aria-label={`Complete ${i.title}`} disabled={busy||pendingItems.has(i.id)||completingIds.has(i.id)} className="task-completion-check" checked={i.done||completingIds.has(i.id)} onChange={()=>toggle(i)}/><button type="button" className="home-priority-info" aria-label={`Open ${i.title}`} onClick={()=>openDeadlineDestination(i)}><strong>{i.title}</strong><small>{i.course_id?(data.courses.find(c=>c.id===i.course_id)?.code||'Course'):'Personal'}{i.week_number?` · Week ${i.week_number}`:''}{activityReference(i)?` · ${activityReference(i)}`:''}{i.due_date&&i.due_date<today?` · Due ${dateText(i.due_date)}`:i.planned_date&&i.planned_date<today?` · Planned ${dateText(i.planned_date)}`:''}</small></button>{isOverdue(i,today)&&<span className="home-priority-tag overdue">Overdue</span>}{i.resource_id&&<button className="home-row-action" aria-label={`Open resource for ${i.title}`} disabled={busy} onClick={()=>openTaskResource(i)} title="Open linked resource"><BookOpen size={16}/></button>}<button className="home-row-action" aria-label={`Focus on ${i.title}`} disabled={busy} onClick={()=>startFrom(i)} title="Focus on task"><Play size={15}/></button></div>)}</div>:completedPriorities.length?<div className="home-list-empty"><CheckCircle2 size={19}/> All priorities completed!</div>:studyGroups.length&&priorityFilter==='all'?<PhotoEmptyState compact scene="home" title="All caught up" detail="No priorities scheduled for today." actionLabel="Add task" onAction={()=>{setTaskForm(true);setTab('tasks');}}/>:<div className="home-list-empty"><CheckCircle2 size={19}/> {priorityFilter==='all'?'No priorities for today.':`No ${priorityFilter} priorities for today.`}</div>}
                   {filteredPriorities.length>6&&<button className="home-panel-link home-list-footer" onClick={()=>navigate('tasks')}>View {filteredPriorities.length-6} more tasks <ArrowRight size={14}/></button>}
+                  {completedPriorities.length>0&&<details className="home-completed-priorities" key={today+'-'+priorityFilter}>
+                    <summary><ChevronDown size={16}/><CheckCircle2 size={17}/> Completed today ({completedPriorities.length})</summary>
+                    <div className="home-priority-list">{completedPriorities.map(i=><div className="home-priority-row home-priority-completed" key={i.id}>
+                      <input type="checkbox" className="task-completion-check" checked aria-label={`Undo completion of ${i.title}`} disabled={busy||pendingItems.has(i.id)||completingIds.has(i.id)} onChange={()=>toggle(i)}/>
+                      <button type="button" className="home-priority-info" onClick={()=>openDeadlineDestination(i)}><strong>{i.title}</strong><small>{i.course_id?(data.courses.find(c=>c.id===i.course_id)?.code||'Course'):'Personal'}{i.week_number?` · Week ${i.week_number}`:''}{activityReference(i)?` · ${activityReference(i)}`:''}</small></button>
+                      <CheckCircle2 size={17} className="home-completed-icon" aria-hidden="true"/>
+                    </div>)}</div>
+                  </details>}
+
                 </section>
               </div>
               <div className="home-side-column">

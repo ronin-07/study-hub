@@ -2064,3 +2064,14 @@ html[data-study-hub-theme="light"]{color-scheme:light}
 @media(max-width:650px){.planner-exam-hero{flex-wrap:wrap}.exam-hero-progresses{flex:1 1 100%;gap:12px}.exam-paper-dialog{max-height:90dvh;padding:18px}.exam-attempt-stats strong{font-size:1rem}}
 .exam-attempt-error{color:var(--text);background:#be786522;border:1px solid #be786566;border-radius:8px;padding:10px;font-size:.85rem}
 @media(min-width:1181px){.planner-learning-checklist .planner-activity-detail:not(:has(.planner-activity-metadata,.planner-activity-reference,.planner-activity-kind,.planner-activity-document,.planner-activity-notes)){align-items:center}.planner-learning-checklist .planner-activity-detail:not(:has(.planner-activity-metadata,.planner-activity-reference,.planner-activity-kind,.planner-activity-document,.planner-activity-notes)) .task-completion-check{margin-top:0}}
+
+/* Home daily completion history: reuse task checkbox and existing panel colors. */
+.home-completed-priorities{margin-top:14px;border-top:1px solid color-mix(in srgb,currentColor 15%,transparent);padding-top:8px;}
+.home-completed-priorities summary{display:flex;align-items:center;gap:8px;padding:9px 4px;cursor:pointer;list-style:none;font-size:.82rem;font-weight:700;color:#426e50;}
+.home-completed-priorities summary::-webkit-details-marker{display:none;}
+.home-completed-priorities summary>svg:first-child{transform:rotate(-90deg);}
+.home-completed-priorities[open] summary>svg:first-child{transform:none;}
+.theme-dark .home-completed-priorities summary,.theme-dark .home-completed-icon{color:#9ec5a7;}
+.home-completed-icon{color:#426e50;flex-shrink:0;}
+.home-priority-completed .home-priority-info strong{text-decoration:line-through;text-decoration-thickness:1px;}
+.home-completed-priorities summary:focus-visible{outline:2px solid #8db59a;outline-offset:3px;border-radius:6px;}

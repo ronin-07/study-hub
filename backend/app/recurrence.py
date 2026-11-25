@@ -34,7 +34,7 @@ def next_occurrence(previous: Item) -> Item:
     identifier = 'occ_' + sha256(f'{series}:{next_plan.isoformat()}'.encode('utf-8')).hexdigest()[:32]
     next_due = (previous.due_date + (next_plan - previous.planned_date)) if previous.due_date else None
     return previous.model_copy(update={
-        'id': identifier, 'done': False, 'submitted': False,
+        'id': identifier, 'done': False, 'completed_at': None, 'submitted': False,
         'planned_date': next_plan, 'due_date': next_due,
         'repeat_series_id': series,
     })

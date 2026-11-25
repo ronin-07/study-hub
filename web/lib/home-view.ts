@@ -12,35 +12,40 @@ export type TodayCourse = {
   todayCount: number;
 };
 
-/** One card per active course, even when today's items span several teaching weeks. */
+/** Completion dates use the same local calendar as planned/due dates. */
+export function completedHomePriorities(items: Item[], today: string): Item[] {
+  return items.filter(i => {
+    if (!i.done || !isActionable(i) || i.completed_at == null) return false;
+    if (!(i.planned_date && i.planned_date <= today) && !(i.due_date && i.due_date <= today)) return false;
+    const d = new Date(i.completed_at * 1000);
+    const local = [d.getFullYear(), String(d.getMonth()+1).padStart(2,'0'), String(d.getDate()).padStart(2,'0')].join('-');
+    return local === today;
+  }).sort((a,b) => b.completed_at! - a.completed_at! || a.title.localeCompare(b.title));
+}
+
+/** One card per active course; open and completed-today work share a denominator. */
 export function todayStudyCourses(courses: Course[], items: Item[], today: string): TodayCourse[] {
   const active = new Map(courses.filter(c => !c.archived).map(c => [c.id, c]));
-  const work = todayPriorities(items.filter(isActionable), today);
-  // Today's schedule includes already-completed items, so checking the last
-  // task does not make the course card disappear or reset its progress.
-  const scheduledToday = items.filter(i => isActionable(i) &&
-    (i.planned_date === today || i.due_date === today));
+  const actionable = items.filter(isActionable);
+  const work = todayPriorities(actionable, today);
+  const completed = completedHomePriorities(actionable, today);
+  // Preserve today's explicitly scheduled work, including legacy completed rows.
+  const scheduledToday = actionable.filter(i => i.planned_date === today || i.due_date === today);
+  const cohort = new Map([...work, ...completed, ...scheduledToday].map(i => [i.id, i]));
   const grouped = new Map<string, Item[]>();
-  for (const task of work) {
+  for (const task of cohort.values()) {
     if (!task.course_id || !active.has(task.course_id)) continue;
     grouped.set(task.course_id, [...(grouped.get(task.course_id) || []), task]);
   }
-  for (const task of scheduledToday) {
-    if (task.course_id && active.has(task.course_id) && !grouped.has(task.course_id)) grouped.set(task.course_id, []);
-  }
-  return [...grouped].map(([id, tasks]) => {
-    const todayTasks = scheduledToday.filter(i => i.course_id === id);
-    const contextTasks = [...todayTasks, ...tasks];
-    const weeks = [...new Set(contextTasks.map(t => t.week_number).filter((n): n is number => n != null))].sort((a,b) => a-b);
-    // Daily progress only counts work actually scheduled for today. Overdue-
-    // only courses instead show catch-up progress for their open work.
-    const progressTasks = todayTasks.length ? todayTasks : tasks;
+  return [...grouped].map(([id, progressTasks]) => {
+    const tasks = progressTasks.filter(i => !i.done);
+    const weeks = [...new Set(progressTasks.map(t => t.week_number).filter((n): n is number => n != null))].sort((a,b) => a-b);
     return {
       course: active.get(id)!, tasks, weekNumbers: weeks,
       overdueCount: tasks.filter(t => isOverdue(t, today)).length,
       doneCount: progressTasks.filter(i => i.done).length,
       activityCount: progressTasks.length,
-      todayCount: todayTasks.length
+      todayCount: progressTasks.filter(i => i.planned_date === today || i.due_date === today).length
     };
   }).sort((a,b) => b.overdueCount-a.overdueCount || b.tasks.length-a.tasks.length || a.course.code.localeCompare(b.course.code));
 }

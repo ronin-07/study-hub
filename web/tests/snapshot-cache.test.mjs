@@ -66,9 +66,9 @@ const api=readFileSync(new URL('../../backend/app/main.py',import.meta.url),'utf
 
 test('checkboxes update optimistically, use a targeted task PATCH, and rollback on failure',()=>{
   assert.match(page,/pendingItemsRef\.current\.has\(item\.id\)/);
-  assert.match(page,/items:previous\.items\.map\(i=>i\.id===item\.id\?\{\.\.\.i,done:!item\.done\}/);
+  assert.match(page,/items:previous\.items\.map\(i=>i\.id===item\.id\?\{\.\.\.i,done:!item\.done,completed_at:item\.done\?null:Math\.floor\(Date\.now\(\)\/1000\)\}/);
   assert.match(page,/method:'PATCH',body:\{done:!item\.done\}/);
-  assert.match(page,/items:previous\.items\.map\(i=>i\.id===item\.id\?\{\.\.\.i,done:item\.done\}:i\)/);
+  assert.match(page,/items:previous\.items\.map\(i=>i\.id===item\.id\?\{\.\.\.i,done:item\.done,completed_at:item\.completed_at\?\?null\}:i\)/);
 });
 
 test('completion reconciles the affected records without a full item list',()=>{

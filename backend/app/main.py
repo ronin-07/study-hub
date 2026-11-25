@@ -242,8 +242,9 @@ def add_item(value: Item, user: User = Depends(current_user)):
                 raise HTTPException(422, 'Referenced weekly resource belongs to another week')
         if weekly_activity_matches(tx, value.course_id, value.week_number, value.title):
             raise HTTPException(409, 'An activity with this name already exists in this teaching week')
-        tx.create('items', value.model_dump(mode='json'))
-        return value
+        saved = value.model_copy(update={'completed_at': int(time.time()) if value.done else None})
+        tx.create('items', saved.model_dump(mode='json'))
+        return saved
 
     try:
         return app_store.workspace_atomic(user.uid, operation)
@@ -268,6 +269,11 @@ def _patch_item(identifier: str, updates: ItemPatch, user: User, with_successor=
         if original.get('course_id'):
             ensure_course_active(user.uid, original['course_id'])
         merged = {**original, **fields}
+        if not merged.get('done'):
+            merged['completed_at'] = None
+        elif not original.get('done'):
+            merged['completed_at'] = int(time.time())
+        # Preserve the original timestamp on retries and metadata edits, including unknown legacy dates.
         # Enforce on date changes but keep legacy records completable/editable.
         if ('planned_date' in fields or 'due_date' in fields) and merged.get('planned_date') and merged.get('due_date') and merged['planned_date'] > merged['due_date']:
             raise HTTPException(422, 'Planned work date cannot be after the deadline')
