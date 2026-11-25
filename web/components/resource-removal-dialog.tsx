@@ -8,7 +8,7 @@ import type { Item, Resource } from '@/lib/types';
 import type { MutationHint } from '@/lib/snapshot-cache';
 import type { FeedbackMessage } from '@/components/feedback-toasts';
 
-type Preview = {resource_id:string;title:string;source:Resource['source'];course_code:string;affected_count:number;activities:{id:string;title:string;week_number:number|null}[];blockers:string[];preview_token:string};
+type Preview = {resource_id:string;title:string;source:Resource['source'];course_code:string;affected_count:number;paired_paper_title?:string|null;activities:{id:string;title:string;week_number:number|null}[];blockers:string[];preview_token:string};
 interface Props {
   resource:Resource;user:User|null;busy:boolean;
   run:(operation:()=>Promise<unknown>,mutation?:MutationHint,feedback?:FeedbackMessage)=>Promise<boolean>;
@@ -68,7 +68,7 @@ export function ResourceRemovalDialog({resource,user,busy,run,onClose}:Props){
     {error?<div className="planner-delete-course-warning" role="alert"><p>{error}</p><button type="button" className="btn secondary small" disabled={disabled} onClick={reload}>Check again</button></div>:!preview?<p role="status" className="planner-save-status"><LoaderCircle size={15} className="spin"/> Checking linked activities…</p>:<>
       <p>{preview.affected_count?`This resource is linked to ${preview.affected_count} study ${preview.affected_count===1?'activity':'activities'}. Removing it will clear these file links.`:'This resource has no linked study activities.'}</p>
       {!!preview.activities.length&&<div className="planner-resource-removal-list"><strong>Affected activities</strong><div className="planner-resource-removal-scroll" tabIndex={0} role="region" aria-label="Affected activities">{preview.activities.map(item=><div key={item.id}><BookOpen size={15}/><span><strong>{item.title}</strong><small>{preview.course_code} · {item.week_number===null?'Course-wide':`Week ${item.week_number}`}</small></span></div>)}</div></div>}
-      {preview.blockers.length>0&&<div className="planner-delete-course-warning" role="alert">{preview.blockers.map(reason=><p key={reason}>{reason}</p>)}</div>}
+      {preview.paired_paper_title&&<p>This solution is paired with “{preview.paired_paper_title}”. The question paper and its attempts will be kept.</p>}{preview.blockers.length>0&&<div className="planner-delete-course-warning" role="alert">{preview.blockers.map(reason=><p key={reason}>{reason}</p>)}</div>}
       <div className="planner-resource-removal-safe"><ShieldCheck size={20}/><p>Only the Study Hub resource entry and its links are removed. Your original file, activities, completion progress, dates, notes and Focus history will be kept. Any saved page bookmark on this resource will be removed with it.</p></div>
     </>}
     <div className="form-actions"><button type="button" className="btn secondary" disabled={disabled} onClick={onClose}>Cancel</button><button type="button" className="btn planner-delete-course-confirm" disabled={disabled||!preview||preview.resource_id!==resource.id||!!preview.blockers.length} aria-busy={submitting} onClick={()=>void remove()}>{submitting?<><LoaderCircle size={15} className="spin"/> Removing…</>:preview?.affected_count?'Unlink and remove':'Remove resource'}</button></div>

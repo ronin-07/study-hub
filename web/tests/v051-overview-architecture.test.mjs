@@ -26,7 +26,7 @@ test('resource previews navigate to documents but leave destructive controls in 
   assert.match(study,/shared\.length\?shared\.map\(resourceRow\)/);
   assert.match(study,/weekResources\.length\?weekResources\.map\(resourceRow\)/);
   assert.match(study,/onClick=\{\(\)=>void removeResource\(r\)\}/);
-  assert.match(study,/resource_id\?data\.resources\.find/);
+  assert.match(study,/activityResources\(i,data\.resources\)/);
 });
 
 test('Study progress clarifies scope without altering optimistic completion counts',()=>{

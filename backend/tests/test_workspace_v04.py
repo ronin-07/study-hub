@@ -166,7 +166,9 @@ def test_cannot_delete_item_with_linked_pdf(client):
     r=client.post('/api/resources',json={'title':'Slide','source':'link','url':'https://example.com/lecture.pdf',
       'course_id':c['id'],'week_number':1,'item_id':item['id']}).json()
     assert client.delete('/api/items/'+item['id']).status_code==409
-    assert client.delete('/api/resources/'+r['id']).status_code==204
+    assert client.delete('/api/resources/'+r['id']).status_code==409
+    preview=client.get('/api/resources/'+r['id']+'/removal-preview').json()
+    assert client.post('/api/resources/'+r['id']+'/remove',json={'preview_token':preview['preview_token']}).status_code==200
     assert client.delete('/api/items/'+item['id']).status_code==204
 
 

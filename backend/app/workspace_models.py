@@ -50,6 +50,7 @@ class ResourcePatch(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=240)
     kind: str | None = Field(default=None, pattern=r'^(slides|annotated|handwritten|textbook|exam_paper|exam_solution|other)$')
     item_id: str | None = None
+    exam_paper_id: str | None = Field(default=None, pattern=r'^[a-zA-Z0-9_-]{1,80}$')
     chapter: str | None = Field(default=None, max_length=120)
     page_start: int | None = Field(default=None, ge=1, le=20000)
     page_end: int | None = Field(default=None, ge=1, le=20000)

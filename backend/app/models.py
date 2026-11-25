@@ -145,6 +145,7 @@ class Resource(BaseDocument):
     url: HttpUrl | None = None
     drive_file_id: str | None = Field(default=None, pattern=r'^[A-Za-z0-9_-]{5,200}$')
     item_id: str | None = None
+    exam_paper_id: str | None = Field(default=None, pattern=r'^[a-zA-Z0-9_-]{1,80}$')
     last_page: int = Field(default=1, ge=1, le=20000)
     exam_attempts: list[ExamAttempt] = Field(default_factory=list, max_length=100)
     chapter: str = Field(default='', max_length=120)
@@ -153,6 +154,8 @@ class Resource(BaseDocument):
 
     @model_validator(mode='after')
     def valid_location(self):
+        if self.exam_paper_id is not None and self.kind != 'exam_solution':
+            raise ValueError('Only exam solutions can reference a paper')
         if self.exam_attempts and self.kind != 'exam_paper':
             raise ValueError('Only exam papers can have attempts')
         if len({a.id for a in self.exam_attempts}) != len(self.exam_attempts):

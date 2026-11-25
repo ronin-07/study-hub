@@ -2103,3 +2103,26 @@ html[data-study-hub-theme="light"]{color-scheme:light}
 .planner-resource-removal-safe{display:flex;align-items:flex-start;gap:9px;margin:14px 0}
 .planner-resource-removal-safe p{margin:0}
 .planner-resource-removal-safe svg{color:var(--teal)}
+
+/* Resource management: compact activity rows and shared document controls. */
+.app-shell .planner-learning-checklist .planner-activity-detail.compact-activity{align-items:center;padding-block:12px}
+.app-shell .planner-learning-checklist .planner-activity-detail.compact-activity>input.task-completion-check{align-self:center;margin:0}
+.planner-activity-document-row{display:flex;align-items:center;gap:5px;min-width:0;margin-top:7px}
+.planner-activity-document-row .planner-activity-document{margin-top:0;min-width:0;flex:0 1 365px}
+.planner-activity-document-row .icon-btn{flex-shrink:0}
+.exam-paper-group{border:1px solid var(--line);border-radius:12px;padding:10px;margin:8px 0;background:var(--soft)}
+.exam-paper-group .exam-paper-row{border:0;padding:5px 0 10px}
+.exam-document-line{display:flex;gap:4px;align-items:center;margin:6px 0;min-width:0}
+.exam-document-open{flex:1;min-width:0;justify-content:flex-start;text-align:left}
+.exam-document-open span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.exam-resource-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+@media(min-width:1001px){.planner-exam-grid{grid-template-columns:minmax(0,1fr) minmax(0,1.35fr)}}
+.bulk-resource-dialog{position:fixed;inset:0;margin:auto;color:var(--text);width:min(850px,calc(100vw - 32px));max-width:850px;max-height:90dvh;overflow:auto}
+.bulk-resource-fields{min-width:0;border:0;padding:0;margin:0}
+.bulk-resource-common,.bulk-resource-row{border:1px solid var(--line);border-radius:12px;padding:12px;margin:10px 0;background:var(--soft)}
+.bulk-resource-inline{display:flex;gap:8px;align-items:center}.bulk-resource-inline select{min-width:0;flex:1}
+.bulk-resource-heading{display:flex;align-items:center;gap:8px;margin-bottom:8px;min-width:0}.bulk-resource-heading strong{flex:1;overflow-wrap:anywhere;min-width:0}.bulk-resource-heading small{color:var(--muted);font-size:.7rem}
+.bulk-resource-dialog::backdrop{background:#100b13b3;backdrop-filter:blur(3px)}
+@media(max-width:680px){.bulk-resource-row .form-grid{grid-template-columns:1fr}.bulk-resource-heading{flex-wrap:wrap}.bulk-resource-heading strong{flex-basis:70%}}
+
+.bulk-resource-dialog:not([open]){display:none}.resources-index-row>.task-completion-check{margin-left:8px;flex-shrink:0}.folder-picker-heading{flex-wrap:wrap}

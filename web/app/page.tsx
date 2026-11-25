@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { api, pdfBlob } from '@/lib/api';
 import { formatLocalClock, formatLocalDate } from '@/lib/clock';
-import { applyMutation, bulkMutationRows, resourceRemovalRows, preserveWorkspaceChanges, type MutationHint } from '@/lib/snapshot-cache';
+import { applyMutation, bulkMutationRows, resourceRemovalRows, resourceDetachRows, preserveWorkspaceChanges, type MutationHint } from '@/lib/snapshot-cache';
 import { createSnapshotCoordinator, describeSnapshotFailure, fetchSnapshotWithRetry, type SnapshotLoadProblem } from '@/lib/snapshot-loading';
 import { Badge, Card, EmptyState, FormRow, SectionTitle } from '@/components/common';
 import { PdfOpeningOverlay } from '@/components/pdf-opening-overlay';
@@ -35,6 +35,8 @@ import { FeedbackToasts, useFeedbackToasts, type FeedbackMessage } from '@/compo
 import { COMPLETION_HOLD_MS, COMPLETION_EXIT_MS, presentCompletingItems, type CompletionPhase } from '@/lib/task-completion-presentation';
 import { isActionable, isOverdue, todayPriorities, upcomingDeadlines, focusTasksForContext } from '@/lib/task-view';
 import { activityReference } from '@/lib/activity-display';
+import {activityResources,isExamResource} from '@/lib/resource-links';
+import {BulkResourceLinker} from '@/components/bulk-resource-linker';
 import { todayStudyCourses, completedHomePriorities, nextSevenDays, nextDeadlineDays, agendaForDate } from '@/lib/home-view';
 import { firebaseAuth, onAuthStateChanged, signIn, signOutUser, useFirebase } from '@/lib/auth';
 import { type DriveEntry, type DriveList, type FocusSession, type Item,
@@ -205,7 +207,7 @@ export default function Page() {
   const [indexFilter,setIndexFilter] = useState<IndexedPdfFilter>('unlinked');
   const [indexSearch,setIndexSearch] = useState('');
   const [selectedPdfId,setSelectedPdfId] = useState<string|null>(null);
-  const linkIntentRef=useRef<{courseId:string;week:number;scope:'course'|'week';kind:Resource['kind']}|null>(null);
+  const linkIntentRef=useRef<{courseId:string;week:number;scope:'course'|'week';kind:Resource['kind'];paperId?:string}|null>(null);
   const linkPanelRef=useRef<HTMLDivElement|null>(null);
   const [foldersExpanded,setFoldersExpanded] = useState(false);
   const [visibleCount,setVisibleCount] = useState(30);
@@ -214,6 +216,13 @@ export default function Page() {
   const [linkScope,setLinkScope] = useState<'course'|'week'>('week');
   const [linkKind,setLinkKind] = useState<Resource['kind']>('handwritten');
   const [linkItem,setLinkItem] = useState('');
+  const [linkPaper,setLinkPaper]=useState('');
+  const [bulkMode,setBulkMode]=useState(false);
+  const [bulkFiles,setBulkFiles]=useState<(DriveEntry|DriveIndexed)[]>([]);
+  const [bulkReview,setBulkReview]=useState(false);
+  const toggleBulkFile=(file:DriveEntry|DriveIndexed)=>setBulkFiles(prev=>prev.some(f=>f.id===file.id)?prev.filter(f=>f.id!==file.id):prev.length<30?[...prev,file]:prev);
+  const clearBulk=()=>{setBulkFiles([]);setBulkReview(false);setBulkMode(false);};
+  const selectBulkVisible=(files:(DriveEntry|DriveIndexed)[])=>setBulkFiles(prev=>[...new Map([...prev,...files.filter(f=>f.mimeType==='application/pdf')].map(f=>[f.id,f])).values()].slice(0,30));
   const [linkingFileId,setLinkingFileId] = useState<string|null>(null);
 
   const cancelDriveReads=useCallback(()=>{
@@ -228,7 +237,7 @@ export default function Page() {
     setSourceFolder(null);setIndexedFiles([]);setDriveIndexState('idle');
     setDriveFiles([]);setDriveNext(null);setDriveFolderLoaded(null);setDriveFolderError('');setDriveBusy(false);
     setFolderPath([{id:'root',name:'My Drive'}]);setFoldersExpanded(false);
-    setSelectedPdfId(null);setIndexSearch('');setIndexFilter('unlinked');setVisibleCount(30);
+    setSelectedPdfId(null);setBulkFiles([]);setBulkReview(false);setBulkMode(false);setLinkPaper('');setIndexSearch('');setIndexFilter('unlinked');setVisibleCount(30);
     setLinkCourse('');setLinkWeek(1);setLinkScope('week');setLinkKind('handwritten');setLinkItem('');
     setLinkingFileId(null);linkIntentRef.current=null;
     scanBusyRef.current=false;setScanBusy(false);
@@ -415,7 +424,7 @@ export default function Page() {
   const act = async(fn:()=>Promise<unknown>, mutation?:MutationHint, feedback?:FeedbackMessage):Promise<boolean>=>{
     // An immediate ref guard prevents double submits before React commits busy=true.
     if (mutationBusyRef.current) return false;
-    const removingResource=mutation?.collection==='resources'&&mutation.removeWithLinks===true;
+    const removingResource=mutation?.collection==='resources'&&(mutation.removeWithLinks===true||mutation.detachLinks===true);
     if(removingResource&&pendingItemsRef.current.size){notify({kind:'error',title:'Wait for activity saves',detail:'Try removing the resource once the activity updates finish.'});return false;}
     mutationBusyRef.current=true;
     resourceRemovalBusyRef.current=removingResource;
@@ -428,7 +437,12 @@ export default function Page() {
       let synchronized = true;
       if(mutation){
         if(mutation.collection!=='none') {
-          if(mutation.removeWithLinks){
+          if(mutation.detachLinks){
+            const {resource,items}=resourceDetachRows(result);
+            snapshotCoordinator.retain('resources',resource.id);
+            for(const row of items)snapshotCoordinator.retain('items',row.id);
+            setData(previous=>applyMutation(previous,mutation,result));
+          }else if(mutation.removeWithLinks){
             const rows=resourceRemovalRows(result,mutation.deleteId);
             snapshotCoordinator.retain('resources',mutation.deleteId);
             for(const row of rows)snapshotCoordinator.retain('items',row.id);
@@ -927,7 +941,8 @@ export default function Page() {
     if(pdfObjectUrlRef.current)URL.revokeObjectURL(pdfObjectUrlRef.current);
   },[pdfCache]);
   const openTaskResource=(item:Item)=>{
-    const r=data.resources.find(entry=>entry.id===item.resource_id);
+    const documents=activityResources(item,data.resources);
+    const r=documents.find(entry=>entry.id===item.resource_id)||documents[0];
     if(!r){setError('The linked document is no longer available. Check the Course Library.');return;}
     if(r.source==='drive'&&r.drive_file_id)previewPdf(r.drive_file_id,r.title,r.id,r.last_page);
     else if(r.url)window.open(r.url,'_blank','noopener,noreferrer');
@@ -959,7 +974,7 @@ export default function Page() {
     setLinkingFileId(file.id);
     void act(async()=>{
       if(!linkCourse)throw new Error('Select a course before linking a PDF');
-      return api<Resource>('/api/resources',user,{method:'POST',body:{course_id:linkCourse,week_number:linkScope==='course'?null:linkWeek,title:file.name,kind:linkKind,source:'drive',drive_file_id:file.id,item_id:linkScope==='course'?null:(linkItem||null)}});
+      return api<Resource>('/api/resources',user,{method:'POST',body:{course_id:linkCourse,week_number:isExamResource(linkKind)||linkScope==='course'?null:linkWeek,title:file.name,kind:linkKind,source:'drive',drive_file_id:file.id,item_id:isExamResource(linkKind)||linkScope==='course'?null:(linkItem||null),exam_paper_id:linkKind==='exam_solution'?(linkPaper||null):null}});
     },{collection:'resources'},{title:'PDF linked',detail:`${file.name} added to your course.`}).finally(()=>{
       if(driveGeneration.current===generation)setLinkingFileId(null);
     });
@@ -998,13 +1013,16 @@ export default function Page() {
   const selectedPdf=selectedIndexed??selectedBrowsePdf;
   const choosePdf=(entry:DriveEntry|DriveIndexed)=>{
     // Never carry course/week selections from a different file into a new link.
+    if(bulkMode){toggleBulkFile(entry);return;}
     setSelectedPdfId(entry.id);
+    setLinkPaper('');
     const suggestion='suggestion' in entry ? entry.suggestion : null;
     const intended=linkIntentRef.current;
-    setLinkCourse(suggestion?.course_id||intended?.courseId||'');
+    setLinkCourse(intended?.paperId?intended.courseId:suggestion?.course_id||intended?.courseId||'');
     setLinkWeek(suggestion?.week_number||intended?.week||1);
     setLinkScope(suggestion?( ['textbook','handwritten'].includes(suggestion.kind)?'course':'week'):(intended?.scope||'week'));
-    setLinkKind(suggestion?.kind||intended?.kind||'handwritten');
+    setLinkKind(intended?.paperId?'exam_solution':suggestion?.kind||intended?.kind||'handwritten');
+    if(intended?.paperId){setLinkScope('course');setLinkPaper(intended.paperId);}
     setLinkItem('');
     if(window.innerWidth<=900){window.requestAnimationFrame(()=>linkPanelRef.current?.scrollIntoView({behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'}));}
   };
@@ -1138,7 +1156,7 @@ export default function Page() {
                 </section>
                 <section className="home-panel home-priorities" aria-labelledby="home-priorities-title">
                   <div className="home-panel-heading"><div className="home-heading-icon"><CheckCircle2 size={21}/></div><div><h2 id="home-priorities-title">Today’s priorities</h2></div><div className="home-priority-filters" aria-label="Filter priorities">{(['all','course','personal'] as const).map(filter=><button key={filter} onClick={()=>setPriorityFilter(filter)} className={priorityFilter===filter?'active':''} aria-pressed={priorityFilter===filter}>{filter==='all'?'All':filter==='course'?'Course':'Personal'}</button>)}</div></div>
-                  {filteredPriorities.length?<div className="home-priority-list">{filteredPriorities.slice(0,6).map(i=><div key={i.id} className={'home-priority-row task-completion-row'+(isOverdue(i,today)?' overdue':'')+(completingIds.has(i.id)?' is-completing':'')+(exitingIds.has(i.id)?' is-exiting':'')}><input type="checkbox" aria-label={`Complete ${i.title}`} disabled={busy||pendingItems.has(i.id)||completingIds.has(i.id)} className="task-completion-check" checked={i.done||completingIds.has(i.id)} onChange={()=>toggle(i)}/><button type="button" className="home-priority-info" aria-label={`Open ${i.title}`} onClick={()=>openDeadlineDestination(i)}><strong>{i.title}</strong><small>{i.course_id?(data.courses.find(c=>c.id===i.course_id)?.code||'Course'):'Personal'}{i.week_number?` · Week ${i.week_number}`:''}{activityReference(i)?` · ${activityReference(i)}`:''}{i.due_date&&i.due_date<today?` · Due ${dateText(i.due_date)}`:i.planned_date&&i.planned_date<today?` · Planned ${dateText(i.planned_date)}`:''}</small></button>{isOverdue(i,today)&&<span className="home-priority-tag overdue">Overdue</span>}{i.resource_id&&<button className="home-row-action" aria-label={`Open resource for ${i.title}`} disabled={busy} onClick={()=>openTaskResource(i)} title="Open linked resource"><BookOpen size={16}/></button>}<button className="home-row-action" aria-label={`Focus on ${i.title}`} disabled={busy} onClick={()=>startFrom(i)} title="Focus on task"><Play size={15}/></button></div>)}</div>:completedPriorities.length?<div className="home-list-empty"><CheckCircle2 size={19}/> All priorities completed!</div>:studyGroups.length&&priorityFilter==='all'?<PhotoEmptyState compact scene="home" title="All caught up" detail="No priorities scheduled for today." actionLabel="Add task" onAction={()=>{setTaskForm(true);setTab('tasks');}}/>:<div className="home-list-empty"><CheckCircle2 size={19}/> {priorityFilter==='all'?'No priorities for today.':`No ${priorityFilter} priorities for today.`}</div>}
+                  {filteredPriorities.length?<div className="home-priority-list">{filteredPriorities.slice(0,6).map(i=><div key={i.id} className={'home-priority-row task-completion-row'+(isOverdue(i,today)?' overdue':'')+(completingIds.has(i.id)?' is-completing':'')+(exitingIds.has(i.id)?' is-exiting':'')}><input type="checkbox" aria-label={`Complete ${i.title}`} disabled={busy||pendingItems.has(i.id)||completingIds.has(i.id)} className="task-completion-check" checked={i.done||completingIds.has(i.id)} onChange={()=>toggle(i)}/><button type="button" className="home-priority-info" aria-label={`Open ${i.title}`} onClick={()=>openDeadlineDestination(i)}><strong>{i.title}</strong><small>{i.course_id?(data.courses.find(c=>c.id===i.course_id)?.code||'Course'):'Personal'}{i.week_number?` · Week ${i.week_number}`:''}{activityReference(i)?` · ${activityReference(i)}`:''}{i.due_date&&i.due_date<today?` · Due ${dateText(i.due_date)}`:i.planned_date&&i.planned_date<today?` · Planned ${dateText(i.planned_date)}`:''}</small></button>{isOverdue(i,today)&&<span className="home-priority-tag overdue">Overdue</span>}{activityResources(i,data.resources).length>0&&<button className="home-row-action" aria-label={`Open resource for ${i.title}`} disabled={busy} onClick={()=>openTaskResource(i)} title="Open linked resource"><BookOpen size={16}/></button>}<button className="home-row-action" aria-label={`Focus on ${i.title}`} disabled={busy} onClick={()=>startFrom(i)} title="Focus on task"><Play size={15}/></button></div>)}</div>:completedPriorities.length?<div className="home-list-empty"><CheckCircle2 size={19}/> All priorities completed!</div>:studyGroups.length&&priorityFilter==='all'?<PhotoEmptyState compact scene="home" title="All caught up" detail="No priorities scheduled for today." actionLabel="Add task" onAction={()=>{setTaskForm(true);setTab('tasks');}}/>:<div className="home-list-empty"><CheckCircle2 size={19}/> {priorityFilter==='all'?'No priorities for today.':`No ${priorityFilter} priorities for today.`}</div>}
                   {filteredPriorities.length>6&&<button className="home-panel-link home-list-footer" onClick={()=>navigate('tasks')}>View {filteredPriorities.length-6} more tasks <ArrowRight size={14}/></button>}
                   {completedPriorities.length>0&&<details className="home-completed-priorities" key={today+'-'+priorityFilter}>
                     <summary><ChevronDown size={16}/><CheckCircle2 size={17}/> Completed today ({completedPriorities.length})</summary>
@@ -1163,14 +1181,14 @@ export default function Page() {
             courseId={courseId} weekNumber={weekNumber} landingItem={courseLandingItem} sectionJump={courseSectionJump} selectCourse={rememberCourse} selectWeek={rememberWeek}
             run={act} toggleItem={toggle} focusOn={startFrom}
             openResource={r=>{if(r.source==='drive'&&r.drive_file_id)previewPdf(r.drive_file_id,r.title,r.id,r.last_page);else if(r.url)window.open(r.url,'_blank','noopener,noreferrer');}}
-            openDrive={(id,week,kind,scope)=>{linkIntentRef.current={courseId:id,week,kind,scope};setSelectedPdfId(null);setLinkCourse(id);setLinkWeek(week);setLinkScope(scope);setLinkKind(kind);setLinkItem('');setTab('library');}}
+            openDrive={(id,week,kind,scope,paperId)=>{linkIntentRef.current={courseId:id,week,kind,scope,paperId};setSelectedPdfId(null);setLinkCourse(id);setLinkWeek(week);setLinkScope(scope);setLinkKind(kind);setLinkItem('');setLinkPaper(paperId||'');clearBulk();setTab('library');}}
           />}
 
-          {tab==='tasks'&&<TasksPlanner items={tasks} courses={data.courses} user={user} busy={busy} pendingItems={pendingItems} completingIds={completingIds} exitingIds={exitingIds}
+          {tab==='tasks'&&<TasksPlanner items={tasks} resources={data.resources} courses={data.courses} user={user} busy={busy} pendingItems={pendingItems} completingIds={completingIds} exitingIds={exitingIds}
             run={act} onToggle={toggle} onFocus={startFrom} onOpenResource={openTaskResource} createOpen={taskForm} setCreateOpen={setTaskForm}
             initialTaskMode={taskLandingMode} taskJump={taskJump} onTaskJumpHandled={()=>setTaskJump(null)}/>}
 
-          {tab==='calendar'&&<TasksPlanner items={tasks} courses={data.courses} user={user} busy={busy} pendingItems={pendingItems} completingIds={completingIds} exitingIds={exitingIds}
+          {tab==='calendar'&&<TasksPlanner items={tasks} resources={data.resources} courses={data.courses} user={user} busy={busy} pendingItems={pendingItems} completingIds={completingIds} exitingIds={exitingIds}
             run={act} onToggle={toggle} onFocus={startFrom} onOpenResource={openTaskResource} createOpen={taskForm} setCreateOpen={setTaskForm}
             calendarOnly calendarJump={calendarJump} onOpenExam={id=>openCourse(id,undefined,undefined,'exam')}/>}
 
@@ -1231,12 +1249,12 @@ export default function Page() {
                     {(driveIndexState==='idle'||driveIndexState==='loading')&&<p className="muted" role="status"><LoaderCircle size={15} className="spin"/> Loading indexed PDFs…</p>}
                     {driveIndexState==='error'&&<p className="muted" role="alert">Could not load indexed PDFs. <button className="text-button" onClick={loadIndex}>Retry</button></p>}
                     {folderBrowserVisible&&<div className="resources-folder-browser">
-                      <div className="folder-picker-heading"><strong>Browse Drive folders</strong><button className="icon-btn" title="Refresh folder" disabled={driveBusy} onClick={()=>void browseDrive(currentFolder.id)}><RotateCcw size={16}/></button></div>
+                      <div className="folder-picker-heading"><strong>Browse Drive folders</strong><button className="btn secondary small" onClick={()=>bulkMode?clearBulk():setBulkMode(true)}>{bulkMode?'Cancel selection':'Select files'}</button>{bulkMode&&<button className="btn secondary small" disabled={bulkFiles.length>=30} onClick={()=>selectBulkVisible(driveFiles)}>Select visible (up to 30)</button>}<button className="icon-btn" title="Refresh folder" disabled={driveBusy} onClick={()=>void browseDrive(currentFolder.id)}><RotateCcw size={16}/></button></div>
                       <div className="folder-path"><button onClick={()=>{if(currentFolder.id!=='root')changeFolder(folderPath.slice(0,1));}}>My Drive</button>{folderPath.slice(1).map(f=><span key={f.id}> / {f.name}</span>)}</div>
                       <div className="folder-picker-actions">{folderPath.length>1&&<button className="btn secondary small" onClick={backFolder}><ArrowLeft size={14}/> Back</button>}{currentFolder.id!=='root'&&<button className="btn secondary small" disabled={busy||scanBusy} onClick={selectBackupFolder}><FolderCheck size={14}/> Use this folder</button>}</div>
                       {driveBusy&&<p className="muted" role="status"><LoaderCircle size={15} className="spin"/> Loading Drive folders…</p>}
                       {driveFolderError&&<p className="muted" role="alert">{driveFolderError}</p>}
-                      {currentFolderLoaded&&driveFiles.map(f=><div className="drive-row" key={f.id}><span className="resource-icon">{f.mimeType==='application/pdf'?<FileText size={18}/>:<Folder size={18}/>}</span><div className="task-content"><strong title={f.name}>{f.name}</strong><small>{f.mimeType==='application/pdf'?'PDF document':'Folder'}{f.modifiedTime?' · '+new Date(f.modifiedTime).toLocaleDateString():''}</small></div>{f.mimeType==='application/pdf'?<><button className="icon-btn" title="Preview PDF" onClick={()=>previewPdf(f.id,f.name)}><BookOpen size={16}/></button><button className="btn secondary small" onClick={()=>choosePdf(f)}>Select</button></>:<button className="icon-btn" title="Open folder" onClick={()=>openFolder(f)}><ArrowRight size={17}/></button>}</div>)}
+                      {currentFolderLoaded&&driveFiles.map(f=><div className="drive-row" key={f.id}>{bulkMode&&f.mimeType==='application/pdf'&&<input type="checkbox" aria-label={`Select ${f.name}`} className="task-completion-check" checked={bulkFiles.some(row=>row.id===f.id)} onChange={()=>toggleBulkFile(f)} disabled={bulkFiles.length>=30&&!bulkFiles.some(row=>row.id===f.id)}/>}<span className="resource-icon">{f.mimeType==='application/pdf'?<FileText size={18}/>:<Folder size={18}/>}</span><div className="task-content"><strong title={f.name}>{f.name}</strong><small>{f.mimeType==='application/pdf'?'PDF document':'Folder'}{f.modifiedTime?' · '+new Date(f.modifiedTime).toLocaleDateString():''}</small></div>{f.mimeType==='application/pdf'?<><button className="icon-btn" title="Preview PDF" onClick={()=>previewPdf(f.id,f.name)}><BookOpen size={16}/></button><button className="btn secondary small" onClick={()=>choosePdf(f)}>Select</button></>:<button className="icon-btn" title="Open folder" onClick={()=>openFolder(f)}><ArrowRight size={17}/></button>}</div>)}
                       {currentFolderLoaded&&!driveBusy&&!driveFolderError&&driveFiles.length===0&&<p className="muted">No PDFs or subfolders here.</p>}
                       {currentFolderLoaded&&driveNext&&<button className="btn secondary full" disabled={driveBusy} onClick={()=>void browseDrive(currentFolder.id,driveNext)}>Load more</button>}
                     </div>}
@@ -1249,14 +1267,14 @@ export default function Page() {
                 {drive.connected&&sourceFolder&&<Card className="resources-index-card">
                   <SectionTitle title="Discovered backup PDFs" aside={<Badge>{driveIndex.length} indexed</Badge>}/>
                   <p className="muted compact">Suggestions are based on filenames. Review each course and week before linking.</p>
-                  <div className="resources-index-toolbar">
+                  <div className="resources-index-toolbar"><button className="btn secondary small" onClick={()=>bulkMode?clearBulk():setBulkMode(true)}>{bulkMode?'Cancel selection':'Select files'}</button>{bulkMode&&<button className="btn secondary small" disabled={bulkFiles.length>=30} onClick={()=>selectBulkVisible(indexedVisible.slice(0,visibleCount))}>Select visible (up to 30)</button>}
                     <label className="resources-search"><Search size={16}/><input type="search" aria-label="Search indexed PDFs" placeholder="Search filenames or folders" value={indexSearch} onChange={e=>{setIndexSearch(e.target.value);setVisibleCount(30);}}/></label>
                     <label className="resources-filter-label">Show <select aria-label="Filter indexed PDFs" value={indexFilter} onChange={e=>{setIndexFilter(e.target.value as typeof indexFilter);setVisibleCount(30);}}><option value="unlinked">Unlinked</option><option value="suggested">Suggested</option><option value="linked">Linked</option><option value="all">All files</option></select></label>
                     <button className="icon-btn" title="Refresh indexed PDFs" onClick={()=>void loadIndex()}><RotateCcw size={16}/></button>
                   </div>
                   <div className="resources-index-rows" role="region" tabIndex={0} aria-label="Discovered PDF files">
-                    {indexedVisible.slice(0,visibleCount).map(f=><div className={`resources-index-row${selectedPdfId===f.id?' selected':''}`} key={f.id}>
-                      <button type="button" className="resources-select-pdf" onClick={()=>choosePdf(f)} aria-pressed={selectedPdfId===f.id}>
+                    {indexedVisible.slice(0,visibleCount).map(f=><div className={`resources-index-row${(bulkMode?bulkFiles.some(row=>row.id===f.id):selectedPdfId===f.id)?' selected':''}`} key={f.id}>
+                      {bulkMode&&<input type="checkbox" aria-label={`Select ${f.name}`} className="task-completion-check" checked={bulkFiles.some(row=>row.id===f.id)} onChange={()=>toggleBulkFile(f)} disabled={bulkFiles.length>=30&&!bulkFiles.some(row=>row.id===f.id)}/>}<button type="button" className="resources-select-pdf" onClick={()=>choosePdf(f)} aria-pressed={bulkMode?bulkFiles.some(row=>row.id===f.id):selectedPdfId===f.id}>
                         <span className="resource-icon"><FileText size={18}/></span><span className="resources-file-content"><strong title={f.name}>{f.name}</strong><small title={f.path}>{f.path}{f.modifiedTime?` · Updated ${new Date(f.modifiedTime).toLocaleDateString()}`:''}</small>
                           {f.links.length>0?<span className="resources-suggestion-label">Linked</span>:f.suggestion?<span className="resources-suggestion-label"><Sparkles size={13}/> Suggested: {f.suggestion.course_code} · Week {f.suggestion.week_number} · {f.suggestion.kind}</span>:<span className="resources-suggestion-label">Needs manual matching</span>}
                         </span>
@@ -1268,17 +1286,18 @@ export default function Page() {
                   {indexedVisible.length>visibleCount&&<button className="btn secondary full" onClick={()=>setVisibleCount(n=>n+30)}>Show more ({indexedVisible.length-visibleCount} remaining)</button>}
                 </Card>}
               </div>
-              <div className={`resources-link-column${selectedPdf?'':' is-empty'}`} ref={linkPanelRef}><Card className="resources-link-card">
-                <SectionTitle title="Link document"/>
-                {!selectedPdf?<div className="resources-no-selection"><FileText size={25}/><strong>Select a PDF to link</strong><p>Choose a file from Discovered PDFs or the Drive folder browser. You'll review its course and week here before confirming.</p></div>:<>
+              <div className={`resources-link-column${selectedPdf||bulkMode?'':' is-empty'}`} ref={linkPanelRef}><Card className="resources-link-card">
+                <SectionTitle title={bulkMode?"Link multiple documents":"Link document"}/>
+                {bulkMode?<><p>{bulkFiles.length} / 30 selected</p><div className="exam-resource-actions"><button className="btn secondary small" onClick={()=>setBulkFiles([])} disabled={!bulkFiles.length}>Clear</button><button className="btn primary small" disabled={!bulkFiles.length||busy} onClick={()=>setBulkReview(true)}>Review selected</button></div><p className="muted">Choose PDFs in the folder or index and review their destinations.</p></>:!selectedPdf?<div className="resources-no-selection"><FileText size={25}/><strong>Select a PDF to link</strong><p>Choose a file from Discovered PDFs or the Drive folder browser. You'll review its course and week here before confirming.</p></div>:<>
                   <div className="resources-selected-file"><FileText size={18}/><div><strong title={selectedPdf.name}>{selectedPdf.name}</strong><small>Selected PDF · {selectedIndexed?.path||'Drive folder'}</small></div><button className="icon-btn" aria-label="Clear selected PDF" onClick={()=>setSelectedPdfId(null)}><X size={16}/></button></div>
-                    {resourceLinks.has(selectedPdf.id) ? <div className="subtle-notice">This PDF is already linked. Open it from its course library, or select another document.</div>:<>
+                    {resourceLinks.has(selectedPdf.id) ? <div className="subtle-notice">This PDF is already linked. Open it from its course resources or Exam Prep, or select another document.</div>:<>
                     {selectedIndexed?.suggestion&&<div className="resources-match-context"><Sparkles size={16}/><div><strong>Suggested: {selectedIndexed.suggestion.course_code} · Week {selectedIndexed.suggestion.week_number}</strong><small>{selectedIndexed.suggestion.confidence} confidence · Review before linking</small></div></div>}
-                    <FormRow label="Course"><select value={linkCourse} onChange={e=>{setLinkCourse(e.target.value);setLinkWeek(1);setLinkItem('');}}><option value="">Select course</option>{data.courses.filter(c=>!c.archived).map(c=><option key={c.id} value={c.id}>{c.code} · {c.title}</option>)}</select></FormRow>
-                    <FormRow label="Resource belongs to"><select value={linkScope} onChange={e=>setLinkScope(e.target.value as 'course'|'week')}><option value="course">Course Library (all weeks)</option><option value="week">One teaching week</option></select></FormRow>
-                    {linkScope==='week'&&<FormRow label="Week"><select value={linkWeek} onChange={e=>{setLinkWeek(Number(e.target.value));setLinkItem('');}}>{Array.from({length:data.courses.find(c=>c.id===linkCourse)?.week_count||13},(_,n)=><option key={n+1} value={n+1}>Week {n+1}</option>)}</select></FormRow>}
-                    <FormRow label="Material type"><select value={linkKind} onChange={e=>setLinkKind(e.target.value as Resource['kind'])}>{(['handwritten','annotated','slides','textbook','exam_paper','exam_solution','other'] as const).map(k=><option key={k} value={k}>{k==='handwritten'?'Handwritten notes':k==='annotated'?'Annotated slides':k==='slides'?'Original slides':k==='textbook'?'Textbook':k==='exam_paper'?'Previous exam paper':k==='exam_solution'?'Exam solution':'Other'}</option>)}</select></FormRow>
-                    {linkScope==='week'&&<FormRow label="Attach to study item (optional)"><select value={linkItem} onChange={e=>setLinkItem(e.target.value)}><option value="">Entire week</option>{data.items.filter(i=>i.course_id===linkCourse&&i.week_number===linkWeek).map(i=><option key={i.id} value={i.id}>{i.title}</option>)}</select></FormRow>}
+                    <FormRow label="Course"><select value={linkCourse} onChange={e=>{setLinkCourse(e.target.value);setLinkWeek(1);setLinkItem('');setLinkPaper('');}}><option value="">Select course</option>{data.courses.filter(c=>!c.archived).map(c=><option key={c.id} value={c.id}>{c.code} · {c.title}</option>)}</select></FormRow>
+                    <FormRow label="Resource belongs to">{isExamResource(linkKind)?<input value="Exam Prep" readOnly/>:<select value={linkScope} onChange={e=>setLinkScope(e.target.value as 'course'|'week')}><option value="course">Course Library (all weeks)</option><option value="week">One teaching week</option></select>}</FormRow>
+                    {linkScope==='week'&&!isExamResource(linkKind)&&<FormRow label="Week"><select value={linkWeek} onChange={e=>{setLinkWeek(Number(e.target.value));setLinkItem('');}}>{Array.from({length:data.courses.find(c=>c.id===linkCourse)?.week_count||13},(_,n)=><option key={n+1} value={n+1}>Week {n+1}</option>)}</select></FormRow>}
+                    <FormRow label="Material type"><select value={linkKind} onChange={e=>{setLinkKind(e.target.value as Resource['kind']);setLinkPaper('');}}>{(['handwritten','annotated','slides','textbook','exam_paper','exam_solution','other'] as const).map(k=><option key={k} value={k}>{k==='handwritten'?'Handwritten notes':k==='annotated'?'Annotated slides':k==='slides'?'Original slides':k==='textbook'?'Textbook':k==='exam_paper'?'Previous exam paper':k==='exam_solution'?'Exam solution':'Other'}</option>)}</select></FormRow>
+                    {linkScope==='week'&&!isExamResource(linkKind)&&<FormRow label="Attach to study item (optional)"><select value={linkItem} onChange={e=>setLinkItem(e.target.value)}><option value="">Entire week</option>{data.items.filter(i=>i.course_id===linkCourse&&i.week_number===linkWeek).map(i=><option key={i.id} value={i.id}>{i.title}</option>)}</select></FormRow>}
+                    {linkKind==='exam_solution'&&<FormRow label="Corresponding question paper"><select value={linkPaper} onChange={e=>setLinkPaper(e.target.value)}><option value="">Link question paper later</option>{data.resources.filter(r=>r.kind==='exam_paper'&&r.course_id===linkCourse).map(r=><option key={r.id} value={r.id}>{r.title}</option>)}</select></FormRow>}
                     <button className="btn primary full" disabled={!linkCourse||busy||!!linkingFileId} aria-busy={linkingFileId===selectedPdf.id} onClick={()=>linkDriveFile(selectedPdf)}>{linkingFileId===selectedPdf.id?<LoaderCircle size={16} className="spin"/>:<Link2 size={16}/>} {linkingFileId===selectedPdf.id?'Linking…':'Confirm link'}</button>
                     <p className="resources-link-help">Only the selected PDF will be linked. Nothing is linked automatically.</p>
                   </>}
@@ -1288,6 +1307,7 @@ export default function Page() {
           </>}
         </>}
       </main>
+      {bulkReview&&tab==='library'&&<BulkResourceLinker key={bulkFiles.map(f=>f.id).join(',')} files={bulkFiles} data={data} initialCourse={linkCourse} user={user} busy={busy} run={act} onClose={()=>setBulkReview(false)} onSaved={clearBulk}/>}
       {finishReview&&active&&<div className="dialog-backdrop" role="presentation"><div className="dialog focus-review-dialog" role="dialog" aria-modal="true" aria-label="Review focus session"><button className="dialog-close" onClick={()=>setFinishReview(false)} aria-label="Cancel and keep paused"><X size={18}/></button><h2>Review focus session</h2><p>How much of this session was focused study?</p><div className="focus-review-duration"><span>Recorded active time</span><strong>{duration(reviewLimit)}</strong></div><FocusDurationFields seconds={finishSeconds} maximum={reviewLimit} onChange={setFinishSeconds}/><p className="focus-review-help">Adjust for idle time if needed. Maximum: {formatFocusDuration(reviewLimit)}.</p><div className="dialog-actions"><button className="btn secondary" onClick={()=>setFinishReview(false)}>Keep paused</button><button className="btn primary" disabled={focusBusy||active.status!=='paused'||!Number.isInteger(Number(finishSeconds))||Number(finishSeconds)<0||Number(finishSeconds)>reviewLimit} onClick={finish}>{focusBusy?(Number(finishSeconds)===0?'Discarding…':'Saving timer…'):(Number(finishSeconds)===0?'Discard empty session':'Save session')}</button></div></div></div>}
     </div>
     <nav className="mobile-nav" aria-label="Mobile navigation">{tabs.map(t=><button key={t.id} className={tab===t.id?'current':''} onClick={()=>navigate(t.id)}><t.icon size={19}/><span>{t.label}</span></button>)}</nav>

@@ -357,37 +357,93 @@ def delete_item(identifier: str, user: User = Depends(current_user)):
     app_store.workspace_atomic(user.uid, operation)
 
 
+def create_resource_in_workspace(tx, value: Resource, *, skip_identical=False):
+    from .workspace import validate_exam_pair
+    course = tx.get('courses', value.course_id)
+    if not course:
+        raise HTTPException(404, 'courses not found')
+    if course.get('archived', False):
+        raise HTTPException(409, 'Course is archived; restore it before making changes')
+    if value.week_number is not None and value.week_number > course['week_count']:
+        raise HTTPException(422, 'Week exceeds course length')
+    if value.item_id:
+        item = tx.get('items', value.item_id)
+        if not item:
+            raise HTTPException(404, 'Linked study item not found')
+        if item.get('course_id') != value.course_id or item.get('week_number') != value.week_number:
+            raise HTTPException(422, 'Linked study item belongs to a different course/week')
+    validate_exam_pair(tx, value.model_dump(mode='json'))
+    if value.source == 'drive':
+        for existing in tx.list_equal('resources', 'course_id', value.course_id):
+            if (existing.get('source') == 'drive' and existing.get('drive_file_id') == value.drive_file_id
+                    and (existing.get('week_number') == value.week_number or existing.get('week_number') is None or value.week_number is None)):
+                if skip_identical and all(existing.get(field) == getattr(value, field) for field in ('week_number', 'kind', 'item_id', 'exam_paper_id')):
+                    return Resource.model_validate(existing), False
+                raise HTTPException(409, 'This PDF is already linked in this course; edit the existing link instead')
+    tx.create('resources', value.model_dump(mode='json'))
+    return value, True
+
+
 @app.post('/api/resources', response_model=Resource, status_code=201)
 def add_resource(value: Resource, user: User = Depends(current_user)):
-    def operation(tx):
-        course = tx.get('courses', value.course_id)
-        if not course:
-            raise HTTPException(404, 'courses not found')
-        if course.get('archived', False):
-            raise HTTPException(409, 'Course is archived; restore it before making changes')
-        if value.week_number is not None and value.week_number > course['week_count']:
-            raise HTTPException(422, 'Week exceeds course length')
-        if value.item_id:
-            item = tx.get('items', value.item_id)
-            if not item:
-                raise HTTPException(404, 'Linked study item not found')
-            if item.get('course_id') != value.course_id or item.get('week_number') != value.week_number:
-                raise HTTPException(422, 'Linked study item belongs to a different course/week')
-        if value.source == 'drive':
-            if any(existing.get('source') == 'drive'
-                   and existing.get('drive_file_id') == value.drive_file_id
-                   and existing.get('course_id') == value.course_id
-                   and (existing.get('week_number') == value.week_number
-                        or existing.get('week_number') is None or value.week_number is None)
-                   for existing in tx.list_equal('resources', 'course_id', value.course_id)):
-                raise HTTPException(409, 'This PDF is already linked to that course and week')
-        tx.create('resources', value.model_dump(mode='json'))
-        return value
+    try:
+        return app_store.workspace_atomic(user.uid, lambda tx: create_resource_in_workspace(tx, value)[0])
+    except DocumentAlreadyExists:
+        raise HTTPException(409, 'Resource ID already exists') from None
 
+
+class BulkResources(BaseModel):
+    resources: list[Resource] = Field(min_length=1, max_length=30)
+
+
+@app.post('/api/resources/bulk')
+def bulk_resources(value: BulkResources, user: User = Depends(current_user)):
+    if len({r.id for r in value.resources}) != len(value.resources):
+        raise HTTPException(422, 'Duplicate resource IDs in this batch')
+    if any(r.source != 'drive' or r.exam_attempts for r in value.resources):
+        raise HTTPException(422, 'Only new Drive document links are accepted in bulk')
+    def operation(tx):
+        resolved = {}
+        created = 0
+        for resource in sorted(value.resources, key=lambda r: r.kind == 'exam_solution'):
+            if resource.exam_paper_id in resolved:
+                resource = resource.model_copy(update={'exam_paper_id': resolved[resource.exam_paper_id].id})
+            result, added = create_resource_in_workspace(tx, resource, skip_identical=True)
+            resolved[resource.id] = result
+            created += int(added)
+        return {'created': created, 'skipped': len(value.resources)-created, 'items': list({r.id:r for r in resolved.values()}.values())}
     try:
         return app_store.workspace_atomic(user.uid, operation)
     except DocumentAlreadyExists:
         raise HTTPException(409, 'Resource ID already exists') from None
+
+
+class ResourceDetach(BaseModel):
+    item_id: str
+
+
+@app.post('/api/resources/{identifier}/detach')
+def detach_resource(identifier: str, value: ResourceDetach, user: User = Depends(current_user)):
+    def operation(tx):
+        resource = tx.get('resources', identifier)
+        item = tx.get('items', value.item_id)
+        if not resource or not item:
+            raise HTTPException(404, 'Resource or activity not found')
+        course = tx.get('courses', resource['course_id'])
+        if not course or course.get('archived', False):
+            raise HTTPException(409, 'Course is unavailable or archived')
+        if item.get('course_id') != resource['course_id']:
+            raise HTTPException(422, 'Activity belongs to another course')
+        updated = []
+        if resource.get('item_id') == value.item_id:
+            resource['item_id'] = None
+            tx.put('resources', resource)
+        if item.get('resource_id') == identifier:
+            item['resource_id'] = None
+            tx.put('items', item)
+            updated.append(Item.model_validate(item))
+        return {'resource': Resource.model_validate(resource), 'items': updated}
+    return app_store.workspace_atomic(user.uid, operation)
 
 
 @app.post('/api/resources/{identifier}/practice-task', response_model=Item)
@@ -480,7 +536,7 @@ def delete_resource(identifier: str, user: User = Depends(current_user)):
             raise HTTPException(409, 'Course is archived; restore it before making changes')
         if entry.get('exam_attempts'):
             raise HTTPException(409, 'Remove recorded exam attempts before unlinking this paper')
-        if any(i.get('resource_id') == identifier for i in tx.list_equal('items', 'resource_id', identifier)):
+        if entry.get('item_id') or entry.get('exam_paper_id') or tx.list_equal('resources', 'exam_paper_id', identifier) or any(i.get('resource_id') == identifier for i in tx.list_equal('items', 'resource_id', identifier)):
             raise HTTPException(409, 'Unlink this resource from study items before removing it')
         tx.delete('resources', identifier)
 
@@ -508,19 +564,27 @@ def resource_removal_plan(tx, identifier: str):
     affected = {item['id']: item for item in linked}
     if attached:
         affected[attached['id']] = attached
+    paired_solutions = tx.list_equal('resources', 'exam_paper_id', identifier)
+    paired_paper = tx.get('resources', entry['exam_paper_id']) if entry.get('exam_paper_id') else None
     blockers = []
+    if paired_solutions:
+        blockers.append('Unpair the solutions from this question paper before removing it.')
+    if entry.get('exam_paper_id') and (not paired_paper or paired_paper.get('course_id') != entry['course_id'] or paired_paper.get('kind') != 'exam_paper'):
+        blockers.append('This solution has an invalid paper reference. Unpair it before removal.')
     if entry.get('exam_attempts'):
         blockers.append('This paper contains recorded exam attempts. Remove those explicitly before removing the paper.')
     if any(item.get('course_id') != entry['course_id'] for item in affected.values()):
         blockers.append('This resource has an unexpected cross-course reference. Resolve it before removal.')
     if len(linked) + 1 > 450:
         blockers.append('Too many linked activities for one safe removal.')
-    payload = json.dumps({'resource': entry, 'items': sorted(affected.values(), key=lambda i: i['id'])},
+    payload = json.dumps({'resource': entry, 'items': sorted(affected.values(), key=lambda i: i['id']),
+                          'paired_solutions': sorted(paired_solutions, key=lambda r:r['id']), 'paired_paper': paired_paper},
                          sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
     if len(payload) > 4 * 1024 * 1024:
         blockers.append('Linked records are too large for one safe removal.')
     preview = {'resource_id': identifier, 'title': entry['title'], 'source': entry['source'],
                'course_code': course['code'], 'affected_count': len(affected),
+               'paired_paper_title': paired_paper.get('title') if paired_paper else None,
                'activities': [{'id': i['id'], 'title': i['title'], 'week_number': i.get('week_number')}
                               for i in list(affected.values())[:450]],
                'blockers': blockers, 'preview_token': hashlib.sha256(payload).hexdigest()}

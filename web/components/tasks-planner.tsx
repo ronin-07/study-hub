@@ -4,12 +4,13 @@ import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent } 
 import type { User } from 'firebase/auth';
 import { AlertTriangle, ArrowLeft, ArrowRight, BookOpen, CalendarDays, CalendarPlus, GripVertical, LoaderCircle, Plus, Repeat2, Timer, Trash2, X } from 'lucide-react';
 import { api } from '@/lib/api';
+import {activityResources} from '@/lib/resource-links';
 import type { FeedbackMessage } from '@/components/feedback-toasts';
 import type { MutationHint } from '@/lib/snapshot-cache';
 import { Card, FormRow } from '@/components/common';
 import { TaskActionsMenu } from '@/components/task-actions-menu';
 import { PhotoEmptyState } from '@/components/photo-empty-state';
-import { formatDate, kindLabels, localToday, type Course, type Item, type Priority } from '@/lib/types';
+import { formatDate, kindLabels, localToday, type Course, type Item, type Priority, type Resource } from '@/lib/types';
 import { canPlanOnDate, isOverdue, todayPriorities, upcomingSections, shiftCalendarMonth } from '@/lib/task-view';
 import { activityReference, activityStatus, activityStatusLabel, shortStudyDate } from '@/lib/activity-display';
 
@@ -34,8 +35,8 @@ function monthDays(year:number,month:number){
   });
 }
 
-export function TasksPlanner({items,courses,user,busy,pendingItems,completingIds,exitingIds,run,onToggle,onFocus,onOpenResource,createOpen,setCreateOpen,calendarJump,calendarOnly=false,initialTaskMode='today',taskJump,onTaskJumpHandled,onOpenExam}:{
-  items:Item[];courses:Course[];user:User|null;busy:boolean;pendingItems:ReadonlySet<string>;completingIds:ReadonlySet<string>;exitingIds:ReadonlySet<string>;
+export function TasksPlanner({items,resources,courses,user,busy,pendingItems,completingIds,exitingIds,run,onToggle,onFocus,onOpenResource,createOpen,setCreateOpen,calendarJump,calendarOnly=false,initialTaskMode='today',taskJump,onTaskJumpHandled,onOpenExam}:{
+  items:Item[];resources:Resource[];courses:Course[];user:User|null;busy:boolean;pendingItems:ReadonlySet<string>;completingIds:ReadonlySet<string>;exitingIds:ReadonlySet<string>;
   run:(fn:()=>Promise<unknown>,mutation?:MutationHint,feedback?:FeedbackMessage)=>Promise<boolean>;
   onToggle:(item:Item)=>void;onFocus:(item:Item)=>void;onOpenResource:(item:Item)=>void;
   createOpen:boolean;setCreateOpen:(value:boolean)=>void;
@@ -196,12 +197,12 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,completingIds
         {calendarRole?<>
           {activityReference(i)&&<span className="planner-v05-task-reference">{activityReference(i)}</span>}
           <div className={`planner-v05-calendar-role ${calendarRole}`}>{calendarRole==='due'?'Deadline':i.due_date===selectedDay?'Planned and due':'Planned'}</div>
-          {(i.page_start!=null||i.notes?.trim()||i.resource_id||(calendarRole==='planned'&&i.due_date)||(calendarRole==='due'&&i.planned_date))&&<details className="planner-v05-task-extra"><summary>View activity details</summary>
+          {(i.page_start!=null||i.notes?.trim()||activityResources(i,resources).length>0||(calendarRole==='planned'&&i.due_date)||(calendarRole==='due'&&i.planned_date))&&<details className="planner-v05-task-extra"><summary>View activity details</summary>
             {i.page_start!=null&&<span>Pages {i.page_start}{i.page_end!=null&&i.page_end!==i.page_start?`–${i.page_end}`:''}</span>}
             {i.planned_date&&i.planned_date!==selectedDay&&<span>Planned {shortStudyDate(i.planned_date)}</span>}
             {i.due_date&&i.due_date!==selectedDay&&<span>Due {shortStudyDate(i.due_date)}</span>}
             {i.notes?.trim()&&<p>{i.notes}</p>}
-            {i.resource_id&&<button type="button" onClick={()=>onOpenResource(i)} className="planner-v05-inline-resource"><BookOpen size={14}/> Open linked document</button>}
+            {activityResources(i,resources).length>0&&<button type="button" onClick={()=>onOpenResource(i)} className="planner-v05-inline-resource"><BookOpen size={14}/> Open linked document</button>}
           </details>}
         </>:<>
           {activityReference(i)&&<div className="planner-v05-task-reference">{activityReference(i)}</div>}
@@ -220,7 +221,7 @@ export function TasksPlanner({items,courses,user,busy,pendingItems,completingIds
       </div>}
       <div className="planner-v05-row-actions">
         {unscheduled&&<button className="btn secondary small planner-v052-plan" type="button" disabled={busy||pendingItems.has(i.id)} onClick={()=>openEdit(i)}><CalendarPlus size={15}/> Plan</button>}
-        {i.resource_id&&<button className="icon-btn" disabled={busy} title="Open linked notes or textbook" aria-label={`Open resource for ${i.title}`} onClick={()=>onOpenResource(i)}><BookOpen size={16}/></button>}
+        {activityResources(i,resources).length>0&&<button className="icon-btn" disabled={busy} title="Open linked notes or textbook" aria-label={`Open resource for ${i.title}`} onClick={()=>onOpenResource(i)}><BookOpen size={16}/></button>}
         <button className="icon-btn" disabled={busy||i.done||completingIds.has(i.id)} title="Focus on this task" aria-label={`Focus on ${i.title}`} onClick={()=>onFocus(i)}><Timer size={16}/></button>
         <TaskActionsMenu item={i} busy={busy||pendingItems.has(i.id)} onEdit={()=>openEdit(i)} onPlan={()=>openEdit(i)}
           onRemove={i.course_id&&i.week_number!==null?()=>void removeFromTasks(i):undefined}

@@ -231,6 +231,7 @@ def course_deletion_plan(tx, identifier: str):
                 sessions.append(active)
     cross_links = sum(r.get('course_id') != identifier and r.get('resource_id') in resource_ids for r in all_items)
     cross_links += sum(r.get('course_id') != identifier and r.get('item_id') in item_ids for r in all_resources)
+    cross_links += sum(r.get('course_id') != identifier and r.get('exam_paper_id') in resource_ids for r in all_resources)
     records = {'courses': [course], 'items': items, 'weeks': weeks, 'resources': resources}
     total = sum(map(len, records.values()))
     attempts = sum(len(r.get('exam_attempts') or []) for r in resources)
@@ -296,6 +297,17 @@ def edit_week(identifier: str, patch: WeekPatch, user: User = Depends(current_us
     return store().workspace_atomic(user.uid, operation)
 
 
+def validate_exam_pair(tx, resource):
+    paper_id = resource.get('exam_paper_id')
+    if not paper_id:
+        return
+    paper = tx.get('resources', paper_id)
+    if not paper or paper.get('kind') != 'exam_paper' or paper.get('course_id') != resource.get('course_id'):
+        raise HTTPException(422, 'Choose an existing question paper in the same course')
+    if resource.get('kind') != 'exam_solution' or paper_id == resource.get('id'):
+        raise HTTPException(422, 'Only a solution can be paired with a question paper')
+
+
 @router.patch('/resources/{identifier}', response_model=Resource)
 def edit_resource(identifier: str, patch: ResourcePatch, user: User = Depends(current_user)):
     fields = patch.model_dump(mode='json', exclude_unset=True)
@@ -331,7 +343,10 @@ def edit_resource(identifier: str, patch: ResourcePatch, user: User = Depends(cu
             if any(item.get('resource_id') == identifier and item.get('week_number') != merged['week_number']
                    for item in tx.list_equal('items', 'resource_id', identifier)):
                 raise HTTPException(409, 'Other weeks reference this shared resource')
+        if old.get('kind') == 'exam_paper' and merged.get('kind') != 'exam_paper' and tx.list_equal('resources', 'exam_paper_id', identifier):
+            raise HTTPException(409, 'Unpair solutions before changing the question paper type')
         value = validate(Resource, merged)
+        validate_exam_pair(tx, value.model_dump(mode='json'))
         tx.put('resources', value.model_dump(mode='json'))
         return value
 

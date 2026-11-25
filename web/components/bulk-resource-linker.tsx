@@ -1,0 +1,45 @@
+'use client';
+import {useEffect,useRef,useState,type FormEvent} from 'react';
+import type {User} from 'firebase/auth';
+import {FileText,LoaderCircle,X} from 'lucide-react';
+import {FormRow} from '@/components/common';
+import {api} from '@/lib/api';
+import type {FeedbackMessage} from '@/components/feedback-toasts';
+import type {MutationHint} from '@/lib/snapshot-cache';
+import {isExamResource} from '@/lib/resource-links';
+import {bulkDrafts,bulkPairCandidates,validBulkRow,type BulkDraft} from '@/lib/bulk-resources';
+import type {DriveEntry,DriveIndexed,Resource,Snapshot} from '@/lib/types';
+
+type Props={files:(DriveEntry|DriveIndexed)[];data:Snapshot;initialCourse:string;user:User|null;busy:boolean;run:(fn:()=>Promise<unknown>,hint?:MutationHint,feedback?:FeedbackMessage)=>Promise<boolean>;onClose:()=>void;onSaved:()=>void};
+const kinds:Resource['kind'][]=['slides','annotated','handwritten','textbook','exam_paper','exam_solution','other'];
+const labels:Record<Resource['kind'],string>={slides:'Original slides',annotated:'Annotated slides',handwritten:'Handwritten notes',textbook:'Textbook',exam_paper:'Previous exam paper',exam_solution:'Exam solution',other:'Other'};
+export function BulkResourceLinker({files,data,initialCourse,user,busy,run,onClose,onSaved}:Props){
+  const [rows,setRows]=useState(()=>bulkDrafts(files,data,initialCourse,()=>crypto.randomUUID()));
+  const [commonCourse,setCommonCourse]=useState(initialCourse);
+  const [commonKind,setCommonKind]=useState<Resource['kind']>('slides');
+  const [commonActivity,setCommonActivity]=useState('');
+  const [submitting,setSubmitting]=useState(false);
+  const [issue,setIssue]=useState('');
+  const guard=useRef(false);const dialog=useRef<HTMLDialogElement>(null);
+  const disabled=busy||submitting;
+  useEffect(()=>{const el=dialog.current;if(el&&!el.open)el.showModal();return()=>{if(el?.open)el.close();};},[]);
+  const courses=data.courses.filter(c=>!c.archived);
+  const update=(id:string,patch:Partial<BulkDraft>)=>setRows(prev=>prev.map(r=>r.id===id?{...r,...patch}:r));
+  const applyCourse=()=>setRows(prev=>prev.map(r=>({...r,course_id:commonCourse,item_id:'',exam_paper_id:'',week_number:r.week_number,expectedActivity:undefined})));
+  const applyKind=()=>setRows(prev=>prev.map(r=>({...r,kind:commonKind,expectedActivity:undefined,week_number:isExamResource(commonKind)||commonKind==='textbook'?null:r.week_number??1,item_id:'',exam_paper_id:''})));
+  const activityTitles=[...new Set(data.items.filter(i=>i.course_id===commonCourse&&i.week_number!=null).map(i=>i.title))].sort();
+  const applyActivity=()=>setRows(prev=>prev.map(r=>({...r,expectedActivity:r.week_number!=null&&!isExamResource(r.kind)?commonActivity:undefined,item_id:r.week_number==null||isExamResource(r.kind)?'':data.items.find(i=>i.course_id===r.course_id&&i.week_number===r.week_number&&i.title===commonActivity)?.id||''})));
+  const valid=rows.length>0&&rows.every(r=>validBulkRow(r,rows,data));
+  const submit=async(e:FormEvent)=>{
+    e.preventDefault();if(!valid||guard.current||disabled)return;guard.current=true;setSubmitting(true);setIssue('');
+    try{
+      const ok=await run(()=>api('/api/resources/bulk',user,{method:'POST',body:{resources:rows.map(r=>({id:r.id,course_id:r.course_id,week_number:isExamResource(r.kind)?null:r.week_number,title:r.title,kind:r.kind,source:'drive',drive_file_id:r.file_id,item_id:r.week_number==null||isExamResource(r.kind)?null:r.item_id||null,exam_paper_id:r.kind==='exam_solution'?r.exam_paper_id||null:null}))}}),{collection:'resources',bulkInsert:true},{title:'Document links saved',detail:'Existing identical links were kept.'});
+      if(ok)onSaved();else setIssue('No save was confirmed. Check destinations and retry, or refresh if the connection was interrupted. Identical links are skipped.');
+    }finally{guard.current=false;setSubmitting(false);}
+  };
+  return <dialog ref={dialog} className="dialog planner-dialog bulk-resource-dialog" aria-labelledby="bulk-resource-title" onCancel={e=>{e.preventDefault();if(!disabled)onClose();}}>
+    <button type="button" className="dialog-close" aria-label="Close bulk linking" onClick={onClose} disabled={disabled}><X size={18}/></button><h2 id="bulk-resource-title">Link multiple documents</h2><p>Review each destination before saving. Files remain in Google Drive.</p>
+    <form onSubmit={e=>void submit(e)}><fieldset disabled={disabled} className="bulk-resource-fields"><div className="bulk-resource-common"><FormRow label="Apply course to all"><div className="bulk-resource-inline"><select value={commonCourse} onChange={e=>{setCommonCourse(e.target.value);setCommonActivity('');}}><option value="">Select course</option>{courses.map(c=><option key={c.id} value={c.id}>{c.code} · {c.title}</option>)}</select><button type="button" className="btn secondary small" onClick={applyCourse} disabled={!commonCourse}>Apply</button></div></FormRow><FormRow label="Apply material type to all"><div className="bulk-resource-inline"><select value={commonKind} onChange={e=>setCommonKind(e.target.value as Resource['kind'])}>{kinds.map(k=><option key={k} value={k}>{labels[k]}</option>)}</select><button type="button" className="btn secondary small" onClick={applyKind}>Apply</button></div></FormRow><FormRow label="Attach matching weekly activity"><div className="bulk-resource-inline"><select value={commonActivity} onChange={e=>setCommonActivity(e.target.value)}><option value="">Entire week</option>{activityTitles.map(t=><option key={t}>{t}</option>)}</select><button type="button" className="btn secondary small" onClick={applyActivity}>Apply</button></div></FormRow><small className="muted">If a matching weekly activity does not exist, the file remains a week resource. Review each row.</small></div>
+    <div className="bulk-resource-rows">{rows.map(r=>{const course=courses.find(c=>c.id===r.course_id);const candidates=bulkPairCandidates(r,rows,data.resources);return <div className="bulk-resource-row" key={r.id}><div className="bulk-resource-heading"><FileText size={17}/><strong>{r.title}</strong>{r.suggested&&<small>Suggested · review</small>}<button type="button" className="icon-btn" onClick={()=>setRows(prev=>prev.filter(row=>row.id!==r.id))} aria-label={`Exclude ${r.title}`}><X size={15}/></button></div><div className="form-grid"><FormRow label="Course"><select value={r.course_id} onChange={e=>update(r.id,{course_id:e.target.value,item_id:'',exam_paper_id:'',week_number:r.week_number,expectedActivity:undefined})}><option value="">Select course</option>{courses.map(c=><option key={c.id} value={c.id}>{c.code} · {c.title}</option>)}</select></FormRow><FormRow label="Material type"><select value={r.kind} onChange={e=>{const kind=e.target.value as Resource['kind'];update(r.id,{kind,item_id:'',exam_paper_id:'',expectedActivity:undefined,week_number:isExamResource(kind)||kind==='textbook'?null:r.week_number??1});}}>{kinds.map(k=><option key={k} value={k}>{labels[k]}</option>)}</select></FormRow>{isExamResource(r.kind)?<FormRow label="Location"><input value="Exam Prep" readOnly/></FormRow>:<FormRow label="Location"><select value={r.week_number==null?'course':String(r.week_number)} onChange={e=>update(r.id,{week_number:e.target.value==='course'?null:Number(e.target.value),item_id:'',expectedActivity:undefined})}><option value="course">Course Library</option>{r.week_number!=null&&(r.week_number<1||r.week_number>(course?.week_count||13))&&<option value={r.week_number}>Week {r.week_number} (outside course)</option>}{Array.from({length:course?.week_count||13},(_,i)=><option key={i+1} value={i+1}>Week {i+1}</option>)}</select></FormRow>}{r.kind==='exam_solution'?<FormRow label="Corresponding question paper"><select value={r.exam_paper_id} onChange={e=>update(r.id,{exam_paper_id:e.target.value})}><option value="">Unpaired solution</option>{candidates.map(p=><option value={p.id} key={p.id}>{p.title}</option>)}</select></FormRow>:r.week_number!=null&&!isExamResource(r.kind)&&<FormRow label="Attach to study item"><select value={r.item_id} onChange={e=>update(r.id,{item_id:e.target.value,expectedActivity:undefined})}><option value="">Entire week</option>{data.items.filter(i=>i.course_id===r.course_id&&i.week_number===r.week_number).map(i=><option key={i.id} value={i.id}>{i.title}</option>)}</select></FormRow>}</div>{r.expectedActivity&&!r.item_id&&<p className="exam-attempt-error">No matching “{r.expectedActivity}”. This file will be linked to Week resources only.</p>}{!r.suggested&&<p className="muted">No filename match; review the destination.</p>}{!validBulkRow(r,rows,data)&&<p role="status" className="exam-attempt-error">Check the course, destination or selected paper.</p>}</div>})}</div></fieldset>{issue&&<p role="alert" className="exam-attempt-error">{issue}</p>}<div className="form-actions"><button type="button" className="btn secondary" disabled={disabled} onClick={onClose}>Cancel</button><button type="submit" className="btn primary" disabled={!valid||disabled} aria-busy={submitting}>{submitting?<><LoaderCircle className="spin" size={15}/> Linking…</>:`Link ${rows.length} documents`}</button></div></form>
+  </dialog>;
+}

@@ -1,7 +1,7 @@
 import type { Snapshot } from './types';
 
 export type SnapshotCollection = keyof Snapshot;
-export type MutationHint = { collection: SnapshotCollection; deleteId?: string; bulkInsert?: boolean; removeWithLinks?: boolean } | { collection: 'none' };
+export type MutationHint = { collection: SnapshotCollection; deleteId?: string; bulkInsert?: boolean; removeWithLinks?: boolean; detachLinks?: boolean } | { collection: 'none' };
 
 type Identified = { id: string };
 type WorkspaceCollection = Exclude<SnapshotCollection, 'sessions' | 'focus_stats'>;
@@ -47,6 +47,11 @@ function preserveRows<T extends Identified>(incoming: T[], current: T[], changes
 /** Apply an authoritative API response to the relevant cached collection. */
 export function applyMutation(snapshot: Snapshot, hint: MutationHint, result: unknown): Snapshot {
   if (hint.collection === 'none') return snapshot;
+  if (hint.detachLinks) {
+    const {resource,items}=resourceDetachRows(result);
+    const updates=new Map(items.map(row=>[row.id,row]));
+    return {...snapshot,resources:snapshot.resources.some(r=>r.id===resource.id)?snapshot.resources.map(r=>r.id===resource.id?resource:r):[...snapshot.resources,resource],items:snapshot.items.map(row=>updates.get(row.id)||row).concat(items.filter(row=>!snapshot.items.some(i=>i.id===row.id)))};
+  }
   if (hint.removeWithLinks) {
     const rows = resourceRemovalRows(result, hint.deleteId);
     const updates = new Map(rows.map(row => [row.id, row]));
@@ -87,4 +92,9 @@ export function resourceRemovalRows(result:unknown, expectedId?:string): Snapsho
     throw new Error('Unexpected resource removal response. Refresh to verify the saved state.');
   }
   return result.items;
+}
+
+export function resourceDetachRows(result:unknown): {resource:Snapshot['resources'][number];items:Snapshot['items']} {
+  if (!result || typeof result!=='object' || !('resource' in result) || !result.resource || typeof result.resource!=='object' || !('id' in result.resource) || typeof result.resource.id!=='string' || !('items' in result) || !Array.isArray(result.items) || result.items.some(row=>!row||typeof row.id!=='string'||row.resource_id!==null)) throw new Error('Unexpected detach response. Refresh to verify the saved state.');
+  return result as {resource:Snapshot['resources'][number];items:Snapshot['items']};
 }
