@@ -1516,6 +1516,9 @@ html[data-study-hub-theme="light"]{color-scheme:light}
 .planner-course-task-filters button{border:0;border-radius:8px;background:transparent;color:var(--muted);padding:8px 12px;font-size:.72rem;font-weight:750;cursor:pointer}
 .planner-course-task-filters button.active{color:var(--text);background:var(--paper);box-shadow:0 2px 8px #07081722}
 .planner-course-task-filters button:hover:not(.active){color:var(--text)}
+.planner-course-task-toolbar{display:flex;align-items:end;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:13px}
+.planner-course-task-toolbar .planner-course-task-filters{margin:0}
+.planner-course-task-toolbar .form-row{min-width:160px}
 .planner-course-task-row{display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:12px;align-items:start;padding:13px 4px;position:relative}
 .planner-course-task-row>.task-completion-check{margin-top:5px;min-width:17px;min-height:17px}
 .planner-course-task-row .planner-course-task-info{min-width:0;flex:initial;line-height:1.5}
@@ -1948,12 +1951,16 @@ html[data-study-hub-theme="light"]{color-scheme:light}
 .pdf-opening-indicator:after{content:'';position:absolute;inset:0 auto 0 0;width:34%;border-radius:999px;background:#a2d2b4;animation:pdf-opening-slide 1.5s ease-in-out infinite alternate}
 @keyframes pdf-opening-slide{from{transform:translateX(-30%)}to{transform:translateX(230%)}}
 /* A single concise toolbar: Chrome's native reader owns zoom/search/print. */
-.pdf-workspace .pdf-topbar{padding:12px 17px;min-height:64px;flex-wrap:wrap;gap:10px}
-.pdf-workspace .pdf-file-title{max-width:min(47%,560px)}
-.pdf-workspace .pdf-file-title strong{font-size:.83rem}
-.pdf-workspace .pdf-file-title span{color:var(--muted);font-size:.68rem}
+.pdf-workspace .pdf-topbar{padding:8px 17px;min-height:58px;flex-wrap:wrap;gap:8px;border-bottom:1px solid var(--line)}
+.pdf-workspace .pdf-file-title{flex:1 1 220px;max-width:none}
+.pdf-file-title>svg{flex-shrink:0;color:var(--teal)}
+.pdf-file-title>div{display:grid;min-width:0;gap:2px}
+.pdf-workspace .pdf-file-title strong{font-size:.82rem}
+.pdf-workspace .pdf-file-title span{display:block;overflow:hidden;text-overflow:ellipsis;color:var(--muted);font-size:.68rem}
 .pdf-workspace .pdf-actions{flex-wrap:wrap;justify-content:flex-end;gap:8px}
-.pdf-workspace .pdf-actions input{width:65px;padding:9px 7px;border-radius:9px;text-align:center}
+.pdf-bookmark{display:flex;align-items:center;gap:6px}
+.pdf-bookmark label{white-space:nowrap}
+.pdf-workspace .pdf-actions input{width:52px;padding:7px 5px;border-radius:8px;text-align:center}
 .pdf-workspace .pdf-actions :is(input:focus,input:focus-visible){outline:2px solid #9ed3b2!important;outline-offset:2px!important}
 .pdf-workspace .pdf-toggle-study{gap:7px}
 .pdf-workspace .pdf-document-scroll{overflow:hidden;position:relative}
@@ -1963,12 +1970,32 @@ html[data-study-hub-theme="light"]{color-scheme:light}
 .pdf-frame-loading strong{color:#fff3fa;font-size:1rem}
 .pdf-frame-loading p{color:#d0b7c7;max-width:38ch;font-size:.79rem;line-height:1.6}
 .pdf-frame-loading-actions{display:flex;justify-content:center;gap:10px;flex-wrap:wrap}
-.pdf-study-side{scrollbar-width:thin;scrollbar-color:#9a7790 transparent}
-@media(max-width:950px){.pdf-workspace .pdf-file-title{max-width:40%}}
+.pdf-study-side{gap:14px;scrollbar-width:thin;scrollbar-color:#9a7790 transparent}
+.pdf-side-block{padding-bottom:14px}
+.pdf-study-side .pdf-side-block h3{display:flex;align-items:baseline;justify-content:space-between;gap:6px;margin:0 0 8px}
+.pdf-study-side .pdf-side-block :is(h3 small,.pdf-study-header small){color:var(--muted);font-size:.71rem}
+.pdf-study-header p{margin:0 0 10px}
+.pdf-study-header>small{display:block;margin-top:7px;overflow-wrap:anywhere}
+.pdf-study-side .pdf-check{margin:9px 0}
+.pdf-material-list{display:grid;gap:5px}
+.pdf-study-side .pdf-related{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px;min-height:44px;margin:0;padding:7px 8px;cursor:pointer}
+.pdf-related>svg{color:var(--muted)}
+.pdf-study-side .pdf-related:hover,.pdf-more-materials summary:hover{border-color:var(--teal)}
+.pdf-related-copy{display:grid;gap:2px;min-width:0}
+.pdf-related-copy strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.76rem}
+.pdf-related-copy small{color:var(--muted);font-size:.67rem}
+.pdf-more-materials summary{display:flex;align-items:center;justify-content:space-between;min-height:44px;margin-top:5px;padding:7px 8px;border:1px solid var(--line);border-radius:8px;font-size:.73rem;cursor:pointer}
+.pdf-more-materials[open] summary{margin-bottom:5px}
+.pdf-more-materials[open] summary svg{transform:rotate(180deg)}
+.pdf-study-side .pdf-browse-course{display:flex;justify-content:space-between;width:100%;min-height:44px;margin-top:9px}
+.pdf-study-side :is(.pdf-related,summary):focus-visible{outline:2px solid var(--teal);outline-offset:2px}
 @media(max-width:690px){
-  .pdf-workspace .pdf-topbar{padding:max(10px,env(safe-area-inset-top)) 12px 10px;gap:8px}
-  .pdf-workspace .pdf-file-title{max-width:100%;width:100%}
-  .pdf-workspace .pdf-actions{justify-content:flex-start;width:100%}
+  .pdf-workspace .pdf-topbar{display:grid;grid-template-columns:minmax(0,1fr) auto;padding:max(8px,env(safe-area-inset-top)) 12px 8px;gap:6px 8px}
+  .pdf-workspace .pdf-actions{display:contents}
+  .pdf-workspace .pdf-topbar .btn{min-height:40px}
+  .pdf-bookmark{grid-column:1;grid-row:2}
+  .pdf-workspace .pdf-toggle-study{grid-column:2;grid-row:2;justify-self:end}
+  .pdf-workspace .pdf-close-reader{grid-column:2;grid-row:1;justify-self:end}
   .pdf-workspace .pdf-reading-layout{grid-template-rows:minmax(0,1fr) auto}
   .pdf-workspace .pdf-document-panel{min-height:0}
   .pdf-workspace .pdf-document-scroll{min-height:0}
@@ -1976,6 +2003,7 @@ html[data-study-hub-theme="light"]{color-scheme:light}
   .pdf-workspace .pdf-study-side{max-height:min(40dvh,320px)}
   .pdf-opening{padding:14px}
 }
+@media(max-width:360px){.pdf-workspace .pdf-toggle-study span{display:none}}
 @media(prefers-reduced-motion:reduce){.pdf-opening-indicator:after{animation:none;transform:translateX(100%)}}
 
 /* v0.6 — Course-wide activity setup, using existing Mulberry Dusk tokens. */
