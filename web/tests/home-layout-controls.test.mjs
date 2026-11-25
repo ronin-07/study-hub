@@ -6,11 +6,11 @@ const home=read('app/page.tsx');
 const course=read('components/course-planner.tsx');
 const css=read('app/globals.css');
 
-test('Home course overview and priorities share left column while the right column holds the calendar',()=>{
-  assert.match(css,/\.home-main-column\{display:contents;\}/);
-  assert.match(css,/\.home-course-panel\{grid-column:1;grid-row:2\}/);
-  assert.match(css,/\.home-priorities\{grid-column:1;/);
-  assert.match(css,/\.home-side-column\{grid-column:2;grid-row:2 \/ span 2\}/);
+test('Home priorities follow the course panel in a column independent of the calendar',()=>{
+  assert.match(home,/<div className="home-main-column">\s*<section className="home-panel home-course-panel"[\s\S]*?<section className="home-panel home-priorities"[\s\S]*?<\/section>\s*<\/div>\s*<div className="home-side-column">/);
+  assert.match(css,/\.home-main-column,\.home-side-column\{display:flex;flex-direction:column;/);
+  assert.match(css,/\.home-main-column\{gap:inherit;\}/);
+  assert.doesNotMatch(css,/\.home-main-column\{display:contents/);
 });
 test('course carousel is accessible and reaches every course',()=>{
   assert.match(home,/studyGroups\.map\(\(group,index\)=>/);

@@ -251,7 +251,8 @@
 
 .home-layout{display:grid;grid-template-columns:minmax(0,1.9fr) minmax(290px,.88fr);gap:24px;align-items:start;}
 .home-main-column,.home-side-column{display:flex;flex-direction:column;gap:20px;min-width:0;}
-.home-stats-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:11px;}
+.home-main-column{gap:inherit;}
+.home-stats-grid{display:grid;grid-column:1/-1;grid-template-columns:repeat(4,minmax(0,1fr));gap:11px;}
 .home-stat{background:linear-gradient(145deg,#202039e8,#17182aef);border:1px solid #65608d53;border-radius:17px;padding:16px 12px;min-height:96px;display:grid;grid-template-columns:47px 1fr;grid-template-rows:1fr 1fr;align-items:center;column-gap:9px;box-shadow:0 8px 30px #08091e22;min-width:0;}
 .home-stat.danger{border-color:#a0476157;background:linear-gradient(145deg,#291e35ed,#19172bed);}
 .home-stat-icon{grid-row:1 / span 2;width:43px;height:43px;border-radius:13px;display:grid;place-items:center;background:#59448c5e;color:#bb9aff;}
@@ -667,13 +668,7 @@
 .planner-course-title{margin-top:16px;}
 .planner-rail-section .planner-archive-toggle{margin-top:12px;}
 
-/* Main Home content places the study courses across the full available width. */
-.home-main-column{display:contents;}
-.home-stats-grid{grid-column:1/-1;}
-.home-course-panel{grid-column:1/-1;min-width:0;}
-.home-priorities{grid-column:1;min-width:0;}
-.home-side-column{grid-column:2;grid-row:3;}
-.home-layout{align-items:start;}
+.home-course-panel,.home-priorities{min-width:0;}
 .home-course-grid{display:grid;grid-auto-flow:column;grid-auto-columns:calc((100% - 28px)/3);grid-template-columns:none;gap:14px;
   overflow-x:auto;scroll-snap-type:x mandatory;overscroll-behavior-x:contain;padding-bottom:6px;scrollbar-width:thin;}
 .home-course-tile{scroll-snap-align:start;min-width:0;height:100%;min-height:230px;}
@@ -706,10 +701,6 @@
 
 @media(max-width:1200px){
   .home-course-grid{grid-auto-columns:calc((100% - 14px)/2);}
-}
-@media(max-width:1120px){
-  .home-layout{grid-template-columns:minmax(0,1fr);}
-  .home-stats-grid,.home-course-panel,.home-priorities,.home-side-column{grid-column:1;grid-row:auto;}
 }
 @media(max-width:650px){
   .home-course-grid{grid-auto-columns:100%;grid-template-columns:none;}
@@ -1505,9 +1496,6 @@ html[data-study-hub-theme="light"]{color-scheme:light}
    Preserve existing course navigation and horizontal browsing for many courses. */
 @media (min-width:1121px){
   .home-layout{grid-template-columns:minmax(0,1.65fr) minmax(305px,.85fr);gap:clamp(15px,1.35vw,24px)}
-  .home-course-panel{grid-column:1;grid-row:2}
-  .home-priorities{grid-column:1;grid-row:3}
-  .home-side-column{grid-column:2;grid-row:2 / span 2}
 }
 .home-course-grid.course-count-1{grid-auto-columns:100%}
 .home-course-grid.course-count-2{grid-auto-columns:calc((100% - 14px)/2)}

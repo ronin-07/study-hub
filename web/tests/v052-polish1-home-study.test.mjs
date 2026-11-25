@@ -9,9 +9,8 @@ const menu=read('components/task-actions-menu.tsx');
 
 test('Home keeps all four metrics while giving courses/priorities the left column',()=>{
   for(const heading of ['Tasks today','Overdue','Upcoming deadlines','Focus this week','Today’s study courses','Today’s priorities','Next 7 days']) assert.ok(home.includes(heading));
-  assert.match(css,/\.home-course-panel\{grid-column:1;grid-row:2\}/);
-  assert.match(css,/\.home-priorities\{grid-column:1;grid-row:3\}/);
-  assert.match(css,/\.home-side-column\{grid-column:2;grid-row:2 \/ span 2\}/);
+  assert.match(home,/<div className="home-layout">\s*<div className="home-stats-grid"[\s\S]*?<div className="home-main-column">/);
+  assert.match(css,/\.home-stats-grid\{display:grid;grid-column:1\/-1;/);
   assert.match(css,/\.home-course-grid\.course-count-1\{grid-auto-columns:100%\}/);
 });
 test('Home avoids empty deadline repetition and redundant Today badges',()=>{

@@ -23,7 +23,7 @@ import { ProgressTrack, ProgressValue } from '@/components/progress-motion';
 import { TaskActionsMenu } from '@/components/task-actions-menu';
 import { PhotoEmptyState } from '@/components/photo-empty-state';
 import type { FeedbackMessage } from '@/components/feedback-toasts';
-import { isActionable } from '@/lib/task-view';
+import { isActionable, sortStudyTasks, sortWeeklyActivities, type StudyTaskSort } from '@/lib/task-view';
 import { courseLearningItems, examPreparationItems } from '@/lib/study-progress';
 import { activityKindFallback, activityReference, activityStatus, activityStatusLabel, shortStudyDate } from '@/lib/activity-display';
 import { resolveWorkspaceSemester } from '@/lib/course-navigation';
@@ -123,6 +123,7 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
     try {localStorage.setItem('studyhub.exam-revision-collapsed',String(collapsed));} catch {}
   };
   const [courseTaskFilter, setCourseTaskFilter] = useState<'all'|'week'|'exam'>('all');
+  const [courseTaskSort, setCourseTaskSort] = useState<StudyTaskSort>('week');
   const [initialCourseDraft, setInitialCourseDraft] = useState<CourseDraft>(courseDraftDefaults);
   const [initialSemesterDraft, setInitialSemesterDraft] = useState({ id: '', name: '', start_date: '', end_date: '' });
 
@@ -178,7 +179,7 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
   const examDoneCount = examProgressItems.filter(i => i.done).length;
   const examFocusSeconds=examFocusThisWeek(data.sessions,examProgressItems,selectedId);
   const actionableCourseItems = courseItems.filter(isActionable);
-  const filteredCourseTasks = actionableCourseItems.filter(i=>courseTaskFilter==='all'||(courseTaskFilter==='week'?i.week_number===weekNumber:i.week_number===null));
+  const filteredCourseTasks = sortStudyTasks(actionableCourseItems.filter(i=>courseTaskFilter==='all'||(courseTaskFilter==='week'?i.week_number===weekNumber:i.week_number===null)),courseTaskSort);
   // UI1 holds a completed row visibly for 900ms; progress must use the canonical
   // optimistic state rather than that presentation-only checklist projection.
   // Course learning progress is restricted to week-linked checklist activities.
@@ -190,7 +191,7 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
   const weekDoneCount=progressWeekItems.filter(i=>i.done).length;
   const weekCompletion=checklistPercent(weekDoneCount,progressWeekItems.length);
   const today=localToday();
-  const filteredItems=items.filter(i=>activityFilter==='all'||(activityFilter==='completed'?i.done:!i.done&&(activityFilter==='planned'?Boolean(i.planned_date):Boolean(i.due_date))));
+  const filteredItems=sortWeeklyActivities(items.filter(i=>activityFilter==='all'||(activityFilter==='completed'?i.done:!i.done&&(activityFilter==='planned'?Boolean(i.planned_date):Boolean(i.due_date)))));
   const isReadOnly = Boolean(selected?.archived);
   // Never carry a previous course or week's activity filter into a new workspace.
   useEffect(()=>{setActivityFilter('all');setFiltersOpen(false);},[selectedId,weekNumber]);
@@ -566,7 +567,12 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
           </Card>}
           {workspaceTab==='tasks'&&<Card className="planner-course-tasks-card"><SectionTitle title="Course study tasks" aside={!isReadOnly&&<button className="btn primary small" onClick={()=>{openActivityForm();setItemDraft({...itemDraftDefaults,kind:'assignment',is_task:true});}}><Plus size={14}/> Add task</button>}/>
             <p className="planner-course-task-summary">{actionableCourseItems.length} {actionableCourseItems.length===1?'task':'tasks'} · {actionableCourseItems.filter(i=>i.done).length} completed</p>
-            <div className="planner-course-task-filters" role="group" aria-label="Filter course study tasks">{(['all','week','exam'] as const).map(filter=><button key={filter} type="button" className={courseTaskFilter===filter?'active':''} aria-pressed={courseTaskFilter===filter} onClick={()=>setCourseTaskFilter(filter)}>{filter==='all'?'All':filter==='week'?'This week':'Exam prep'}</button>)}</div>
+            <div className="planner-course-task-toolbar">
+              <div className="planner-course-task-filters" role="group" aria-label="Filter course study tasks">{(['all','week','exam'] as const).map(filter=><button key={filter} type="button" className={courseTaskFilter===filter?'active':''} aria-pressed={courseTaskFilter===filter} onClick={()=>setCourseTaskFilter(filter)}>{filter==='all'?'All':filter==='week'?'This week':'Exam prep'}</button>)}</div>
+              <FormRow label="Sort tasks"><select value={courseTaskSort} onChange={e=>setCourseTaskSort(e.target.value==='due'?'due':'week')}>
+                <option value="week">Teaching week</option><option value="due">Due or planned date</option>
+              </select></FormRow>
+            </div>
             <div className="planner-course-task-list">{filteredCourseTasks.map(item=>renderCourseTask(item))}</div>
             {!filteredCourseTasks.length&&<EmptyState icon={<CalendarDays size={24}/>} title={actionableCourseItems.length?'Nothing in this filter':'No scheduled work'} detail={actionableCourseItems.length?'Choose All to see the other course tasks.':'Add assignments or schedule a revision activity.'}/>}
           </Card>}

@@ -44,7 +44,7 @@ test('Resource browsing has query, status filters, sticky editor and no silent a
 });
 test('PDF viewer keeps saved-page navigation and native reader controls without duplicate zoom',()=>{
   assert.match(pdf,/Bookmarked PDF page/);
-  assert.match(pdf,/Chrome's PDF toolbar handles zoom, search and print/);
+  assert.match(pdf,/<iframe[\s\S]*?src=\{\`\$\{pdf\.url}#page=\$\{pdf\.page}\`\}/);
   assert.doesNotMatch(pdf,/Increase zoom|Decrease zoom/);
   assert.match(pdf,/onPage\(pdf\.page\+1\)/);
   assert.match(pdf,/onClose/);

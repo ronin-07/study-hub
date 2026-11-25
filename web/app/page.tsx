@@ -1141,13 +1141,13 @@ export default function Page() {
               <h1>{hello}{firstName?`, ${firstName}`:''} <span aria-hidden="true">👋</span></h1>
             </div>
             <div className="home-layout">
+              <div className="home-stats-grid" aria-label="Study overview">
+                <div className="home-stat"><span className="home-stat-icon purple"><ListTodo size={23}/></span><strong>{todayWork.length}</strong><span>Tasks today</span></div>
+                <div className={'home-stat'+(overdue.length?' danger':'')}><span className={"home-stat-icon "+(overdue.length?"red":"purple")}><AlertTriangle size={23}/></span><strong>{overdue.length}</strong><span>Overdue</span></div>
+                <div className="home-stat"><span className="home-stat-icon purple"><CalendarDays size={23}/></span><strong>{upcoming.length}</strong><span>Upcoming deadlines</span></div>
+                <div className="home-stat"><span className="home-stat-icon blue"><BarChart3 size={23}/></span><strong><ProgressValue value={weekSeconds/3600} decimals={1} suffix=" h"/></strong><span>Focus this week</span></div>
+              </div>
               <div className="home-main-column">
-                <div className="home-stats-grid" aria-label="Study overview">
-                  <div className="home-stat"><span className="home-stat-icon purple"><ListTodo size={23}/></span><strong>{todayWork.length}</strong><span>Tasks today</span></div>
-                  <div className={'home-stat'+(overdue.length?' danger':'')}><span className={"home-stat-icon "+(overdue.length?"red":"purple")}><AlertTriangle size={23}/></span><strong>{overdue.length}</strong><span>Overdue</span></div>
-                  <div className="home-stat"><span className="home-stat-icon purple"><CalendarDays size={23}/></span><strong>{upcoming.length}</strong><span>Upcoming deadlines</span></div>
-                  <div className="home-stat"><span className="home-stat-icon blue"><BarChart3 size={23}/></span><strong><ProgressValue value={weekSeconds/3600} decimals={1} suffix=" h"/></strong><span>Focus this week</span></div>
-                </div>
                 <section className="home-panel home-course-panel" aria-labelledby="home-courses-title">
                   <div className="home-panel-heading"><div className="home-heading-icon"><BookOpen size={21}/></div><div><h2 id="home-courses-title">Today’s study courses</h2></div><span className="home-count-pill">{studyGroups.length} {studyGroups.length===1?'course':'courses'}</span></div>
                   {studyGroups.length?<>

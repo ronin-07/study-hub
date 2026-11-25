@@ -1,5 +1,21 @@
 import type {DriveEntry,DriveIndexed,Resource,Snapshot} from './types';
 import {availableExamPapers,isExamResource} from './resource-links.ts';
+
+export const bulkPdfLimit = 30;
+type BulkFile = DriveEntry | DriveIndexed;
+
+export function selectListedPdfs(selected: BulkFile[], listed: BulkFile[]): BulkFile[] {
+  const byId = new Map(selected.map(file => [file.id, file]));
+  for (const file of listed) {
+    if (byId.size >= bulkPdfLimit) break;
+    // The backup index only stores PDFs, and its records have no MIME field.
+    if (('links' in file || file.mimeType === 'application/pdf') && !byId.has(file.id)) {
+      byId.set(file.id, file);
+    }
+  }
+  return byId.size === selected.length ? selected : [...byId.values()];
+}
+
 export type BulkDraft={id:string;file_id:string;title:string;course_id:string;kind:Resource['kind'];week_number:number|null;item_id:string;exam_paper_id:string;suggested:boolean;expectedActivity?:string};
 function inferredKind(name:string):Resource['kind']{
   if(/(?:^|[\W_])(?:sol(?:ution)?s?|answer(?:s)?)(?:[\W_]|$)/i.test(name))return 'exam_solution';
@@ -17,7 +33,7 @@ export function bulkPairCandidates(row:BulkDraft,rows:BulkDraft[],resources:Reso
 }
 export function bulkDrafts(files:(DriveEntry|DriveIndexed)[],data:Snapshot,initialCourse:string,newId:()=>string):BulkDraft[]{
   const active=data.courses.filter(c=>!c.archived);
-  const rows=[...new Map(files.map(f=>[f.id,f])).values()].slice(0,30).map(f=>{
+  const rows=[...new Map(files.map(f=>[f.id,f])).values()].slice(0,bulkPdfLimit).map(f=>{
     const suggestion='suggestion' in f?f.suggestion:null;
     const kindGuess=inferredKind(f.name);
     const kind=isExamResource(kindGuess)?kindGuess:suggestion?.kind||kindGuess;

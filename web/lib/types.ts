@@ -17,7 +17,7 @@ export type DriveSuggestion = {
   course_id: string; course_code: string; week_number: number; week_title: string | null;
   kind: Resource['kind']; confidence: 'high' | 'low'; reason: string;
 };
-export type DriveIndexed = DriveEntry & {
+export type DriveIndexed = Omit<DriveEntry, 'mimeType'> & {
   path: string; suggestion: DriveSuggestion | null;
   links: { resource_id: string; course_id: string; week_number: number | null }[];
 };

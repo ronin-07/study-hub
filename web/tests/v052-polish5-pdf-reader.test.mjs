@@ -30,7 +30,7 @@ test('PDF request gate aborts the older request, and only the latest selection m
 
 test('open starts loading immediately and stale requests cannot cache bytes or create a blob URL',()=>{
   assert.match(page,/pdfPendingFileRef\.current===fileId\)return/);
-  assert.match(page,/setPdfOpening\(\{requestId,fileId,title,resourceId,page,status:'loading'\}\)/);
+  assert.match(page,/setPdfOpening\(\{requestId,fileId,title,resourceId,page,weekContext,status:'loading'\}\)/);
   assert.match(page,/pdfBlob\(`\/api\/drive\/files\/\$\{encodeURIComponent\(fileId\)\}\/pdf`,user,controller\.signal,cached\)/);
   assert.match(page,/if\(controller\.signal\.aborted\|\|!pdfRequestGateRef\.current\.isCurrent\(requestId\)\)return;[\s\S]*?pdfCache\.store[\s\S]*?URL\.createObjectURL\(body\.blob\)/);
   assert.match(page,/PDF_FETCH_TIMEOUT_MS/);
@@ -50,7 +50,7 @@ test('PDF load failure has retry, cancel, file identity and no fake percentage',
 test('reader uses native PDF for hyperlinks and zoom, with explicit saved-page control',()=>{
   assert.match(reader,/pdf\.url}#page=\$\{pdf\.page\}/);
   assert.match(reader,/Bookmarked PDF page/);
-  assert.match(reader,/Set a saved page above to return to it later/);
+  assert.match(reader,/Enter a PDF page number in Saved page to return to it later/);
   assert.match(reader,/Hide Study Mode sidebar/);
   assert.match(reader,/onLoad=\{\(\)=>/);
   assert.match(reader,/Retry viewer/);

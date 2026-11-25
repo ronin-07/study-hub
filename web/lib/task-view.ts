@@ -26,6 +26,36 @@ export function belongsToToday(item: Item, today: string): boolean {
 }
 
 const priorityOrder = {high: 0, medium: 1, low: 2} as const;
+const learningOrder: Record<Item['kind'], number> = {
+  lecture: 0, notes: 1, reading: 2, questions: 3, exercise: 4, assignment: 5, revision: 6, personal: 7,
+};
+const byTitle = new Intl.Collator(undefined, {numeric: true, sensitivity: 'base'});
+const compareTitle = (a: Item, b: Item) => byTitle.compare(a.title, b.title) || a.id.localeCompare(b.id);
+const compareWeek = (a: Item, b: Item) =>
+  (a.week_number ?? Number.MAX_SAFE_INTEGER) - (b.week_number ?? Number.MAX_SAFE_INTEGER);
+const compareDate = (a: Item, b: Item) =>
+  (a.due_date || a.planned_date || '9999').localeCompare(b.due_date || b.planned_date || '9999');
+
+export function sortWeeklyActivities(items: Item[]): Item[] {
+  return [...items].sort((a,b) => learningOrder[a.kind] - learningOrder[b.kind] || compareDate(a,b) || compareTitle(a,b));
+}
+
+export type StudyTaskSort = 'week' | 'due';
+export function sortStudyTasks(items: Item[], sort: StudyTaskSort = 'week'): Item[] {
+  return [...items].sort((a,b) =>
+    (sort === 'due'
+      ? Number(a.done) - Number(b.done) || compareDate(a,b) || compareWeek(a,b)
+      : compareWeek(a,b) || Number(a.done) - Number(b.done) || compareDate(a,b))
+    || learningOrder[a.kind] - learningOrder[b.kind] || compareTitle(a,b)
+  );
+}
+
+export function focusTaskLabel(item: Item): string {
+  if (item.week_number != null) return `Week ${item.week_number} · ${item.title}`;
+  if (item.course_id && item.kind === 'revision') return `Exam prep · ${item.title}`;
+  return item.title;
+}
+
 export function todayPriorities(items: Item[], today: string): Item[] {
   return items.filter(i => belongsToToday(i, today)).sort((a,b) =>
     Number(isOverdue(b,today)) - Number(isOverdue(a,today)) ||
@@ -64,6 +94,7 @@ export function shiftCalendarMonth(selectedDay: string, offset: number): string 
 }
 
 /** Empty course selection intentionally means personal/general focus. */
-export function focusTasksForContext(items: Item[], courseId: string): Item[] {
-  return items.filter(item => !item.done && isActionable(item) && (item.course_id || '') === courseId);
+export function focusTasksForContext(items: Item[], courseId: string, selectedItemId?: string): Item[] {
+  return sortStudyTasks(items.filter(item => (item.course_id || '') === courseId
+    && (item.id === selectedItemId || (!item.done && isActionable(item)))));
 }
