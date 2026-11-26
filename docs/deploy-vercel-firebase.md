@@ -8,6 +8,10 @@ The existing application uses Vercel Services at the repository root, with `web/
 
 The web service targets Node.js 24.x (`web/package.json` engines); the API service targets Python 3.12 (`backend/.python-version`). The root `.nvmrc` selects the Node major for local version managers. CI uses the same release lines. Patch versions can differ; record the versions from each deployment. Verify the actual web and API runtimes in Vercel Preview build logs before approving a merge. If the web service does not honor its package engine, review the project Node.js setting (24.x) and its scope before changing it; avoid changing Production settings during Preview validation. Verify Production after merge. Keep `vercel.json`, service roots, credentials and Firebase project isolation unchanged.
 
+## Backend dependencies
+
+The API service root is `backend/`. Its production manifest remains `requirements.txt`, generated from `requirements.in` with Python 3.12 as the resolution target. Development and audit tools belong to `requirements-dev.txt`, which includes the runtime dependency set and is constrained by the production lock. Do not configure Vercel to install the development lock. Verify the actual installation in Preview logs and smoke-test the API; no runtime setting, secret or database migration is required for this dependency split. See [dependency workflow](../CONTRIBUTING.md#runtime-and-dependencies).
+
 ## Environment matrix
 
 | Setting | Local | Preview | Production |

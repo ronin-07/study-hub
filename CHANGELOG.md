@@ -5,6 +5,7 @@ Historical version families below are reconstructed from prior engineering notes
 ## Unreleased
 
 ### Changed
+- Separate Python runtime and development dependency inputs and generated locks; CI installs the locked dependencies and no longer installs unpinned test or audit tools separately. Validate generated locks on Windows and Linux before release.
 - Standardize development, CI and hosted runtime targets on Node.js 24 LTS and Python 3.12; configure CI dependency download caching and runtime reporting. Target-runtime regression and deployment verification required before release.
 - Consolidated README, architecture, deployment, testing and performance documentation; retired superseded milestone notes after preserving durable design and measurements in maintained guides.
 - Added safe configuration examples, contributor guidance, screenshot capture plan and asset provenance review.

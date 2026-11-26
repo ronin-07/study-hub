@@ -41,7 +41,7 @@ flowchart LR
 
 ### Runtime and dependency baseline
 
-CI uses Node.js 22 and Python 3.12. `web/package.json` declares minimum Node 20.9; follow CI rather than assuming any newer version is supported. Next.js is pinned to 16.4.6; the frontend lockfile is authoritative for exact React, Firebase and transitive versions. The gRPC override is 1.14.7. Python requirements specify ranges (FastAPI >=0.115,<1; Pydantic >=2.8,<3; Firebase Admin >=6.5,<8; cryptography >=50.0.2,<51). Installed Python versions depend on resolution. Package and API metadata currently say 0.5.0 even though historical notes describe v0.6 features; do not infer release tags from metadata.
+CI targets Node.js 24 LTS and Python 3.12; `web/package.json` targets Node 24.x. Next.js is pinned to 16.4.6; the frontend lockfile is authoritative for exact React, Firebase and transitive versions. The gRPC override is 1.14.7. Python input requirements retain direct dependency ranges (FastAPI >=0.115,<1; Pydantic >=2.8,<3; Firebase Admin >=6.5,<8; cryptography >=50.0.2,<51). Generated pip-compatible requirements pin resolved versions, including transitive dependencies; development tools are kept out of the production manifest. See [dependency workflow](../CONTRIBUTING.md#runtime-and-dependencies). Package and API metadata currently say 0.5.0 even though historical notes describe v0.6 features; do not infer release tags from metadata.
 
 ## Identity and security
 

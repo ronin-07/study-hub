@@ -15,7 +15,15 @@ Keep sage-green accents, responsive layouts, predictable filtering, feedback and
 
 ## Runtime and dependencies
 
-Use Node.js 24 LTS and Python 3.12. Keep the web package engine, `.nvmrc`, backend `.python-version`, CI and hosted runtimes aligned by supported release line. Use `npm ci` for clean installs; make intentional dependency updates with npm and commit the generated lockfile together with the manifest. Preserve existing security overrides until their removal is justified and tested. Python dependency locking and separate development requirements are planned separately.
+Use Node.js 24 LTS and Python 3.12. Keep the web package engine, `.nvmrc`, backend `.python-version`, CI and hosted runtimes aligned by supported release line. Use `npm ci` for clean installs; make intentional dependency updates with npm and commit the generated lockfile together with the manifest. Preserve existing security overrides until their removal is justified and tested. Python direct dependencies are declared in `backend/requirements.in`; development tools in `backend/requirements-dev.in`. Generate both pip-compatible locks using uv on Python 3.12, with the development resolution constrained by the production lock. Do not edit generated pins manually. From `backend/`, with uv available:
+
+```powershell
+uv --version
+uv pip compile requirements.in --universal --python-version 3.12 --no-python-downloads --default-index https://pypi.org/simple -o requirements.txt
+uv pip compile requirements-dev.in --universal --python-version 3.12 --no-python-downloads --default-index https://pypi.org/simple -c requirements.txt -o requirements-dev.txt
+```
+
+Stop if either command fails. Check that the production lock excludes pytest and pip-audit, review all resolved changes, test clean installs on Windows and Linux CI, and commit both inputs and both generated locks together. Record the uv version used. These commands avoid an intentional blanket upgrade; use an explicit reviewed upgrade when needed. Universal resolution includes platform markers and is not a substitute for testing each target platform. Production installation continues to use pip-compatible `requirements.txt`; uv is a lock-generation tool, not a new runtime dependency. Keep index URLs free of credentials.
 
 ## Releases
 
