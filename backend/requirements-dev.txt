@@ -13,6 +13,7 @@ anyio==4.16.0
     #   -c requirements.txt
     #   fastapi
     #   httpx
+    #   httpx2
     #   starlette
     #   watchfiles
 boolean-py==5.0
@@ -118,6 +119,7 @@ h11==0.16.0
     # via
     #   -c requirements.txt
     #   httpcore
+    #   httpcore2
     #   uvicorn
 h2==4.4.1
     # via
@@ -131,6 +133,8 @@ httpcore==1.0.9
     # via
     #   -c requirements.txt
     #   httpx
+httpcore2==2.16.2 ; sys_platform != 'emscripten'
+    # via httpx2
 httptools==0.9.0
     # via
     #   -c requirements.txt
@@ -140,6 +144,10 @@ httpx==0.28.1
     #   -c requirements.txt
     #   -r requirements.in
     #   firebase-admin
+httpx2==2.16.2
+    # via -r requirements-dev.in
+httpx2-jsfetch==1.0 ; sys_platform == 'emscripten'
+    # via httpx2
 hyperframe==6.1.0
     # via
     #   -c requirements.txt
@@ -149,6 +157,7 @@ idna==3.20
     #   -c requirements.txt
     #   anyio
     #   httpx
+    #   httpx2
     #   requests
 iniconfig==2.3.1
     # via pytest
@@ -261,6 +270,10 @@ tomli==2.5.0
     # via pip-audit
 tomli-w==1.2.0
     # via pip-audit
+truststore==0.10.5 ; sys_platform != 'emscripten'
+    # via
+    #   httpcore2
+    #   httpx2
 typing-extensions==4.16.0
     # via
     #   -c requirements.txt
@@ -268,6 +281,7 @@ typing-extensions==4.16.0
     #   cyclonedx-python-lib
     #   fastapi
     #   grpcio
+    #   httpx2
     #   opentelemetry-api
     #   pydantic
     #   pydantic-core
