@@ -19,3 +19,7 @@ Include the affected commit or release, steps to reproduce using non-sensitive t
 Revoke affected credentials promptly, replace them in the deployment configuration, investigate unauthorized use, and remove sensitive material from reachable Git history where needed. A history rewrite does not revoke credentials or remove copies from other clones, forks, pull requests or caches. Do not publish a repository containing unresolved sensitive references.
 
 Security automation reduces risk but does not guarantee the absence of vulnerabilities. Only test with synthetic or authorized data.
+
+## Release and public distribution
+
+Keep the repository private until the maintainer approves a final source and reachable-history audit, confirms credentials and deployment scopes, and clears asset redistribution rights. Never restore compromised references or import an archived predecessor repository. Do not assume deletion from the working tree removes historical secrets. See [deployment](docs/deploy-vercel-firebase.md), [testing](docs/testing.md) and [asset credits](docs/asset-credits.md).

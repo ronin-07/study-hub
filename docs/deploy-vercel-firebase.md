@@ -1,129 +1,60 @@
-> **v0.5 Phase A update (22 Nov 2026):** Follow [phase-a-release-security.md](phase-a-release-security.md) before deploying. The older deployment steps below predate mandatory explicit Preview/Production project IDs and registered semester requirements; do not use them without the Phase A checks.
+# Deployment and configuration
 
-# Study Hub — deploy with Vercel Services and Firebase (v0.3.1)
+[Home](../README.md) · [Architecture](architecture.md) · [Release gates](testing.md)
 
-This setup keeps **RepLap untouched**. You can deploy and use Study Hub without running npm or Python locally. The repository contains two services: `web/` (Next.js) and `backend/` (FastAPI). The root `vercel.json` routes `/api/*` to FastAPI and everything else to Next.js using one HTTPS domain.
+The existing application uses Vercel Services at the repository root, with `web/` and `backend/` configured in `vercel.json`. Keep the existing project, URLs and Firebase data. A documentation update does not require changing secrets, rules, runtime versions or billing plans. Never reconnect an archived or compromised repository.
 
-**Do not deploy v0.3 unchanged.** Use the cloud-ready source update with the fail-closed serverless configuration.
+## Environment matrix
 
-## 1. Update your current Git repository
+| Setting | Local | Preview | Production |
+| --- | --- | --- | --- |
+| `STUDY_HUB_AUTH_MODE` | `local` | `firebase` | `firebase` |
+| `STORAGE_BACKEND` | `sqlite` | `firestore` | `firestore` |
+| `SQLITE_PATH` | ignored local path | unset | unset |
+| `NEXT_PUBLIC_STUDY_HUB_AUTH_MODE` | `local` | `firebase` | `firebase` |
+| `NEXT_PUBLIC_API_URL` | `http://127.0.0.1:8000` | `/` | `/` |
+| `NEXT_PUBLIC_FIREBASE_API_KEY`, `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`, `NEXT_PUBLIC_FIREBASE_PROJECT_ID`, `NEXT_PUBLIC_FIREBASE_APP_ID` | unset | Preview web app | Production web app |
+| `FIREBASE_SERVICE_ACCOUNT_JSON` | unset | Preview server credential | Production server credential |
+| `STUDY_HUB_ALLOWED_UID` and/or `STUDY_HUB_ALLOWED_EMAIL` | unset | test owner | production owner |
+| `STUDY_HUB_PREVIEW_FIREBASE_PROJECT_ID` | unset | expected Preview ID | expected Preview ID |
+| `STUDY_HUB_PRODUCTION_FIREBASE_PROJECT_ID` | unset | expected Production ID | expected Production ID |
+| `STUDY_HUB_ALLOW_PREVIEW_DRIVE_OAUTH` | unset | `false` unless separately approved | unset |
+| `CORS_ORIGINS` | loopback defaults | exact origin if needed | exact origin if needed |
+| `STUDYHUB_DB_DIAGNOSTICS` | optional `1` with test Firestore only | unset | unset |
 
-Extract the `studyhub-cloud-ready-files.zip` contents **into the existing Study Hub repository root**, preserving paths. It contains only source/config/doc files; no `.git/`, `.env`, local database, secrets, or `.patch` files. You have already initialized Git: **do not run `git init` again**.
+Both expected project ID variables must be set and distinct in each hosted environment. Web configuration is browser-visible by design; Admin JSON, Google OAuth secrets and encryption keys must never use `NEXT_PUBLIC_`. If both owner restrictions are set, both are enforced; email must be verified. Vercel-provided `VERCEL` and `VERCEL_ENV` must not be manually spoofed. Backend examples are reference templates, not automatically loaded by Python. Next.js loads `web/.env.local` if created from its safe example. Never overwrite existing working env files.
 
-```powershell
-# Run inside your Study Hub repository root
-git status
-git add vercel.json backend web/lib/api.ts web/.env.local.example docs/deploy-vercel-firebase.md README.md
-git commit -m "chore: prepare Study Hub for Vercel and Firebase"
-```
+## New isolated installation (not needed for an existing deployment)
 
-Prefer creating a private GitHub repository, then pushing your existing branch. In GitHub, create an **empty private repository** (do not initialize with a README). Run:
+1. Create two dedicated Firebase projects. Enable Google sign-in and register a web application in each. Create Firestore in the desired region (region choice is difficult to reverse).
+2. Publish [deny-all client rules](firestore.rules) **only** in the dedicated Study Hub projects. The backend uses Admin SDK/IAM; grant the service identities only required access. Do not replace another application's rules.
+3. Create and securely store separate server credentials; configure the full JSON only in the protected server environment. Never commit or paste it into public issues. Set the owner restriction and project IDs from the matrix.
+4. Import the correct private GitHub repository into Vercel, keeping root directory at repository root so Services config is recognized. Assign distinct Preview and Production variables. Production branch is `main`.
+5. Add exact approved stable hostnames to Firebase Authentication authorized domains (without scheme). Use a stable Preview hostname if a Preview OAuth integration is needed; do not authorize arbitrary ephemeral hostnames.
+6. Deploy through the approved GitHub PR process. Verify `/health` returns `firestore` and `firebase`, then verify owner access and non-owner rejection separately. Check Vercel service logs privately if startup fails; never print credentials. No automatic SQLite-to-Firestore import exists.
 
-```powershell
-git remote add origin <YOUR_PRIVATE_GITHUB_REPO_URL>
-git branch -M main
-git push -u origin main
-```
+## Optional Google Drive OAuth
 
-If you have a remote already, skip `remote add` and use `git push`. Do not include Git credentials in your code or commit secrets. Vercel can then deploy automatically from GitHub whenever you push. If you'd rather avoid GitHub, use `npx vercel --prod` from the repository root, but Git-based deploys are more convenient for testing and updates.
+Use a separately configured Google Cloud OAuth web application with Drive API enabled, the minimal supported read-only scope and authorized consent/test users appropriate for the account. Firebase sign-in and Drive permission are different. Register the exact callback `https://<approved-host>/api/drive/callback`.
 
-## 2. Create a dedicated Firebase project
-
-1. In https://console.firebase.google.com, create **Study Hub** as a separate project from RepLap.
-2. Build → Authentication → Get started → Sign-in method → **Google: Enable**. Set the support email.
-3. Project settings → General → **Add Web App**. Copy `apiKey`, `authDomain`, `projectId`, `appId` from its Firebase configuration (these are intended to be browser-visible).
-4. Build → Firestore Database → Create database → Standard edition; select a suitable European location and production mode. Region choice may be difficult to change later.
-5. Firestore → Rules: set the exact contents of `docs/firestore.rules`, then publish. This *denies client-side reads and writes*: the verified Python server uses Firebase Admin SDK and can still access data. **Apply only to the new Study Hub Firebase project.**
-6. Project settings → Service accounts → **Generate new private key**. Keep this JSON private, never commit or share it. Its whole JSON contents will be stored as `FIREBASE_SERVICE_ACCOUNT_JSON` in Vercel's protected environment variables.
-
-## 3. Import your private repo in Vercel
-
-1. Open https://vercel.com/new and import the private GitHub repository.
-2. Keep the **Root Directory as the repository root**, not `web/`. The root `vercel.json` defines **Services** for `web/` and `backend/`.
-3. Use the Services project/framework configuration if the Vercel UI asks. The configuration uses the current `services` key (not the older `experimentalServices`). This feature is still labeled Beta by Vercel.
-4. Add these environment variables for **Production** before your first live deployment:
-
-| Name | Value |
+| Server variable | Purpose |
 | --- | --- |
-| `NEXT_PUBLIC_STUDY_HUB_AUTH_MODE` | `firebase` |
-| `NEXT_PUBLIC_API_URL` | `/` (same origin) |
-| `NEXT_PUBLIC_FIREBASE_API_KEY` | Firebase Web App `apiKey` |
-| `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | Firebase Web App `authDomain` |
-| `NEXT_PUBLIC_FIREBASE_PROJECT_ID` | Firebase Web App `projectId` |
-| `NEXT_PUBLIC_FIREBASE_APP_ID` | Firebase Web App `appId` |
-| `STUDY_HUB_AUTH_MODE` | `firebase` |
-| `STORAGE_BACKEND` | `firestore` |
-| `STUDY_HUB_ALLOWED_EMAIL` | Your exact Google account email address |
-| `FIREBASE_SERVICE_ACCOUNT_JSON` | Complete JSON from the **new Study Hub Firebase project's** service account file, on a single environment-variable value |
+| `GOOGLE_CLIENT_ID` | Drive OAuth client ID |
+| `GOOGLE_CLIENT_SECRET` | Drive OAuth secret |
+| `GOOGLE_REDIRECT_URI` | Exact registered callback |
+| `WEB_URL` | Approved origin for return redirect |
+| `APP_SIGNING_SECRET` | Strong independent random signing secret |
+| `OAUTH_ENCRYPTION_KEY` | Fernet key (URL-safe base64 of 32 random bytes) |
 
-You can use `STUDY_HUB_ALLOWED_UID` instead of (or in addition to) `STUDY_HUB_ALLOWED_EMAIL` after identifying your Firebase Auth UID. The backend rejects any other user's requests even if they authenticate with Firebase.
-
-**Important:** Service-account JSON and OAuth secrets must be server-side environment variables, *never* prefixed with `NEXT_PUBLIC_`.
-
-5. Deploy. Vercel builds the Next.js site and FastAPI API; the build runs in Vercel, not on your laptop.
-6. Record your **stable production hostname** (e.g., `study-hub-example.vercel.app`). Never use an ever-changing preview deployment URL as a Google OAuth callback.
-7. Firebase Authentication → Settings → Authorized domains → add your exact production hostname, **without** `https://`. Redeploy if you changed browser environment values.
-8. Verify `https://<YOUR_DOMAIN>/health` reports `storage: firestore` and `auth: firebase`; verify the sign-in screen loads. You should be able to sign in with your Google account and create a test course. If you see a configuration or 500 error, inspect Vercel's runtime logs for the API service and confirm service-account JSON and Firestore initialization.
-
-The backend deliberately **refuses** to start using SQLite or `local` authentication in a Vercel environment.
-
-## 4. Configure Google Drive OAuth (Goodnotes)
-
-Firebase Authentication and Google Drive OAuth are **two separate integrations**. The Firebase sign-in Google provider does *not* grant the application access to your Goodnotes Drive PDFs.
-
-1. In https://console.cloud.google.com use **a separate Google Cloud project** for the Google Drive OAuth integration if you want the new **Personal mode** for just your Google account. Choose Personal mode when creating the OAuth project; existing External projects cannot simply be converted to Personal mode.
-2. Enable the **Google Drive API** for that Cloud project.
-3. Create a **Web application** OAuth client. Under Authorized redirect URIs, enter exactly:
-
-   `https://<YOUR_DOMAIN>/api/drive/callback`
-
-4. Add these **server-only** Vercel Production environment variables:
-
-| Name | Value |
-| --- | --- |
-| `GOOGLE_CLIENT_ID` | The Drive OAuth Web Client ID |
-| `GOOGLE_CLIENT_SECRET` | The Drive OAuth client secret |
-| `GOOGLE_REDIRECT_URI` | `https://<YOUR_DOMAIN>/api/drive/callback` |
-| `WEB_URL` | `https://<YOUR_DOMAIN>` |
-| `APP_SIGNING_SECRET` | A strong random signing key (32+ random bytes encoded as a string) |
-| `OAUTH_ENCRYPTION_KEY` | A **Fernet key**: URL-safe Base64 encoding of exactly 32 random bytes |
-| `CORS_ORIGINS` | `https://<YOUR_DOMAIN>` (same-origin requests don't require CORS, but keep this explicit) |
-
-For a one-time PowerShell **secret generator**, run the following twice; use **different outputs** for `APP_SIGNING_SECRET` and `OAUTH_ENCRYPTION_KEY`:
+Generate keys locally, never copy them into documentation or logs. Use separate values for signing and encryption; retain the encryption key securely across deployments or stored tokens will require reconnection. Example generation commands (run privately in the configured Python environment):
 
 ```powershell
-$b = New-Object byte[] 32
-[System.Security.Cryptography.RandomNumberGenerator]::Fill($b)
-[Convert]::ToBase64String($b).Replace('+','-').Replace('/','_')
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-Use a *stable* `OAUTH_ENCRYPTION_KEY`: changing it will make previously stored Drive tokens undecryptable, requiring a new authorization. On Vercel, keep it private. The encrypted tokens themselves are stored persistently in Firestore, not Vercel's temporary filesystem.
+Enable Preview Drive only with separate test credentials and synthetic files, and explicitly set `STUDY_HUB_ALLOW_PREVIEW_DRIVE_OAUTH=true`. Never reuse Production secrets. OAuth consent and refresh-token lifetime depend on Google project configuration; reconnection may be necessary if tokens expire or are revoked. Connect from Resources, select a backup folder, scan and manually confirm links. PDFs remain in Drive; the backend stores metadata and encrypted tokens. Test reauthorization, repeat scans, access denial, larger PDFs and bookmarks in isolated Preview. See [testing](testing.md).
 
-5. **Redeploy** after adding the new variables. In Study Hub, open **Library → Connect Google Drive**. Choose the existing Goodnotes backup folder, scan, review suggested course/week matches, and open a PDF inside the app.
-6. Personal mode is restricted to the creator's Google account and avoids the 7-day Testing-mode refresh token expiration. Access tokens still expire and refresh automatically, and any refresh token can be revoked; Study Hub will request reconnection when necessary.
+## Release and rollback
 
-## 5. Production acceptance tests
-
-- [ ] `GET /health` reports `firestore` and `firebase`.
-- [ ] Google sign-in works on the **stable production domain**.
-- [ ] Unauthorized Google accounts receive `403` from protected API endpoints.
-- [ ] Create a course, a week, and a task; refresh and verify persistence.
-- [ ] Mark the task complete from both Tasks and Course views (same record).
-- [ ] Start/pause/resume/finish a focus session; verify history after refresh.
-- [ ] Drive status shows configured; Google OAuth returns to Study Hub.
-- [ ] Select Goodnotes backup, scan, manually confirm a suggested association.
-- [ ] Read a PDF in the in-app viewer, including a file **larger than 4.5 MB** (streaming response).
-- [ ] Reopen a PDF and confirm the manually saved reading page is retained.
-- [ ] After a Drive access token expires (typically around an hour), scanning still works without another OAuth prompt.
-- [ ] Check browser network console and Vercel runtime logs for unexpected errors.
-
-## Important notes
-
-- The cloud Firestore database starts empty. Existing **local SQLite data is not automatically migrated**. Keep your local database as backup until a deliberate import is built.
-- Existing Goodnotes files remain in your Google Drive. Study Hub stores metadata and encrypted OAuth tokens, not permanent PDF copies.
-- Automatic background Goodnotes synchronization is not yet available; scanning is manual.
-- Vercel Services is Beta. Check its deployment logs for schema/build compatibility before relying on it daily. If your account cannot use Services, an alternative is two Vercel projects for the same repo with separate root directories; this requires configuring a separate `NEXT_PUBLIC_API_URL`, CORS, and OAuth callback.
-- `npm install` could not be completed in the source-generation environment due to network/DNS restrictions. Vercel will need to resolve npm and Python dependencies when it builds. No complete cloud build or real OAuth test has been run here.
-- For any OAuth failure, compare the exact redirect URI **in Google Cloud**, **Vercel env**, and **browser**. The scheme, hostname and path must be identical.
-
-References: https://vercel.com/docs/services ; https://vercel.com/docs/frameworks/backend/fastapi ; https://firebase.google.com/docs/auth/web/google-signin ; https://support.google.com/cloud/answer/15544987 ; https://developers.google.com/identity/protocols/oauth2
+Push only the milestone branch, review CI and the exact Vercel Preview commit, obtain approval, merge through protected `main`, then smoke-test Production. Do not test destructive operations against real study records. Use a normal revert PR if necessary; an approved Vercel rollback may be used to restore service while the Git revert is prepared. Do not rewrite history, force-push, reset data or rotate stable OAuth keys for a documentation-only change. A change to environment values generally requires redeployment; no such change is required by this milestone.
