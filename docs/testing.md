@@ -4,14 +4,17 @@
 
 ## Automated coverage and limitations
 
-Backend pytest exercises API behavior, isolated SQLite integration, validation, auth/configuration and simulated Firestore transactions. The SDK-dependent test can skip without Firebase Admin installed. Frontend Node tests cover logic and source-level regression contracts, not browser E2E. `npm run lint` is `tsc --noEmit`. GitHub Actions has backend, web and secret jobs; it runs on pushes, pull requests to main, scheduled and manual runs. CI uses Python 3.12 and Node 22, pinned action references and read-only contents permission. Full browser interaction, published Firestore rules and live OAuth still require external verification.
+Backend pytest exercises API behavior, isolated SQLite integration, validation, auth/configuration and simulated Firestore transactions. The SDK-dependent test can skip without Firebase Admin installed. Frontend Node tests cover logic and source-level regression contracts, not browser E2E. `npm run lint` is `tsc --noEmit`. GitHub Actions has backend, web and secret jobs; it runs on pushes, pull requests to main, scheduled and manual runs. CI uses Python 3.12 and Node 24 LTS, pip/npm download caches, pinned action references and read-only contents permission. Full browser interaction, published Firestore rules and live OAuth still require external verification.
 
 ## Local checks (PowerShell)
 
-Run from a clean checkout with a test-only environment. Do not inherit production variables or point to production. The backend virtual environment is described in the [README](../README.md).
+Run from a clean checkout with a test-only environment. Confirm Node 24.x and that the backend virtual environment uses Python 3.12 before running checks. Record actual runtime versions; a passing suite on a different runtime is not target-runtime verification. Do not inherit production variables or point to production. The backend virtual environment is described in the [README](../README.md).
 
 ```powershell
+node --version
+npm.cmd --version
 Push-Location backend
+.\.venv\Scripts\python.exe --version
 $env:STUDY_HUB_AUTH_MODE = 'local'
 $env:STORAGE_BACKEND = 'sqlite'
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt

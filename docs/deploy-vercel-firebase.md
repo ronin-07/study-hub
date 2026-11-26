@@ -2,7 +2,11 @@
 
 [Home](../README.md) · [Architecture](architecture.md) · [Release gates](testing.md)
 
-The existing application uses Vercel Services at the repository root, with `web/` and `backend/` configured in `vercel.json`. Keep the existing project, URLs and Firebase data. A documentation update does not require changing secrets, rules, runtime versions or billing plans. Never reconnect an archived or compromised repository.
+The existing application uses Vercel Services at the repository root, with `web/` and `backend/` configured in `vercel.json`. Keep the existing project, URLs and Firebase data. Runtime changes do not require changing secrets, Firestore rules or billing plans. Never reconnect an archived or compromised repository.
+
+## Runtime alignment
+
+The web service targets Node.js 24.x (`web/package.json` engines); the API service targets Python 3.12 (`backend/.python-version`). The root `.nvmrc` selects the Node major for local version managers. CI uses the same release lines. Patch versions can differ; record the versions from each deployment. Verify the actual web and API runtimes in Vercel Preview build logs before approving a merge. If the web service does not honor its package engine, review the project Node.js setting (24.x) and its scope before changing it; avoid changing Production settings during Preview validation. Verify Production after merge. Keep `vercel.json`, service roots, credentials and Firebase project isolation unchanged.
 
 ## Environment matrix
 

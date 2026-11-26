@@ -13,6 +13,10 @@ Study Hub is currently private and owner-authorized in hosted mode. Work with sy
 
 Keep sage-green accents, responsive layouts, predictable filtering, feedback and keyboard/reduced-motion support. Report vulnerabilities privately via [SECURITY.md](SECURITY.md).
 
+## Runtime and dependencies
+
+Use Node.js 24 LTS and Python 3.12. Keep the web package engine, `.nvmrc`, backend `.python-version`, CI and hosted runtimes aligned by supported release line. Use `npm ci` for clean installs; make intentional dependency updates with npm and commit the generated lockfile together with the manifest. Preserve existing security overrides until their removal is justified and tested. Python dependency locking and separate development requirements are planned separately.
+
 ## Releases
 
 Use semantic versioning for agreed release boundaries, with `vMAJOR.MINOR.PATCH` tags and release notes tied to verified commits. Historical notes are not proof of release tags. Before the next tagged release, inspect existing tags and align frontend/API version metadata deliberately; do not manufacture historical tags or change package versions as part of documentation-only work. Move reviewed `Unreleased` entries into a dated release section, record CI and Preview outcomes, then tag the approved merge and publish release notes if appropriate. Keep repository and releases private until the final public-release review. A first public v1.0.0 is a proposal, not a promise.

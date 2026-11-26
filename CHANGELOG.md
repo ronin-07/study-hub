@@ -5,6 +5,7 @@ Historical version families below are reconstructed from prior engineering notes
 ## Unreleased
 
 ### Changed
+- Standardize development, CI and hosted runtime targets on Node.js 24 LTS and Python 3.12; configure CI dependency download caching and runtime reporting. Target-runtime regression and deployment verification required before release.
 - Consolidated README, architecture, deployment, testing and performance documentation; retired superseded milestone notes after preserving durable design and measurements in maintained guides.
 - Added safe configuration examples, contributor guidance, screenshot capture plan and asset provenance review.
 - Added MIT source-code license; public asset clearance and final security review remain pending.
