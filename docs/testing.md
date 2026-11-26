@@ -42,6 +42,10 @@ Stage intended files before the credential check: it scans Git index blobs, not 
 
 Use a fresh Python 3.12 environment to validate `pip install -r requirements.txt` and `pip check` without test packages, then use a separate fresh environment to install `requirements-dev.txt`, run `pip check`, pytest and pip-audit. The development lock includes the runtime dependencies and is constrained by the production lock. CI checks the production install before installing the development lock. Review both generated files and any platform markers; exact pins are not artifact-hash verification. See [dependency workflow](../CONTRIBUTING.md#runtime-and-dependencies). Do not commit a partially generated lock or a lock with unresolved security findings.
 
+## Dependency update PRs
+
+Confirm Dependabot version-update checks run for `/web`, `/backend` and `/.github/workflows` after the configuration reaches the default branch. Review update logs and any grouped changes. Verify that Python PRs preserve the two-lock workflow, that npm uses the generated lockfile, and that Actions remain SHA-pinned. Re-run the local checks above and check both Python lock files with `python -m pip_audit -r requirements.txt` and `python -m pip_audit -r requirements-dev.txt` from `backend/`. For dependency-only releases, complete the Preview and Production gates below. Do not enable privileged workflows or expose secrets merely to make a Dependabot Preview deploy.
+
 ## Preview acceptance
 
 Use isolated Preview Firebase data and disposable fixtures. Check all three CI jobs and that the Preview deployment corresponds to the exact commit. A green build is necessary but not enough.
