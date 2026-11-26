@@ -1,0 +1,4 @@
+-r requirements.in
+pytest>=8,<10
+pip-audit>=2,<3
+httpx2

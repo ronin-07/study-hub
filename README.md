@@ -44,7 +44,7 @@ The two Vercel services share one origin. Local development uses SQLite and loop
 
 ## Getting started
 
-Use Node.js 22 and Python 3.12 to match current CI. The frontend lockfile is committed; backend requirements use version ranges. No Firebase or Drive account is necessary for the basic local workspace.
+Use Node.js 24 LTS (latest patched 24.x) and Python 3.12 to match CI. The root `.nvmrc` selects the Node major for compatible version managers; on Windows install/select Node 24 using your existing version manager or the official installer. Verify `node --version` and `py -3.12 --version` before creating the virtual environment. The frontend lockfile and generated Python requirements are committed together with their dependency inputs. Use `requirements.txt` for production and `requirements-dev.txt` for local development and tests (includes runtime dependencies). No Firebase or Drive account is necessary for the basic local workspace.
 
 Clone the repository (access is required while private), then from its root open two PowerShell terminals.
 
@@ -52,8 +52,8 @@ Clone the repository (access is required while private), then from its root open
 
 ```powershell
 Set-Location backend
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 $env:STUDY_HUB_AUTH_MODE = 'local'
 $env:STORAGE_BACKEND = 'sqlite'
 $env:SQLITE_PATH = './data/studyhub.sqlite3'

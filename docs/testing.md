@@ -4,21 +4,23 @@
 
 ## Automated coverage and limitations
 
-Backend pytest exercises API behavior, isolated SQLite integration, validation, auth/configuration and simulated Firestore transactions. The SDK-dependent test can skip without Firebase Admin installed. Frontend Node tests cover logic and source-level regression contracts, not browser E2E. `npm run lint` is `tsc --noEmit`. GitHub Actions has backend, web and secret jobs; it runs on pushes, pull requests to main, scheduled and manual runs. CI uses Python 3.12 and Node 22, pinned action references and read-only contents permission. Full browser interaction, published Firestore rules and live OAuth still require external verification.
+Backend pytest exercises API behavior, isolated SQLite integration, validation, auth/configuration and simulated Firestore transactions. The SDK-dependent test can skip without Firebase Admin installed. Frontend Node tests cover logic and source-level regression contracts, not browser E2E. `npm run lint` is `tsc --noEmit`. GitHub Actions has backend, web and secret jobs; it runs on pushes, pull requests to main, scheduled and manual runs. CI uses Python 3.12 and Node 24 LTS, pip/npm download caches, pinned action references and read-only contents permission. Full browser interaction, published Firestore rules and live OAuth still require external verification.
 
 ## Local checks (PowerShell)
 
-Run from a clean checkout with a test-only environment. Do not inherit production variables or point to production. The backend virtual environment is described in the [README](../README.md).
+Run from a clean checkout with a test-only environment. Confirm Node 24.x and that the backend virtual environment uses Python 3.12 before running checks. Record actual runtime versions; a passing suite on a different runtime is not target-runtime verification. Do not inherit production variables or point to production. The backend virtual environment is described in the [README](../README.md).
 
 ```powershell
+node --version
+npm.cmd --version
 Push-Location backend
+.\.venv\Scripts\python.exe --version
 $env:STUDY_HUB_AUTH_MODE = 'local'
 $env:STORAGE_BACKEND = 'sqlite'
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 .\.venv\Scripts\python.exe -m pytest -q
 .\.venv\Scripts\python.exe -m compileall -q app
 .\.venv\Scripts\python.exe -m pip check
-.\.venv\Scripts\python.exe -m pip install pip-audit
 .\.venv\Scripts\python.exe -m pip_audit
 Pop-Location
 Push-Location web
@@ -35,6 +37,14 @@ python scripts/check_credentials.py
 ```
 
 Stage intended files before the credential check: it scans Git index blobs, not unstaged changes. With a verified Gitleaks installation, run `gitleaks git --log-opts="--all --full-history -m" --redact=100 .`; also scan an exported tracked snapshot with `gitleaks dir --redact=100 <snapshot-directory>`, as CI does. Never import old compromised refs. Record all findings, not only high severity; CI npm gate is high/critical. Do not run forced audit fixes blindly. No credentials or private diagnostic output in PRs.
+
+## Python dependency checks
+
+Use a fresh Python 3.12 environment to validate `pip install -r requirements.txt` and `pip check` without test packages, then use a separate fresh environment to install `requirements-dev.txt`, run `pip check`, pytest and pip-audit. The development lock includes the runtime dependencies and is constrained by the production lock. CI checks the production install before installing the development lock. Review both generated files and any platform markers; exact pins are not artifact-hash verification. See [dependency workflow](../CONTRIBUTING.md#runtime-and-dependencies). Do not commit a partially generated lock or a lock with unresolved security findings.
+
+## Dependency update PRs
+
+Confirm Dependabot version-update checks run for `/web`, `/backend` and `/.github/workflows` after the configuration reaches the default branch. Review update logs and any grouped changes. Verify that Python PRs preserve the two-lock workflow, that npm uses the generated lockfile, and that Actions remain SHA-pinned. Re-run the local checks above and check both Python lock files with `python -m pip_audit -r requirements.txt` and `python -m pip_audit -r requirements-dev.txt` from `backend/`. For dependency-only releases, complete the Preview and Production gates below. Do not enable privileged workflows or expose secrets merely to make a Dependabot Preview deploy.
 
 ## Preview acceptance
 

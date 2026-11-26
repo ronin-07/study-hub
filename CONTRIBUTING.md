@@ -13,6 +13,24 @@ Study Hub is currently private and owner-authorized in hosted mode. Work with sy
 
 Keep sage-green accents, responsive layouts, predictable filtering, feedback and keyboard/reduced-motion support. Report vulnerabilities privately via [SECURITY.md](SECURITY.md).
 
+## Runtime and dependencies
+
+Use Node.js 24 LTS and Python 3.12. Keep the web package engine, `.nvmrc`, backend `.python-version`, CI and hosted runtimes aligned by supported release line. Use `npm ci` for clean installs; make intentional dependency updates with npm and commit the generated lockfile together with the manifest. Preserve existing security overrides until their removal is justified and tested. Python direct dependencies are declared in `backend/requirements.in`; development tools in `backend/requirements-dev.in`. Generate both pip-compatible locks using uv on Python 3.12, with the development resolution constrained by the production lock. Do not edit generated pins manually. From `backend/`, with uv available:
+
+```powershell
+uv --version
+uv pip compile requirements.in --universal --python-version 3.12 --no-python-downloads --default-index https://pypi.org/simple -o requirements.txt
+uv pip compile requirements-dev.in --universal --python-version 3.12 --no-python-downloads --default-index https://pypi.org/simple -c requirements.txt -o requirements-dev.txt
+```
+
+Stop if either command fails. Check that the production lock excludes pytest and pip-audit, review all resolved changes, test clean installs on Windows and Linux CI, and commit both inputs and both generated locks together. Record the uv version used. These commands avoid an intentional blanket upgrade; use an explicit reviewed upgrade when needed. Universal resolution includes platform markers and is not a substitute for testing each target platform. Production installation continues to use pip-compatible `requirements.txt`; uv is a lock-generation tool, not a new runtime dependency. Keep index URLs free of credentials.
+
+## Automated dependency maintenance
+
+Dependabot proposes weekly routine updates for npm, pip and GitHub Actions on the default branch, with up to two npm, two pip and one Actions version-update PRs open. Routine npm and pip updates are restricted to direct minor/patch updates; major upgrades require a separate intentional review. Grouped patches still require individual compatibility review (especially pre-1.0 packages). Security alerts and security updates are configured separately in GitHub repository settings; do not assume a version-update limit caps security PRs. No automatic merges.
+
+Review every PR against the existing CI and Preview gates. Keep React and React DOM aligned, Node type definitions on 24.x, the gRPC override unless verified safe to change, and GitHub Actions pinned to full commit SHAs. For Python PRs, verify both input files and both locks; Dependabot's pip handling is not a guarantee of identical uv resolution. Regenerate the two locks using the commands above, review the diff, and verify production and development pins remain consistent across Windows and Linux. Do not merge a PR that bypasses the production constraints or includes credentials. If Preview is unavailable for bot branches, use a maintainer-reviewed branch for testing without exposing secrets to untrusted workflows.
+
 ## Releases
 
 Use semantic versioning for agreed release boundaries, with `vMAJOR.MINOR.PATCH` tags and release notes tied to verified commits. Historical notes are not proof of release tags. Before the next tagged release, inspect existing tags and align frontend/API version metadata deliberately; do not manufacture historical tags or change package versions as part of documentation-only work. Move reviewed `Unreleased` entries into a dated release section, record CI and Preview outcomes, then tag the approved merge and publish release notes if appropriate. Keep repository and releases private until the final public-release review. A first public v1.0.0 is a proposal, not a promise.
