@@ -2252,3 +2252,10 @@ html[data-study-hub-theme="light"]{color-scheme:light}
   .exam-focus-panel strong{grid-column:2;grid-row:1/3}
   .exam-focus-panel small{grid-row:2}
 }
+
+/* Locale-independent optional exam time controls. */
+.time-input-24{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr) auto;gap:6px;align-items:center}
+.time-input-24 select{min-width:0;padding-inline:8px;font-variant-numeric:tabular-nums}
+.time-input-24 .icon-btn{min-width:34px;min-height:43px;display:grid;place-items:center}
+
+.bulk-activity-fallback{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:12px}

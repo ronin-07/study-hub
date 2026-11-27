@@ -1,5 +1,6 @@
 import type {DriveEntry,DriveIndexed,Resource,Snapshot} from './types';
 import {availableExamPapers,isExamResource} from './resource-links.ts';
+import {fileContext,fileSuggestion,filenameCourse,filenameMaterial,filenameWeek} from './filename-matching.ts';
 
 export const bulkPdfLimit = 30;
 type BulkFile = DriveEntry | DriveIndexed;
@@ -20,8 +21,7 @@ export type BulkDraft={id:string;file_id:string;title:string;course_id:string;ki
 function inferredKind(name:string):Resource['kind']{
   if(/(?:^|[\W_])(?:sol(?:ution)?s?|answer(?:s)?)(?:[\W_]|$)/i.test(name))return 'exam_solution';
   if(/(?:exam|\bpyq\b|ex[_-])/.test(name.toLowerCase())&&/20\d{2}/.test(name))return 'exam_paper';
-  if(/(?:lecture|slides|week)[ _-]*\d+/i.test(name))return 'slides';
-  return 'other';
+  return filenameMaterial(name);
 }
 function pairKey(name:string){return name.toLowerCase().replace(/\.pdf$/,'').replace(/(?:corrected|solutions?|answers?|sol)(?=[\W_]|$)/g,'').replace(/[^a-z0-9]/g,'');}
 export function bulkPairCandidates(row:BulkDraft,rows:BulkDraft[],resources:Resource[]){
@@ -34,13 +34,15 @@ export function bulkPairCandidates(row:BulkDraft,rows:BulkDraft[],resources:Reso
 export function bulkDrafts(files:(DriveEntry|DriveIndexed)[],data:Snapshot,initialCourse:string,newId:()=>string):BulkDraft[]{
   const active=data.courses.filter(c=>!c.archived);
   const rows=[...new Map(files.map(f=>[f.id,f])).values()].slice(0,bulkPdfLimit).map(f=>{
-    const suggestion='suggestion' in f?f.suggestion:null;
+    const suggestion=fileSuggestion(f,data);
+    const context=fileContext(f);
+    const matchedCourse=filenameCourse(context,active);
     const kindGuess=inferredKind(f.name);
     const kind=isExamResource(kindGuess)?kindGuess:suggestion?.kind||kindGuess;
-    const course=active.find(c=>c.id===suggestion?.course_id)||active.find(c=>c.id===initialCourse);
-    const match=/(?:lecture|week)[ _-]*(\d{1,2})(?!\d)/i.exec(f.name);
-    const week=suggestion?.week_number??(match?Number(match[1]):1);
-    return {id:newId(),file_id:f.id,title:f.name.slice(0,240),course_id:course?.id||'',kind,week_number:isExamResource(kind)||kind==='textbook'?null:week,item_id:'',exam_paper_id:'',suggested:Boolean(suggestion||match||isExamResource(kind))};
+    const course=active.find(c=>c.id===suggestion?.course_id)||matchedCourse||active.find(c=>c.id===initialCourse);
+    const match=filenameWeek(context);
+    const week=suggestion?.week_number??match??1;
+    return {id:newId(),file_id:f.id,title:f.name.slice(0,240),course_id:course?.id||'',kind,week_number:isExamResource(kind)||kind==='textbook'?null:week,item_id:'',exam_paper_id:'',suggested:Boolean(suggestion||match||matchedCourse||isExamResource(kind))};
   });
   for(const r of rows){if(r.kind==='exam_solution'&&r.course_id){const matches=bulkPairCandidates(r,rows,data.resources).filter(p=>pairKey(p.title)===pairKey(r.title));if(matches.length===1)r.exam_paper_id=matches[0].id;}}
   return rows;
@@ -51,4 +53,19 @@ export function validBulkRow(row:BulkDraft,rows:BulkDraft[],data:Snapshot){
   if(row.item_id&&(isExamResource(row.kind)||row.week_number==null||!data.items.some(i=>i.id===row.item_id&&i.course_id===row.course_id&&i.week_number===row.week_number)))return false;
   if(row.exam_paper_id&&(row.kind!=='exam_solution'||!bulkPairCandidates(row,rows,data.resources).some(p=>p.id===row.exam_paper_id)))return false;
   return true;
+}
+
+// Remember a title, never an ID from a different week. Ambiguous titles need review.
+export function attachBulkActivity(row:BulkDraft,title:string|undefined,data:Snapshot):BulkDraft {
+  if(row.week_number===null||isExamResource(row.kind)||!title)return {...row,item_id:'',expectedActivity:undefined};
+  const matches=data.items.filter(i=>i.course_id===row.course_id&&i.week_number===row.week_number&&i.title===title);
+  return {...row,item_id:matches.length===1?matches[0].id:'',expectedActivity:title};
+}
+export function moveBulkWeek(row:BulkDraft,week:number|null,data:Snapshot):BulkDraft {
+  const previous=data.items.find(i=>i.id===row.item_id&&i.course_id===row.course_id&&i.week_number===row.week_number);
+  return attachBulkActivity({...row,week_number:week},row.expectedActivity||previous?.title,data);
+}
+export function selectBulkActivity(row:BulkDraft,itemId:string,data:Snapshot):BulkDraft {
+  const item=row.week_number===null||isExamResource(row.kind)?undefined:data.items.find(i=>i.id===itemId&&i.course_id===row.course_id&&i.week_number===row.week_number);
+  return {...row,item_id:item?.id||'',expectedActivity:item?.title};
 }
