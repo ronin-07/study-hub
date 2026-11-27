@@ -4,6 +4,10 @@ Historical version families below are reconstructed from prior engineering notes
 
 ## Unreleased
 
+### Fixed
+- Use locale-independent 24-hour exam time input; retain the selected weekly activity when moving bulk PDF links between weeks, with review warnings for missing or ambiguous matches.
+- Recognize lecture/week filename shorthand and unique course-title acronyms when suggesting PDF destinations; review is still required.
+
 ### Changed
 - Enable bounded weekly Dependabot version-update PRs for npm, pip and GitHub Actions; retain manual review, CI and Preview gates, and separate security-update settings. Routine npm/pip major upgrades remain deliberate.
 - Separate Python runtime and development dependency inputs and generated locks; CI installs the locked dependencies and no longer installs unpinned test or audit tools separately. Validate generated locks on Windows and Linux before release.

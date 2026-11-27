@@ -35,6 +35,7 @@ import { FeedbackToasts, useFeedbackToasts, type FeedbackMessage } from '@/compo
 import { COMPLETION_HOLD_MS, COMPLETION_EXIT_MS, presentCompletingItems, type CompletionPhase } from '@/lib/task-completion-presentation';
 import { isActionable, isOverdue, todayPriorities, upcomingDeadlines, focusTasksForContext, focusTaskLabel } from '@/lib/task-view';
 import { bulkPdfLimit, selectListedPdfs } from '@/lib/bulk-resources';
+import { fileSuggestion } from '@/lib/filename-matching';
 import { activityReference } from '@/lib/activity-display';
 import {activityResources,availableExamPapers,isExamResource} from '@/lib/resource-links';
 import {BulkResourceLinker} from '@/components/bulk-resource-linker';
@@ -1035,12 +1036,13 @@ export default function Page() {
   const selectedIndexed=driveIndex.find(f=>f.id===selectedPdfId);
   const selectedBrowsePdf=driveFiles.find(f=>f.id===selectedPdfId&&f.mimeType==='application/pdf');
   const selectedPdf=selectedIndexed??selectedBrowsePdf;
+  const selectedPdfSuggestion=selectedPdf?fileSuggestion(selectedPdf,data):null;
   const choosePdf=(entry:DriveEntry|DriveIndexed)=>{
     // Never carry course/week selections from a different file into a new link.
     if(bulkMode){toggleBulkFile(entry);return;}
     setSelectedPdfId(entry.id);
     setLinkPaper('');
-    const suggestion='suggestion' in entry ? entry.suggestion : null;
+    const suggestion=fileSuggestion(entry,data);
     const intended=linkIntentRef.current;
     setLinkCourse(intended?.paperId?intended.courseId:suggestion?.course_id||intended?.courseId||'');
     setLinkWeek(suggestion?.week_number||intended?.week||1);
@@ -1334,7 +1336,7 @@ export default function Page() {
                 {bulkMode?<><p role="status">{bulkFiles.length} / {bulkPdfLimit} selected</p><div className="exam-resource-actions"><button className="btn secondary small" onClick={()=>setBulkFiles([])} disabled={!bulkFiles.length}>Clear</button><button className="btn primary small" disabled={!bulkFiles.length||busy} onClick={()=>setBulkReview(true)}>Review selected</button></div><p className="muted">Choose PDFs in the folder or index and review their destinations.</p></>:!selectedPdf?<div className="resources-no-selection"><FileText size={25}/><strong>Select a PDF to link</strong><p>Choose a file from Discovered PDFs or the Drive folder browser. You'll review its course and week here before confirming.</p></div>:<>
                   <div className="resources-selected-file"><FileText size={18}/><div><strong title={selectedPdf.name}>{selectedPdf.name}</strong><small>Selected PDF · {selectedIndexed?.path||'Drive folder'}</small></div><button className="icon-btn" aria-label="Clear selected PDF" onClick={()=>setSelectedPdfId(null)}><X size={16}/></button></div>
                     {resourceLinks.has(selectedPdf.id) ? <div className="subtle-notice">This PDF is already linked. Open it from its course resources or Exam Prep, or select another document.</div>:<>
-                    {selectedIndexed?.suggestion&&<div className="resources-match-context"><Sparkles size={16}/><div><strong>Suggested: {selectedIndexed.suggestion.course_code} · Week {selectedIndexed.suggestion.week_number}</strong><small>{selectedIndexed.suggestion.confidence} confidence · Review before linking</small></div></div>}
+                    {selectedPdfSuggestion&&<div className="resources-match-context"><Sparkles size={16}/><div><strong>Suggested: {selectedPdfSuggestion.course_code} · Week {selectedPdfSuggestion.week_number}</strong><small>{selectedPdfSuggestion.confidence} confidence · Review before linking</small></div></div>}
                     <FormRow label="Course"><select value={linkCourse} onChange={e=>{setLinkCourse(e.target.value);setLinkWeek(1);setLinkItem('');setLinkPaper('');}}><option value="">Select course</option>{data.courses.filter(c=>!c.archived).map(c=><option key={c.id} value={c.id}>{c.code} · {c.title}</option>)}</select></FormRow>
                     <FormRow label="Resource belongs to">{isExamResource(linkKind)?<input value="Exam Prep" readOnly/>:<select value={linkScope} onChange={e=>setLinkScope(e.target.value as 'course'|'week')}><option value="course">Course Library (all weeks)</option><option value="week">One teaching week</option></select>}</FormRow>
                     {linkScope==='week'&&!isExamResource(linkKind)&&<FormRow label="Week"><select value={linkWeek} onChange={e=>{setLinkWeek(Number(e.target.value));setLinkItem('');}}>{Array.from({length:data.courses.find(c=>c.id===linkCourse)?.week_count||13},(_,n)=><option key={n+1} value={n+1}>Week {n+1}</option>)}</select></FormRow>}
