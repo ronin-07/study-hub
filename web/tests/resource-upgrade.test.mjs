@@ -1,12 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {activityResources,availableExamPapers,isExamResource,pairedSolutions} from '../lib/resource-links.ts';
+import {activityReferenceGroups,activityResources,availableExamPapers,isExamResource,pairedSolutions} from '../lib/resource-links.ts';
 import {bulkDrafts,bulkPairCandidates,validBulkRow} from '../lib/bulk-resources.ts';
 import {applyMutation,preserveWorkspaceChanges} from '../lib/snapshot-cache.ts';
 const activity={id:'item',course_id:'course',week_number:1,resource_id:'both',done:true};
 const resources=[{id:'both',course_id:'course',week_number:1,item_id:'item',kind:'slides'},{id:'reverse',course_id:'course',week_number:1,item_id:'item',kind:'annotated'},{id:'cross',course_id:'other',week_number:1,item_id:'item'},{id:'wrong-week',course_id:'course',week_number:2,item_id:'item'}];
 test('activity displays both legacy reference and multiple weekly attachments once',()=>assert.deepEqual(activityResources(activity,resources).map(r=>r.id),['both','reverse']));
+test('weekly activity references include eligible exam papers and keep existing solution links editable',()=>{
+ const file=(id,kind,week_number=null,course_id='course')=>({id,kind,week_number,course_id});
+ const files=[file('book','textbook'),file('slides','slides',1),file('exam','exam_paper'),
+   file('legacy-exam','exam_paper',1),file('other-week-exam','exam_paper',2),
+   file('other-course-exam','exam_paper',null,'other'),file('solution','exam_solution')];
+ const groups=(week,options)=>activityReferenceGroups(files,'course',week,options)
+   .map(group=>[group.label,group.resources.map(resource=>resource.id)]);
+ assert.deepEqual(groups(1),[['Course library',['book']],['Week 1 files',['slides']],['Exam papers',['exam','legacy-exam']]]);
+ assert.deepEqual(groups(1,{selectedId:'solution'}).at(-1),['Exam prep',['exam','legacy-exam','solution']]);
+ assert.deepEqual(groups(null,{includeExamSolutions:true}),[['Course library',['book']],['Exam prep',['exam','solution']]]);
+ assert.deepEqual(activityResources({...activity,resource_id:'exam'},files).map(r=>r.id),['exam']);
+});
 test('detach reconciles both records and protects cache from stale snapshot',()=>{
  const before={items:[activity],resources,courses:[],weeks:[],semesters:[],sessions:[]};
  const result={resource:{...resources[0],item_id:null},items:[{...activity,resource_id:null}]};

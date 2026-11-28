@@ -6,6 +6,23 @@ export function activityResources(item: Item, resources: Resource[]): Resource[]
     && (r.id === item.resource_id || r.item_id === item.id));
 }
 export function isExamResource(kind: Resource['kind']): boolean { return kind === 'exam_paper' || kind === 'exam_solution'; }
+
+export function activityReferenceGroups(
+  resources: Resource[], courseId: string, weekNumber: number | null,
+  { includeExamSolutions = false, selectedId = '' } = {},
+) {
+  const eligible = resources.filter(resource => resource.course_id === courseId
+    && (resource.week_number == null || resource.week_number === weekNumber));
+  const examFiles = eligible.filter(resource => resource.kind === 'exam_paper'
+    || (resource.kind === 'exam_solution' && (includeExamSolutions || resource.id === selectedId)));
+  const ordinaryFiles = eligible.filter(resource => !isExamResource(resource.kind));
+  return [
+    { label: 'Course library', resources: ordinaryFiles.filter(resource => resource.week_number == null) },
+    { label: `Week ${weekNumber} files`, resources: ordinaryFiles.filter(resource => resource.week_number != null) },
+    { label: examFiles.some(file => file.kind === 'exam_solution') ? 'Exam prep' : 'Exam papers', resources: examFiles },
+  ].filter(group => group.resources.length > 0);
+}
+
 export function pairedSolutions(paper: Resource, resources: Resource[]): Resource[] {
   return resources.filter(r=>r.kind==='exam_solution' && r.course_id===paper.course_id && r.exam_paper_id===paper.id);
 }
