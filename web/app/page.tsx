@@ -15,7 +15,7 @@ import { createSnapshotCoordinator, describeSnapshotFailure, fetchSnapshotWithRe
 import { Badge, Card, EmptyState, FormRow, SectionTitle } from '@/components/common';
 import { PdfOpeningOverlay } from '@/components/pdf-opening-overlay';
 import { createPdfRequestGate, createPdfSessionCache } from '@/lib/pdf-preview';
-import { applyPdfMark, maxPdfPage, maxPdfTabBytes, maxPdfTabs, readLocalPdf, removePdf, selectPdf, writeLocalPdf, type PdfMarkChange, type PdfSession, type StudyPdf } from '@/lib/pdf-study';
+import { applyPdfMark, maxPdfPage, maxPdfTabBytes, maxPdfTabs, normalizePdfZoom, placePdf, readLocalPdf, readPdfZoom, removePdf, savePdfZoom, selectPdf, writeLocalPdf, type PdfMarkChange, type PdfSession, type StudyPdf } from '@/lib/pdf-study';
 import type { PdfPageMark } from '@/lib/types';
 import { ProfileName } from '@/components/profile-name';
 import { upcomingExams, examCountdown } from '@/lib/exam-prep';
@@ -51,11 +51,11 @@ type DriveStatus = { connected: boolean; configured: boolean };
 type DriveRead = 'status' | 'index' | 'folder';
 type ReadState = 'idle' | 'loading' | 'ready' | 'error';
 const empty: Snapshot = {courses:[], weeks:[], items:[], resources:[], sessions:[], semesters:[]};
-type PdfOpening = {requestId:number;fileId:string;title:string;resourceId?:string;page:number;weekContext?:number;status:'loading'|'error';message?:string};
+type PdfOpening = {requestId:number;fileId:string;title:string;resourceId?:string;page:number;weekContext?:number;beside?:string;status:'loading'|'error';message?:string};
 type OpenPdf = StudyPdf & {
   Workspace:typeof import('@/components/pdf-workspace').PdfWorkspace;
 };
-const emptyPdfSession: PdfSession<OpenPdf> = {tabs:[],active:null,split:null,minimized:false};
+const emptyPdfSession: PdfSession<OpenPdf> = {tabs:[],active:null,split:null,splitPercent:50,minimized:false};
 const PDF_FETCH_TIMEOUT_MS = 120_000;
 const pageNames: Record<Tab,string> = {today:'Home', courses:'Study', tasks:'Tasks', calendar:'Calendar', focus:'Focus', library:'Resources'};
 const tabs: {id:Tab; label:string; icon:typeof Home}[] = [
@@ -900,11 +900,11 @@ export default function Page() {
   const connectDrive=()=>void act(async()=>{const result=await api<{authorization_url:string}>('/api/drive/connect',user);window.location.assign(result.authorization_url);},{collection:'none'});
   // Opening a document is a read, not a mutation. Show feedback immediately, and
   // keep it independent of the global save lock. Only the newest request can win.
-  const previewPdf=(fileId:string,title:string,resourceId?:string,lastPage=1,weekContext?:number)=>{
+  const previewPdf=(fileId:string,title:string,resourceId?:string,lastPage=1,weekContext?:number,beside?:string)=>{
     const key=resourceId ? `resource:${resourceId}` : `drive:${fileId}`;
     if(pdfSessionRef.current.tabs.some(tab=>tab.key===key)){
       cancelPdfOpening();
-      updatePdfSession(state=>selectPdf(state,key));
+      updatePdfSession(state=>placePdf(state,key,beside));
       return;
     }
     // Avoid unnecessary repeated downloads when the identical file is loading.
@@ -913,7 +913,7 @@ export default function Page() {
     const {requestId,controller}=pdfRequestGateRef.current.begin();
     const local = resourceId ? undefined : readLocalPdf(user?.uid ?? 'local', key);
     const page=Math.max(1,Math.floor(local?.page ?? lastPage)||1);
-    setPdfOpening({requestId,fileId,title,resourceId,page,weekContext,status:'loading'});
+    setPdfOpening({requestId,fileId,title,resourceId,page,weekContext,beside,status:'loading'});
     void (async()=>{
       let timedOut=false;
       const timeout=window.setTimeout(()=>{timedOut=true;controller.abort();},PDF_FETCH_TIMEOUT_MS);
@@ -933,9 +933,10 @@ export default function Page() {
         const readingWeek=resource&&!isExamResource(resource.kind)
           ? resource.week_number??weekContext??(tab==='courses'&&resource.course_id===courseId?weekNumber:undefined)
           : undefined;
-        const document: OpenPdf={key,url,title,resourceId,courseId:resource?.course_id,weekNumber:readingWeek,page,
+        const zoom=pdfSessionRef.current.tabs.find(tab=>tab.fileId===fileId)?.zoom??readPdfZoom(user?.uid??'local',fileId);
+        const document: OpenPdf={key,fileId,url,title,resourceId,courseId:resource?.course_id,weekNumber:readingWeek,page,zoom,
           bytes:body.blob.size,marks:local?.marks??[],marksStatus:resourceId?'idle':'ready',Workspace:reader.PdfWorkspace};
-        updatePdfSession(state=>selectPdf({...state,tabs:[...state.tabs,document]},key));
+        updatePdfSession(state=>placePdf({...state,tabs:[...state.tabs,document]},key,beside));
         setPdfOpening(null);
       }catch(e){
         if(!pdfRequestGateRef.current.isCurrent(requestId))return;
@@ -945,7 +946,7 @@ export default function Page() {
         pdfCache.remove(fileId);
         const message=timedOut?'The PDF took too long to download. Try again, or open it from Google Drive.':
           e instanceof Error?e.message:'Could not open this PDF.';
-        setPdfOpening({requestId,fileId,title,resourceId,page,weekContext,status:'error',message});
+        setPdfOpening({requestId,fileId,title,resourceId,page,weekContext,beside,status:'error',message});
       }finally{
         window.clearTimeout(timeout);
         if(pdfRequestGateRef.current.isCurrent(requestId))pdfPendingFileRef.current=null;
@@ -1035,6 +1036,13 @@ export default function Page() {
     } else {
       try{writeLocalPdf(user?.uid??'local',key,{page});}catch{/* The open tab still remembers the page. */}
     }
+  };
+  const changePdfZoom=(key:string,next:string)=>{
+    const document=pdfSessionRef.current.tabs.find(tab=>tab.key===key);
+    const zoom=normalizePdfZoom(next);
+    if(!document||!zoom||document.zoom===zoom)return;
+    savePdfZoom(user?.uid??'local',document.fileId,zoom);
+    updatePdfSession(state=>({...state,tabs:state.tabs.map(tab=>tab.fileId===document.fileId?{...tab,zoom}:tab)}));
   };
   const loadPdfMarks=async(key:string)=>{
     const document=pdfSessionRef.current.tabs.find(tab=>tab.key===key);
@@ -1435,12 +1443,13 @@ export default function Page() {
       onBrowseCourse={readerCourse&&!readerCourse.archived?()=>{closePdf();openCourse(readerCourse.id,pdf.weekNumber,undefined,readerResource&&isExamResource(readerResource.kind)?'exam':'course-library');}:undefined}
       onClose={closePdf} onCloseTab={closePdfTab} onSelectTab={key=>updatePdfSession(state=>selectPdf(state,key))}
       onSplit={key=>updatePdfSession(state=>({...state,split:key}))}
+      onResizeSplit={splitPercent=>updatePdfSession(state=>state.splitPercent===splitPercent?state:{...state,splitPercent})}
       onMinimize={()=>{flushPdfBookmark();updatePdfSession(state=>({...state,minimized:true}));}}
-      onPage={changePdfPage} onMark={changePdfMark} onLoadMarks={loadPdfMarks} onToggleItem={toggle}
+      onPage={changePdfPage} onZoom={changePdfZoom} onMark={changePdfMark} onLoadMarks={loadPdfMarks} onToggleItem={toggle}
       onFocus={item=>{flushPdfBookmark();updatePdfSession(state=>({...state,minimized:true}));startFrom(item,pdf.courseId);}}
-      onOpenResource={r=>{if(r.source==='drive'&&r.drive_file_id)previewPdf(r.drive_file_id,r.title,r.id,r.last_page,pdf.weekNumber);else if(r.url)window.open(r.url,'_blank','noopener,noreferrer');}}/>}
+      onOpenResource={(r,beside)=>{if(r.source==='drive'&&r.drive_file_id)previewPdf(r.drive_file_id,r.title,r.id,r.last_page,pdf.weekNumber,beside?pdf.key:undefined);else if(!beside&&r.url)window.open(r.url,'_blank','noopener,noreferrer');}}/>}
     {pdfOpening&&<PdfOpeningOverlay title={pdfOpening.title} status={pdfOpening.status} error={pdfOpening.message}
       requestId={pdfOpening.requestId} onCancel={cancelPdfOpening}
-      onRetry={()=>previewPdf(pdfOpening.fileId,pdfOpening.title,pdfOpening.resourceId,pdfOpening.page,pdfOpening.weekContext)}/>}
+      onRetry={()=>previewPdf(pdfOpening.fileId,pdfOpening.title,pdfOpening.resourceId,pdfOpening.page,pdfOpening.weekContext,pdfOpening.beside)}/>}
   </div>;
 }

@@ -2,9 +2,11 @@ import type { PdfPageMark } from './types';
 
 export type StudyPdf = {
   key: string;
+  fileId: string;
   url: string;
   title: string;
   page: number;
+  zoom: string;
   bytes: number;
   resourceId?: string;
   courseId?: string;
@@ -16,15 +18,24 @@ export type PdfSession<T extends StudyPdf = StudyPdf> = {
   tabs: T[];
   active: string | null;
   split: string | null;
+  splitPercent: number;
   minimized: boolean;
 };
 export type PdfMarkChange = { page: number } & Partial<Pick<PdfPageMark, 'bookmarked' | 'note'>>;
 export const maxPdfPage = 20000;
 export const maxPdfTabs = 4;
 export const maxPdfTabBytes = 100 * 1024 * 1024;
+export const defaultPdfZoom = 'page-width';
+export const minPdfZoom = .25;
+export const maxPdfZoom = 4;
 
 export function selectPdf<T extends StudyPdf>(session: PdfSession<T>, key: string): PdfSession<T> {
   return { ...session, minimized: false, active: key, split: session.split === key ? session.active : session.split };
+}
+
+export function placePdf<T extends StudyPdf>(session: PdfSession<T>, key: string, beside?: string): PdfSession<T> {
+  if (beside && beside === session.active && beside !== key) return { ...session, split: key, minimized: false };
+  return selectPdf(session, key);
 }
 
 export function removePdf<T extends StudyPdf>(session: PdfSession<T>, key: string): PdfSession<T> {
@@ -46,6 +57,26 @@ export function applyPdfMark(marks: PdfPageMark[], change: PdfMarkChange): PdfPa
 type LocalReading = { page: number; marks: PdfPageMark[] };
 const emptyReading: LocalReading = { page: 1, marks: [] };
 const storageKey = (owner: string, key: string) => `studyhub.pdf-reading.${encodeURIComponent(owner)}.${encodeURIComponent(key)}`;
+
+const zoomKey = (owner: string, fileId: string) =>
+  `studyhub.pdf-zoom.${encodeURIComponent(owner)}.${encodeURIComponent(fileId)}`;
+
+export function normalizePdfZoom(value: string | null): string | null {
+  if (value === 'page-width' || value === 'page-fit') return value;
+  const scale = Number(value);
+  if (!Number.isFinite(scale) || scale < minPdfZoom || scale > maxPdfZoom) return null;
+  return String(Math.round(scale * 100) / 100);
+}
+
+export function readPdfZoom(owner: string, fileId: string): string {
+  try { return normalizePdfZoom(window.localStorage.getItem(zoomKey(owner, fileId))) ?? defaultPdfZoom; }
+  catch { return defaultPdfZoom; }
+}
+
+export function savePdfZoom(owner: string, fileId: string, zoom: string) {
+  try { window.localStorage.setItem(zoomKey(owner, fileId), zoom); }
+  catch { /* The open tab can still remember its zoom. */ }
+}
 
 export function readLocalPdf(owner: string, key: string): LocalReading {
   try {
