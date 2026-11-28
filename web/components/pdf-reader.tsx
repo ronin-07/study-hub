@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { Bookmark, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ListTree, LoaderCircle, Minus, PanelLeft, Plus, Search } from 'lucide-react';
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
+import { createPortal } from 'react-dom';
 import type { EventBus, PDFLinkService, PDFViewer } from 'pdfjs-dist/web/pdf_viewer.mjs';
 import type { PdfPageMark } from '@/lib/types';
 import { defaultPdfZoom, maxPdfPage, maxPdfZoom, minPdfZoom, normalizePdfZoom, safePdfLink, type PdfMarkChange, type StudyPdf } from '@/lib/pdf-study';
@@ -13,6 +14,7 @@ import { PdfOutline, type PdfDestination } from './pdf-outline';
 import { PdfMarks } from './pdf-marks';
 
 type Props = {
+  toolbarHost: HTMLDivElement | null;
   url: string;
   title: string;
   initialPage: number;
@@ -30,7 +32,7 @@ type ViewerRuntime = { events: EventBus; viewer: PDFViewer; links: PDFLinkServic
 type Matches = { current: number; total: number };
 const assets = '/pdfjs/';
 
-export function PdfReader({ url, title, initialPage, initialZoom, onZoom, marks, marksStatus, onLoadMarks, autoFocus = true, onPage, onMark, onFailure }: Props) {
+export function PdfReader({ toolbarHost, url, title, initialPage, initialZoom, onZoom, marks, marksStatus, onLoadMarks, autoFocus = true, onPage, onMark, onFailure }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const pageSurface = useRef<HTMLDivElement>(null);
   const searchInput = useRef<HTMLInputElement>(null);
@@ -232,7 +234,7 @@ export function PdfReader({ url, title, initialPage, initialZoom, onZoom, marks,
   function shortcuts(event: KeyboardEvent<HTMLElement>) {
     const command = event.ctrlKey || event.metaKey;
     const key = event.key.toLowerCase();
-    if (command && key === 'f') {
+    if (command && key === 'f' && toolbarHost) {
       event.preventDefault();
       searchInput.current?.focus();
       searchInput.current?.select();
@@ -247,7 +249,7 @@ export function PdfReader({ url, title, initialPage, initialZoom, onZoom, marks,
   }
 
   return <section className="pdfjs-reader" aria-label={autoFocus ? 'PDF.js reader' : `PDF.js reader for ${title}`} onKeyDown={shortcuts}>
-    <div className="pdfjs-toolbar" aria-label="PDF controls">
+    {toolbarHost && createPortal(<div className="pdfjs-toolbar" role="group" aria-label="PDF controls">
       <div className="pdfjs-panel-tools" role="group" aria-label="Document panels">
       <button type="button" className="btn secondary small" aria-label="Pages" title="Pages" disabled={!firstPaint} aria-expanded={panel === 'pages'} onClick={() => setPanel(value => value === 'pages' ? null : 'pages')}>
         <PanelLeft size={15} aria-hidden="true"/><span>Pages</span>
@@ -300,7 +302,7 @@ export function PdfReader({ url, title, initialPage, initialZoom, onZoom, marks,
         <button type="button" className="btn secondary small" aria-label="Previous match" disabled={!firstPaint || !query.trim()} onClick={() => find(true)}><ChevronUp size={15}/></button>
         <button type="submit" className="btn secondary small" aria-label="Find next match" disabled={!firstPaint || !query.trim()}><ChevronDown size={15}/></button>
       </form>
-    </div>
+    </div>, toolbarHost)}
     <div className="pdfjs-stage">
       {pdf && panel === 'pages' && <PdfThumbnails pdf={pdf} current={page} onPage={go} onRendered={finishThumbnail}/>}
       {pdf && panel === 'outline' && <PdfOutline pdf={pdf} onJump={jumpToOutline}/>}

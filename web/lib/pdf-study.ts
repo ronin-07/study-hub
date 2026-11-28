@@ -18,6 +18,7 @@ export type PdfSession<T extends StudyPdf = StudyPdf> = {
   tabs: T[];
   active: string | null;
   split: string | null;
+  splitFirst: string | null;
   splitPercent: number;
   minimized: boolean;
 };
@@ -30,11 +31,18 @@ export const minPdfZoom = .25;
 export const maxPdfZoom = 4;
 
 export function selectPdf<T extends StudyPdf>(session: PdfSession<T>, key: string): PdfSession<T> {
-  return { ...session, minimized: false, active: key, split: session.split === key ? session.active : session.split };
+  const split = session.split === key ? session.active : session.split;
+  const splitFirst = !split ? null : session.splitFirst === session.active && key !== session.split ? key : session.splitFirst;
+  return { ...session, minimized: false, active: key, split, splitFirst };
+}
+
+export function setPdfSplit<T extends StudyPdf>(session: PdfSession<T>, key: string | null): PdfSession<T> {
+  const replacingFirst = session.split !== null && session.splitFirst === session.split;
+  return { ...session, split: key, splitFirst: key ? (replacingFirst ? key : session.active) : null };
 }
 
 export function placePdf<T extends StudyPdf>(session: PdfSession<T>, key: string, beside?: string): PdfSession<T> {
-  if (beside && beside === session.active && beside !== key) return { ...session, split: key, minimized: false };
+  if (beside && beside === session.active && beside !== key) return { ...setPdfSplit(session, key), minimized: false };
   return selectPdf(session, key);
 }
 
@@ -43,7 +51,9 @@ export function removePdf<T extends StudyPdf>(session: PdfSession<T>, key: strin
   if (index < 0) return session;
   const tabs = session.tabs.filter(tab => tab.key !== key);
   const active = session.active === key ? tabs[Math.min(index, tabs.length - 1)]?.key ?? null : session.active;
-  return { ...session, tabs, active, split: session.split === key || session.split === active ? null : session.split };
+  const split = session.split === key || session.split === active ? null : session.split;
+  const splitFirst = !split ? null : session.splitFirst === key ? active : session.splitFirst;
+  return { ...session, tabs, active, split, splitFirst };
 }
 
 export function applyPdfMark(marks: PdfPageMark[], change: PdfMarkChange): PdfPageMark[] {

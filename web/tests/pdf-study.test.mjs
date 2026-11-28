@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyPdfMark, normalizePdfZoom, placePdf, readPdfZoom, removePdf, safePdfLink, savePdfZoom, selectPdf } from '../lib/pdf-study.ts';
+import { applyPdfMark, normalizePdfZoom, placePdf, readPdfZoom, removePdf, safePdfLink, savePdfZoom, selectPdf, setPdfSplit } from '../lib/pdf-study.ts';
 
 test('a bookmark and note share a page without replacing each other', () => {
   const marks = applyPdfMark([], { page: 3, bookmarked: true });
@@ -12,11 +12,13 @@ test('a bookmark and note share a page without replacing each other', () => {
   assert.notEqual(marks, noted);
 });
 
-test('selecting a split document swaps panes and closing a tab selects a neighbor', () => {
-  const state = { tabs: [{ key: 'paper' }, { key: 'solution' }, { key: 'textbook' }], active: 'paper', split: 'solution', minimized: true };
-  const swapped = selectPdf(state, 'solution');
-  assert.deepEqual([swapped.active, swapped.split, swapped.minimized], ['solution', 'paper', false]);
-  const closed = removePdf(swapped, 'solution');
+test('selecting the other split document preserves pane order and closing selects a neighbor', () => {
+  const state = { tabs: [{ key: 'paper' }, { key: 'solution' }, { key: 'textbook' }], active: 'paper', split: 'solution', splitFirst: 'paper', minimized: true };
+  const selected = selectPdf(state, 'solution');
+  assert.deepEqual([selected.active, selected.split, selected.splitFirst, selected.minimized], ['solution', 'paper', 'paper', false]);
+  assert.equal(setPdfSplit(selected, 'textbook').splitFirst, 'textbook');
+  assert.equal(selectPdf(state, 'textbook').splitFirst, 'textbook');
+  const closed = removePdf(selected, 'solution');
   assert.deepEqual([closed.active, closed.split], ['textbook', 'paper']);
   assert.equal(removePdf(closed, 'paper').split, null);
 });
@@ -31,8 +33,8 @@ test('document links allow ordinary destinations and reject active schemes', () 
 
 test('open beside keeps the original PDF active and avoids selecting the same PDF twice', () => {
   const tabs = [{ key: 'exam' }, { key: 'solution' }];
-  const session = { tabs, active: 'exam', split: null, minimized: false };
-  assert.deepEqual(placePdf(session, 'solution', 'exam'), { ...session, split: 'solution' });
+  const session = { tabs, active: 'exam', split: null, splitFirst: null, minimized: false };
+  assert.deepEqual(placePdf(session, 'solution', 'exam'), { ...session, split: 'solution', splitFirst: 'exam' });
   assert.deepEqual(placePdf(session, 'solution', 'missing'), { ...session, active: 'solution' });
   assert.equal(placePdf(session, 'exam', 'exam').split, null);
 });

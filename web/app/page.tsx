@@ -15,7 +15,7 @@ import { createSnapshotCoordinator, describeSnapshotFailure, fetchSnapshotWithRe
 import { Badge, Card, EmptyState, FormRow, SectionTitle } from '@/components/common';
 import { PdfOpeningOverlay } from '@/components/pdf-opening-overlay';
 import { createPdfRequestGate, createPdfSessionCache } from '@/lib/pdf-preview';
-import { applyPdfMark, maxPdfPage, maxPdfTabBytes, maxPdfTabs, normalizePdfZoom, placePdf, readLocalPdf, readPdfZoom, removePdf, savePdfZoom, selectPdf, writeLocalPdf, type PdfMarkChange, type PdfSession, type StudyPdf } from '@/lib/pdf-study';
+import { applyPdfMark, maxPdfPage, maxPdfTabBytes, maxPdfTabs, normalizePdfZoom, placePdf, readLocalPdf, readPdfZoom, removePdf, savePdfZoom, selectPdf, setPdfSplit, writeLocalPdf, type PdfMarkChange, type PdfSession, type StudyPdf } from '@/lib/pdf-study';
 import type { PdfPageMark } from '@/lib/types';
 import { ProfileName } from '@/components/profile-name';
 import { upcomingExams, examCountdown } from '@/lib/exam-prep';
@@ -55,7 +55,7 @@ type PdfOpening = {requestId:number;fileId:string;title:string;resourceId?:strin
 type OpenPdf = StudyPdf & {
   Workspace:typeof import('@/components/pdf-workspace').PdfWorkspace;
 };
-const emptyPdfSession: PdfSession<OpenPdf> = {tabs:[],active:null,split:null,splitPercent:50,minimized:false};
+const emptyPdfSession: PdfSession<OpenPdf> = {tabs:[],active:null,split:null,splitFirst:null,splitPercent:50,minimized:false};
 const PDF_FETCH_TIMEOUT_MS = 120_000;
 const pageNames: Record<Tab,string> = {today:'Home', courses:'Study', tasks:'Tasks', calendar:'Calendar', focus:'Focus', library:'Resources'};
 const tabs: {id:Tab; label:string; icon:typeof Home}[] = [
@@ -1442,7 +1442,7 @@ export default function Page() {
       resource={readerResource} course={readerCourse} resources={data.resources}
       onBrowseCourse={readerCourse&&!readerCourse.archived?()=>{closePdf();openCourse(readerCourse.id,pdf.weekNumber,undefined,readerResource&&isExamResource(readerResource.kind)?'exam':'course-library');}:undefined}
       onClose={closePdf} onCloseTab={closePdfTab} onSelectTab={key=>updatePdfSession(state=>selectPdf(state,key))}
-      onSplit={key=>updatePdfSession(state=>({...state,split:key}))}
+      onSplit={key=>updatePdfSession(state=>setPdfSplit(state,key))}
       onResizeSplit={splitPercent=>updatePdfSession(state=>state.splitPercent===splitPercent?state:{...state,splitPercent})}
       onMinimize={()=>{flushPdfBookmark();updatePdfSession(state=>({...state,minimized:true}));}}
       onPage={changePdfPage} onZoom={changePdfZoom} onMark={changePdfMark} onLoadMarks={loadPdfMarks} onToggleItem={toggle}
