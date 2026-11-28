@@ -11,6 +11,7 @@ export type StudyPdf = {
   resourceId?: string;
   courseId?: string;
   weekNumber?: number;
+  activityId?: string;
   marks: PdfPageMark[];
   marksStatus: 'idle' | 'loading' | 'ready' | 'error';
 };
@@ -33,7 +34,7 @@ export const maxPdfZoom = 4;
 export function selectPdf<T extends StudyPdf>(session: PdfSession<T>, key: string): PdfSession<T> {
   const split = session.split === key ? session.active : session.split;
   const splitFirst = !split ? null : session.splitFirst === session.active && key !== session.split ? key : session.splitFirst;
-  return { ...session, minimized: false, active: key, split, splitFirst };
+  return { ...session, active: key, split, splitFirst };
 }
 
 export function setPdfSplit<T extends StudyPdf>(session: PdfSession<T>, key: string | null): PdfSession<T> {
@@ -45,7 +46,7 @@ export function setPdfSplit<T extends StudyPdf>(session: PdfSession<T>, key: str
 }
 
 export function placePdf<T extends StudyPdf>(session: PdfSession<T>, key: string, beside?: string): PdfSession<T> {
-  if (beside && beside === session.active && beside !== key) return { ...setPdfSplit(session, key), minimized: false };
+  if (beside && beside === session.active && beside !== key) return setPdfSplit(session, key);
   return selectPdf(session, key);
 }
 

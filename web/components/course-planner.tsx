@@ -72,7 +72,7 @@ interface Props {
   activeFocus: boolean;
   focusBusy: boolean;
   openFocus: () => void;
-  openResource: (resource: Resource) => void;
+  openResource: (resource: Resource, activity?: Item) => void;
   openDrive: (courseId: string, weekNumber: number, kind: ResourceKind, scope: 'course' | 'week', paperId?:string) => void;
 }
 
@@ -535,7 +535,7 @@ export function CoursePlanner({ data, progressItems, user, busy, pendingItems, c
                       {i.planned_date&&<span><CalendarDays size={13} aria-hidden="true"/> Planned {shortStudyDate(i.planned_date)}</span>}
                       {i.due_date&&<span><CalendarDays size={13} aria-hidden="true"/> Due {shortStudyDate(i.due_date)}</span>}
                     </div>}
-                    {documents.map(document=><div className="planner-activity-document-row" key={document.id}><button type="button" className="planner-activity-document" onClick={()=>openResource(document)} title={`Open ${document.title}`}><FileText size={16} aria-hidden="true"/><span>{document.title}</span><ExternalLink size={15} aria-hidden="true"/></button>{!isReadOnly&&<button type="button" className="icon-btn" disabled={busy||pendingItems.size>0} onClick={()=>void detachResource(document,i)} title="Unlink from activity" aria-label={`Unlink ${document.title}`}><Unlink size={15}/></button>}</div>)}
+                    {documents.map(document=><div className="planner-activity-document-row" key={document.id}><button type="button" className="planner-activity-document" onClick={()=>openResource(document,i)} title={`Open ${document.title}`}><FileText size={16} aria-hidden="true"/><span>{document.title}</span><ExternalLink size={15} aria-hidden="true"/></button>{!isReadOnly&&<button type="button" className="icon-btn" disabled={busy||pendingItems.size>0} onClick={()=>void detachResource(document,i)} title="Unlink from activity" aria-label={`Unlink ${document.title}`}><Unlink size={15}/></button>}</div>)}
                     {i.notes?.trim()&&<details className="planner-activity-notes"><summary><NotebookPen size={14} aria-hidden="true"/><span>Notes{` · ${i.notes.trim().split('\n')[0].slice(0,72)}`}</span><ChevronDown size={15} className="planner-notes-chevron" aria-hidden="true"/></summary><p>{i.notes}</p></details>}
                   </div>
                   {!isReadOnly&&<div className="planner-activity-actions" role="group" aria-label={`${i.title} actions`}>

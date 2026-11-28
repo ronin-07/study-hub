@@ -29,8 +29,8 @@ test('PDF request gate aborts the older request, and only the latest selection m
 });
 
 test('open starts loading immediately and stale requests cannot cache bytes or create a blob URL',()=>{
-  assert.match(page,/pdfPendingFileRef\.current===fileId\)return/);
-  assert.match(page,/setPdfOpening\(\{requestId,fileId,title,resourceId,page,weekContext,beside,status:'loading'\}\)/);
+  assert.match(page,/pdfPendingRequestRef\.current===requestKey\)return/);
+  assert.match(page,/setPdfOpening\(\{requestId,fileId,title,resourceId,page,context,status:'loading'\}\)/);
   assert.match(page,/pdfBlob\(`\/api\/drive\/files\/\$\{encodeURIComponent\(fileId\)\}\/pdf`,user,controller\.signal,cached\)/);
   assert.match(page,/if\(controller\.signal\.aborted\|\|!pdfRequestGateRef\.current\.isCurrent\(requestId\)\)return;[\s\S]*?pdfCache\.store[\s\S]*?URL\.createObjectURL\(body\.blob\)/);
   assert.match(page,/PDF_FETCH_TIMEOUT_MS/);
