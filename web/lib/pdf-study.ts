@@ -37,8 +37,11 @@ export function selectPdf<T extends StudyPdf>(session: PdfSession<T>, key: strin
 }
 
 export function setPdfSplit<T extends StudyPdf>(session: PdfSession<T>, key: string | null): PdfSession<T> {
-  const replacingFirst = session.split !== null && session.splitFirst === session.split;
-  return { ...session, split: key, splitFirst: key ? (replacingFirst ? key : session.active) : null };
+  if (!key || key === session.active) return { ...session, split: null, splitFirst: null };
+  const partnerFirst = session.split
+    ? session.splitFirst === session.split
+    : session.tabs.findIndex(tab => tab.key === key) < session.tabs.findIndex(tab => tab.key === session.active);
+  return { ...session, split: key, splitFirst: partnerFirst ? key : session.active };
 }
 
 export function placePdf<T extends StudyPdf>(session: PdfSession<T>, key: string, beside?: string): PdfSession<T> {

@@ -1,6 +1,6 @@
 'use client';
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
-import { ArrowLeft, ArrowRight, BookOpen, Check, ChevronDown, Columns2, Ellipsis, ExternalLink, FileText, LoaderCircle, PanelRightClose, PanelRightOpen, Plus, RotateCcw, Timer, X } from 'lucide-react';
+import { useCallback, useEffect, useId, useRef, useState, type CSSProperties } from 'react';
+import { ArrowLeft, ArrowRight, BookOpen, Check, ChevronDown, Columns2, Ellipsis, ExternalLink, Files, FileText, LoaderCircle, PanelRightClose, PanelRightOpen, Plus, RotateCcw, Timer, X } from 'lucide-react';
 import type { Course, Item, Resource } from '@/lib/types';
 import { activityResources, isExamResource, readerMaterials } from '@/lib/resource-links';
 import { examName } from '@/lib/exam-prep';
@@ -52,6 +52,10 @@ export function PdfWorkspace({ pdf, session, opening, items, course, resource, r
   const dialogRef=useRef<HTMLDivElement>(null);
   const optionsRef=useRef<HTMLDetailsElement>(null);
   const splitPickerRef=useRef<HTMLDetailsElement>(null);
+  const otherTabsRef=useRef<HTMLDetailsElement>(null);
+  const activeTabRef=useRef<HTMLButtonElement>(null);
+  const restoreTabFocus=useRef(false);
+  const workspaceId=useId();
   const [toolbarHost,setToolbarHost]=useState<HTMLDivElement|null>(null);
   const panesRef=useRef<HTMLDivElement>(null);
   const dragRef=useRef<{id:number;offset:number}|null>(null);
@@ -62,6 +66,12 @@ export function PdfWorkspace({ pdf, session, opening, items, course, resource, r
   const usePdfJs = pdfJs && !pdfJsFailed;
   const split = usePdfJs ? session.tabs.find(tab=>tab.key===session.split && tab.key!==pdf.key) : undefined;
   const panes=split?(session.splitFirst===split.key?[split,pdf]:[pdf,split]):[pdf];
+  const otherTabs=split?session.tabs.filter(tab=>tab.key!==pdf.key&&tab.key!==split.key):[];
+  const splitStyle=split?{
+    '--pdf-split-ratio':splitPercent/100,
+    '--pdf-split-first':`${splitPercent}fr`,
+    '--pdf-split-second':`${100-splitPercent}fr`,
+  } as CSSProperties:undefined;
   const chooseSplit=(key:string|null)=>{
     const picker=splitPickerRef.current;
     if(picker){picker.open=false;picker.querySelector('summary')?.focus();}
@@ -83,6 +93,11 @@ export function PdfWorkspace({ pdf, session, opening, items, course, resource, r
     catch { /* The choice still applies to this open reader. */ }
   };
   useEffect(()=>setDraft(String(pdf.page)),[pdf.page]);
+  useEffect(()=>{
+    if(!restoreTabFocus.current)return;
+    restoreTabFocus.current=false;
+    activeTabRef.current?.focus();
+  },[pdf.key,session.tabs.length]);
   useEffect(()=>{
     const narrow=window.matchMedia('(max-width: 690px)');
     if(narrow.matches)setStudyOpen(false);
@@ -109,7 +124,7 @@ export function PdfWorkspace({ pdf, session, opening, items, course, resource, r
     const handler=(event:KeyboardEvent)=>{
       if(opening)return;
       if(event.key==='Escape'){
-        const options=[optionsRef.current,splitPickerRef.current].find(menu=>menu?.open);
+        const options=[optionsRef.current,splitPickerRef.current,otherTabsRef.current].find(menu=>menu?.open);
         if(options?.open){options.open=false;options.querySelector('summary')?.focus();}
         else onClose();
         return;
@@ -129,7 +144,7 @@ export function PdfWorkspace({ pdf, session, opening, items, course, resource, r
       else if(!event.shiftKey&&document.activeElement===last&&first){event.preventDefault();first.focus();}
     };
     const dismiss=(event:PointerEvent)=>{
-      for(const menu of [optionsRef.current,splitPickerRef.current]){
+      for(const menu of [optionsRef.current,splitPickerRef.current,otherTabsRef.current]){
         if(menu?.open&&event.target instanceof Node&&!menu.contains(event.target))menu.open=false;
       }
     };
@@ -152,6 +167,33 @@ export function PdfWorkspace({ pdf, session, opening, items, course, resource, r
   const focusItem=linkedTask||sameWeekItems.find(item=>!item.done);
   const context=exam?'Exam Prep':pdf.weekNumber!=null?`Week ${pdf.weekNumber}`:course?'Course Library':'Drive preview';
   const title=resource?.kind==='exam_paper'?examName(resource):pdf.title;
+  const renderTab=(tab:StudyPdf,pane?:'first'|'second')=>{
+    const selected=tab.key===pdf.key;
+    const paneId=pane?`${workspaceId}-${pane}`:undefined;
+    const side=pane==='first'?(stacked?'Top PDF':'Left PDF'):(stacked?'Bottom PDF':'Right PDF');
+    const inMenu=!!split&&!pane;
+    const closeOtherTabs=()=>{
+      if(inMenu&&otherTabsRef.current){
+        otherTabsRef.current.open=false;
+        restoreTabFocus.current=true;
+      }
+    };
+    return <div className="pdfjs-tab" key={tab.key} data-active={selected} data-pane={pane}>
+      <button ref={selected?activeTabRef:undefined} type="button" className="btn secondary small pdfjs-select-tab"
+        aria-pressed={selected} title={tab.title} aria-label={tab.title} aria-controls={paneId} aria-describedby={paneId?`${paneId}-label`:undefined}
+        onClick={()=>{closeOtherTabs();onSelectTab(tab.key);}}>
+        {selected?<BookOpen size={15} aria-hidden="true"/>:<FileText size={14} aria-hidden="true"/>}
+        <span className="pdfjs-tab-text">
+          <strong>{selected?title:tab.title}</strong>
+          {paneId?<small id={`${paneId}-label`}>{side}</small>:selected&&<small>{course?`${course.code} · ${context}`:context}</small>}
+        </span>
+      </button>
+      <button type="button" className="btn secondary small pdfjs-close-tab" aria-label={`Close PDF tab ${tab.title}`}
+        onClick={()=>{closeOtherTabs();onCloseTab(tab.key);}}><X size={13} aria-hidden="true"/></button>
+    </div>;
+  };
+  const openTabButton=<button type="button" className="btn secondary small pdfjs-open-tab"
+    aria-label="Open PDF" title="Open PDF" onClick={onMinimize}><Plus size={15} aria-hidden="true"/><span>Open PDF</span></button>;
   const materialRow=(entry:Resource)=>{
     const name=entry.kind==='exam_paper'?examName(entry):entry.title;
     const Icon=entry.source==='drive'&&entry.drive_file_id?BookOpen:ExternalLink;
@@ -166,59 +208,60 @@ export function PdfWorkspace({ pdf, session, opening, items, course, resource, r
           onClick={()=>onOpenResource(entry,true)}><Columns2 size={14} aria-hidden="true"/> Open beside</button>}
     </div>;
   };
-  return <div ref={dialogRef} className={'pdf-overlay pdf-workspace'+(studyOpen?'':' pdf-expanded')} role="dialog" aria-modal="true" aria-label={`Reading ${pdf.title}`}>
-    <div className="pdfjs-tabs">
+  return <div ref={dialogRef} className={'pdf-overlay pdf-workspace'+(studyOpen?'':' pdf-expanded')}
+    style={splitStyle} role="dialog" aria-modal="true" aria-label={`Reading ${pdf.title}`}>
+    <div className={'pdfjs-tabs'+(split?' is-split':'')}>
       <nav className="pdfjs-tab-list" aria-label="Open PDFs">
-        {session.tabs.map(tab=><div className="pdfjs-tab" key={tab.key} data-active={tab.key===pdf.key}>
-          <button type="button" className="btn secondary small" aria-pressed={tab.key===pdf.key} title={tab.title}
-            aria-label={tab.title} onClick={()=>onSelectTab(tab.key)}>
-            {tab.key===pdf.key?<BookOpen size={15} aria-hidden="true"/>:<FileText size={14} aria-hidden="true"/>}
-            <span className="pdfjs-tab-text">
-              <strong>{tab.key===pdf.key?title:tab.title}</strong>
-              {tab.key===pdf.key&&<small>{course?`${course.code} · ${context}`:context}</small>}
-            </span>
-          </button>
-          <button type="button" className="btn secondary small" aria-label={`Close PDF tab ${tab.title}`} onClick={()=>onCloseTab(tab.key)}><X size={13} aria-hidden="true"/></button>
-        </div>)}
-        <button type="button" className="btn secondary small pdfjs-open-tab" onClick={onMinimize}><Plus size={15} aria-hidden="true"/> Open PDF</button>
-      </nav>
-      <div className="pdfjs-reader-actions">
-        {usePdfJs&&session.tabs.length>1&&<details className="pdfjs-options pdfjs-split-picker" ref={splitPickerRef} onKeyDown={event=>{
-          if(!['ArrowDown','ArrowUp','Home','End'].includes(event.key))return;
-          const picker=event.currentTarget;
-          if(!picker.open&&(event.key==='Home'||event.key==='End'))return;
-          const choices=Array.from(picker.querySelectorAll<HTMLButtonElement>('.pdfjs-options-popover button'));
-          if(!choices.length)return;
-          event.preventDefault();
-          picker.open=true;
-          const index=choices.findIndex(choice=>choice===document.activeElement);
-          const next=event.key==='Home'?0:event.key==='End'?choices.length-1:
-            event.key==='ArrowDown'?(index+1)%choices.length:(index<=0?choices.length-1:index-1);
-          choices[next].focus();
-        }}>
-          <summary className="btn secondary small" aria-label="Split view" title={split ? `Split view with ${split.title}` : 'Split view is off'}>
-            <Columns2 size={15} aria-hidden="true"/> Split view <span className="pdfjs-split-state">{split?'On':'Off'}</span><ChevronDown size={13} aria-hidden="true"/>
-          </summary>
-          <div className="pdfjs-options-popover" role="group" aria-label="Split view documents">
-            <button type="button" className="btn secondary small" aria-pressed={!split} onClick={()=>chooseSplit(null)}>
-              <span>Off</span>{!split&&<Check size={14} aria-hidden="true"/>}
-            </button>
-            {session.tabs.filter(tab=>tab.key!==pdf.key).map(tab=><button key={tab.key} type="button"
-              className="btn secondary small" aria-pressed={split?.key===tab.key} title={tab.title} onClick={()=>chooseSplit(tab.key)}>
-              <span>{tab.title}</span>{split?.key===tab.key&&<Check size={14} aria-hidden="true"/>}
-            </button>)}
+        {split?renderTab(panes[0],'first'):session.tabs.map(tab=>renderTab(tab))}
+        {!split&&openTabButton}
+        <div className="pdfjs-tab-end">
+          {split&&renderTab(panes[1],'second')}
+          <div className="pdfjs-reader-actions">
+            {otherTabs.length>0&&<details className="pdfjs-options pdfjs-other-tabs" ref={otherTabsRef}>
+              <summary className="btn secondary small" aria-label="Other open PDFs" title="Other open PDFs"><Files size={15} aria-hidden="true"/></summary>
+              <div className="pdfjs-options-popover" role="group" aria-label="Other open PDF tabs">
+                {otherTabs.map(tab=>renderTab(tab))}
+              </div>
+            </details>}
+            {split&&openTabButton}
+            {usePdfJs&&session.tabs.length>1&&<details className="pdfjs-options pdfjs-split-picker" ref={splitPickerRef} onKeyDown={event=>{
+              if(!['ArrowDown','ArrowUp','Home','End'].includes(event.key))return;
+              const picker=event.currentTarget;
+              if(!picker.open&&(event.key==='Home'||event.key==='End'))return;
+              const choices=Array.from(picker.querySelectorAll<HTMLButtonElement>('.pdfjs-options-popover button'));
+              if(!choices.length)return;
+              event.preventDefault();
+              picker.open=true;
+              const index=choices.findIndex(choice=>choice===document.activeElement);
+              const next=event.key==='Home'?0:event.key==='End'?choices.length-1:
+                event.key==='ArrowDown'?(index+1)%choices.length:(index<=0?choices.length-1:index-1);
+              choices[next].focus();
+            }}>
+              <summary className="btn secondary small" aria-label="Split view" title={split ? `Split view with ${split.title}` : 'Split view is off'}>
+                <Columns2 size={15} aria-hidden="true"/><span className="pdfjs-split-label">Split view <span className="pdfjs-split-state">{split?'On':'Off'}</span></span><ChevronDown className="pdfjs-split-chevron" size={13} aria-hidden="true"/>
+              </summary>
+              <div className="pdfjs-options-popover" role="group" aria-label="Split view documents">
+                <button type="button" className="btn secondary small" aria-pressed={!split} onClick={()=>chooseSplit(null)}>
+                  <span>Off</span>{!split&&<Check size={14} aria-hidden="true"/>}
+                </button>
+                {session.tabs.filter(tab=>tab.key!==pdf.key).map(tab=><button key={tab.key} type="button"
+                  className="btn secondary small" aria-pressed={split?.key===tab.key} title={tab.title} onClick={()=>chooseSplit(tab.key)}>
+                  <span>{tab.title}</span>{split?.key===tab.key&&<Check size={14} aria-hidden="true"/>}
+                </button>)}
+              </div>
+            </details>}
+            {!usePdfJs&&<button type="button" className="btn secondary small pdf-viewer-choice" onClick={changeViewer}>
+              {pdfJsFailed ? 'Retry PDF.js' : 'Try PDF.js'}
+            </button>}
+            <button type="button" className="btn secondary small pdf-toggle-study" title={studyOpen?'Hide Study Mode':'Show Study Mode'} aria-label={studyOpen?'Hide Study Mode sidebar':'Show Study Mode sidebar'} aria-expanded={studyOpen} onClick={()=>setStudyOpen(value=>!value)}>{studyOpen?<PanelRightClose size={17}/>:<PanelRightOpen size={17}/>}<span>Study panel</span></button>
+            {usePdfJs&&<details className="pdfjs-options" ref={optionsRef}>
+              <summary className="btn secondary small" aria-label="Reader options" title="Reader options"><Ellipsis size={17} aria-hidden="true"/></summary>
+              <div className="pdfjs-options-popover"><button type="button" className="btn secondary small" onClick={changeViewer}><ExternalLink size={15} aria-hidden="true"/> Use browser viewer</button></div>
+            </details>}
+            <button type="button" className="btn secondary small pdf-close-reader" aria-label="Close" title="Close reader" onClick={onClose}><X size={16} aria-hidden="true"/></button>
           </div>
-        </details>}
-        {!usePdfJs&&<button type="button" className="btn secondary small pdf-viewer-choice" onClick={changeViewer}>
-          {pdfJsFailed ? 'Retry PDF.js' : 'Try PDF.js'}
-        </button>}
-        <button type="button" className="btn secondary small pdf-toggle-study" title={studyOpen?'Hide Study Mode':'Show Study Mode'} aria-label={studyOpen?'Hide Study Mode sidebar':'Show Study Mode sidebar'} aria-expanded={studyOpen} onClick={()=>setStudyOpen(value=>!value)}>{studyOpen?<PanelRightClose size={17}/>:<PanelRightOpen size={17}/>}<span>Study panel</span></button>
-        {usePdfJs&&<details className="pdfjs-options" ref={optionsRef}>
-          <summary className="btn secondary small" aria-label="Reader options" title="Reader options"><Ellipsis size={17} aria-hidden="true"/></summary>
-          <div className="pdfjs-options-popover"><button type="button" className="btn secondary small" onClick={changeViewer}><ExternalLink size={15} aria-hidden="true"/> Use browser viewer</button></div>
-        </details>}
-        <button type="button" className="btn secondary small pdf-close-reader" aria-label="Close" title="Close reader" onClick={onClose}><X size={16} aria-hidden="true"/></button>
-      </div>
+        </div>
+      </nav>
     </div>
     {usePdfJs ? <div className="pdfjs-toolbar-host" ref={setToolbarHost}/> :
       <div className="pdfjs-native-toolbar">
@@ -231,9 +274,8 @@ export function PdfWorkspace({ pdf, session, opening, items, course, resource, r
     <div className="pdf-reading-layout">
       <div className="pdf-document-panel">
         {pdfJsFailed&&<p className="pdfjs-fallback" role="status">PDF.js couldn’t display this document. The browser viewer is open.</p>}
-        {usePdfJs ? <div ref={panesRef} className={split ? 'pdfjs-panes is-split' : 'pdfjs-panes'}
-          style={split ? {'--pdf-split-first':`${splitPercent}fr`,'--pdf-split-second':`${100-splitPercent}fr`} as CSSProperties : undefined}>
-          {panes.map(tab=><PdfPane key={tab.url} pdf={tab} primary={tab.key===pdf.key}
+        {usePdfJs ? <div ref={panesRef} className={split ? 'pdfjs-panes is-split' : 'pdfjs-panes'}>
+          {panes.map((tab,index)=><PdfPane key={tab.url} id={split?`${workspaceId}-${index===0?'first':'second'}`:undefined} pdf={tab} primary={tab.key===pdf.key}
             toolbarHost={tab.key===pdf.key?toolbarHost:null}
             onPrimaryFailure={handlePdfJsFailure} onPage={onPage} onZoom={onZoom} onMark={onMark} onLoadMarks={onLoadMarks}/>)}
           {split&&<div className="pdfjs-split-divider" role="separator" tabIndex={0} aria-label="Resize PDF panes"
@@ -304,14 +346,14 @@ export function PdfWorkspace({ pdf, session, opening, items, course, resource, r
   </div>;
 }
 
-function PdfPane({ pdf, primary, toolbarHost, onPrimaryFailure, onPage, onZoom, onMark, onLoadMarks }: {
-  pdf: StudyPdf; primary: boolean; toolbarHost: HTMLDivElement|null; onPrimaryFailure: () => void;
+function PdfPane({ id, pdf, primary, toolbarHost, onPrimaryFailure, onPage, onZoom, onMark, onLoadMarks }: {
+  id?: string; pdf: StudyPdf; primary: boolean; toolbarHost: HTMLDivElement|null; onPrimaryFailure: () => void;
   onPage: Props['onPage']; onZoom: Props['onZoom']; onMark: Props['onMark']; onLoadMarks: Props['onLoadMarks'];
 }) {
   const [failed,setFailed] = useState(false);
   const fallback = useCallback(()=>setFailed(true),[]);
   useEffect(()=>{if(failed&&primary)onPrimaryFailure();},[failed,primary,onPrimaryFailure]);
-  return <div className="pdfjs-pane" data-active={primary} data-pdf-title={pdf.title}>
+  return <div id={id} className="pdfjs-pane" data-active={primary} data-pdf-title={pdf.title}>
     {failed ? <>
       <p className="pdfjs-fallback" role="status">PDF.js couldn’t display this document. The browser viewer is open.</p>
       <button type="button" className="btn secondary small" onClick={()=>setFailed(false)}>Retry PDF.js</button>

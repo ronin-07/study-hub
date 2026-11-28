@@ -39,6 +39,15 @@ test('open beside keeps the original PDF active and avoids selecting the same PD
   assert.equal(placePdf(session, 'exam', 'exam').split, null);
 });
 
+test('split starts in tab order and keeps the selected right PDF in place when replacing its partner', () => {
+  const tabs = [{ key: 'book' }, { key: 'lecture' }, { key: 'notes' }];
+  const session = { tabs, active: 'lecture', split: null, splitFirst: null, minimized: false };
+  const split = setPdfSplit(session, 'book');
+  assert.deepEqual([split.active, split.splitFirst, split.split], ['lecture', 'book', 'book']);
+  assert.deepEqual([setPdfSplit(split, 'notes').active, setPdfSplit(split, 'notes').splitFirst], ['lecture', 'notes']);
+  assert.deepEqual([setPdfSplit(session, 'notes').active, setPdfSplit(session, 'notes').splitFirst], ['lecture', 'lecture']);
+});
+
 test('zoom is stored by account and Drive PDF and restores both presets and numeric scales', t => {
   const values = new Map();
   const previous = globalThis.window;
