@@ -53,11 +53,11 @@
 .workspace-actions{display:flex;align-items:flex-start;flex-wrap:wrap;gap:7px}
 .resource-editor{margin-top:12px}
 .resource-row .btn{flex-shrink:0}
-.pdf-workspace{background:#18172a;color:#f8f7ff}
+.pdf-workspace{--pdf-study-width:310px;background:#18172a;color:#f8f7ff}
+.pdf-workspace.pdf-expanded{--pdf-study-width:0px}
 .pdf-workspace .pdf-file-title{display:flex;align-items:center;gap:9px;min-width:0;max-width:40%}
 .pdf-file-title span{font-size:.68rem;color:var(--muted);white-space:nowrap}
-.pdf-reading-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(265px,310px);flex:1;min-height:0}
-.pdf-expanded .pdf-reading-layout{grid-template-columns:minmax(0,1fr)}
+.pdf-reading-layout{display:grid;grid-template-columns:minmax(0,1fr) var(--pdf-study-width);flex:1;min-height:0}
 .pdf-document-panel{display:flex;flex-direction:column;min-width:0;min-height:0}
 .pdf-document-panel .pdf-guidance{padding:10px 14px;line-height:1.5}
 .pdf-document-scroll{min-height:0;flex:1;overflow:auto}
@@ -72,7 +72,7 @@
 .pdf-related{width:100%;background:var(--soft);border:1px solid var(--line);color:var(--text);display:flex;align-items:center;text-align:left;justify-content:space-between;gap:8px;padding:10px;margin:7px 0;border-radius:10px}
 .pdf-related span:first-child{font-size:.72rem;flex:1;min-width:0;overflow-wrap:anywhere}
 .pdf-zoom-label{color:var(--muted);font-size:.7rem;min-width:35px;text-align:center}
-@media(max-width:950px){.pdf-reading-layout{grid-template-columns:minmax(0,1fr) minmax(210px,260px)}.pdf-file-title span{display:none}}
+@media(max-width:950px){.pdf-workspace{--pdf-study-width:260px}.pdf-file-title span{display:none}}
 @media(max-width:690px){.pdf-reading-layout{grid-template-columns:1fr;grid-template-rows:minmax(50vh,1fr) auto}.pdf-study-side{max-height:32vh;border-left:0;border-top:1px solid var(--line);padding:12px}.pdf-actions{flex-wrap:wrap;justify-content:flex-end}.pdf-zoom-label{display:none}.pdf-topbar{flex-wrap:wrap}.pdf-workspace .pdf-file-title{max-width:100%}}
 .semester-chips{display:flex;flex-wrap:wrap;gap:9px;margin:14px 0}
 .semester-chip{display:flex;align-items:center;gap:7px;background:var(--soft);border:1px solid var(--line);border-radius:10px;padding:6px 9px}
@@ -1328,7 +1328,7 @@ html{font-size:18px}
   .planner-v05-task{padding-block:11px}
   .focus-card{padding:23px}
   .focus-settings{gap:10px;margin-bottom:14px}
-  .pdf-reading-layout{grid-template-columns:minmax(0,1fr) minmax(215px,280px)}
+  .pdf-workspace{--pdf-study-width:280px}
 }
 
 /* If the usable Study workspace is narrow, stack its cards rather than squeeze
@@ -1362,7 +1362,7 @@ html{font-size:18px}
   .topbar-datetime .topbar-date-section,.topbar-datetime-divider{display:none}
   .planner-classic-overview .planner-study-side-cards{grid-template-columns:minmax(0,1fr)}
   .home-side-column{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
-  .pdf-reading-layout{grid-template-columns:minmax(0,1fr) minmax(205px,235px)}
+  .pdf-workspace{--pdf-study-width:235px}
 }
 
 /* On phones and narrow tablets, avoid fixed desktop paddings and keep action

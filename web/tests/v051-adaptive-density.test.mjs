@@ -24,7 +24,7 @@ test('wide monitors retain original 18px typography and generous Study layout', 
   assert.match(laptop, /\.planner-classic-overview\{grid-template-columns:/);
   assert.match(laptop, /\.home-panel\{padding:16px/);
   assert.match(laptop, /\.focus-card\{padding:23px\}/);
-  assert.match(laptop, /\.pdf-reading-layout\{grid-template-columns:/);
+  assert.match(laptop, /\.pdf-workspace\{--pdf-study-width:/);
   assert.match(laptop, /\.planner-v05-shell\{padding:17px\}/);
   assert.match(laptop, /\.dialog\{padding:22px/);
 });
