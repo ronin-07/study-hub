@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyPdfMark, removePdf, safePdfLink, selectPdf } from '../lib/pdf-study.ts';
+import { applyPdfMark, normalizePdfZoom, placePdf, readPdfZoom, removePdf, safePdfLink, savePdfZoom, selectPdf } from '../lib/pdf-study.ts';
 
 test('a bookmark and note share a page without replacing each other', () => {
   const marks = applyPdfMark([], { page: 3, bookmarked: true });
@@ -27,4 +27,26 @@ test('document links allow ordinary destinations and reject active schemes', () 
   for (const url of ['javascript:alert(1)', 'data:text/plain,hi', 'file:///C:/test.pdf', '//example.test', null]) {
     assert.equal(safePdfLink(url), null);
   }
+});
+
+test('open beside keeps the original PDF active and avoids selecting the same PDF twice', () => {
+  const tabs = [{ key: 'exam' }, { key: 'solution' }];
+  const session = { tabs, active: 'exam', split: null, minimized: false };
+  assert.deepEqual(placePdf(session, 'solution', 'exam'), { ...session, split: 'solution' });
+  assert.deepEqual(placePdf(session, 'solution', 'missing'), { ...session, active: 'solution' });
+  assert.equal(placePdf(session, 'exam', 'exam').split, null);
+});
+
+test('zoom is stored by account and Drive PDF and restores both presets and numeric scales', t => {
+  const values = new Map();
+  const previous = globalThis.window;
+  globalThis.window = { localStorage: { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) } };
+  t.after(() => { if (previous === undefined) delete globalThis.window; else globalThis.window = previous; });
+  assert.equal(readPdfZoom('owner', 'slides'), 'page-width');
+  savePdfZoom('owner', 'slides', 'page-fit');
+  savePdfZoom('owner', 'book', '1.50001');
+  assert.equal(readPdfZoom('owner', 'slides'), 'page-fit');
+  assert.equal(readPdfZoom('owner', 'book'), '1.5');
+  assert.equal(readPdfZoom('someone-else', 'slides'), 'page-width');
+  assert.equal(normalizePdfZoom('5'), null);
 });

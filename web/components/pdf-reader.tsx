@@ -1,11 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { Bookmark, ChevronLeft, ChevronRight, ListTree, LoaderCircle, Minus, PanelLeft, Plus, Search } from 'lucide-react';
+import { Bookmark, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ListTree, LoaderCircle, Minus, PanelLeft, Plus, Search } from 'lucide-react';
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 import type { EventBus, PDFLinkService, PDFViewer } from 'pdfjs-dist/web/pdf_viewer.mjs';
 import type { PdfPageMark } from '@/lib/types';
-import { maxPdfPage, safePdfLink, type PdfMarkChange, type StudyPdf } from '@/lib/pdf-study';
+import { defaultPdfZoom, maxPdfPage, maxPdfZoom, minPdfZoom, normalizePdfZoom, safePdfLink, type PdfMarkChange, type StudyPdf } from '@/lib/pdf-study';
 import 'pdfjs-dist/web/pdf_viewer.css';
 import './pdf-reader.css';
 import { PdfThumbnails } from './pdf-thumbnails';
@@ -16,6 +16,8 @@ type Props = {
   url: string;
   title: string;
   initialPage: number;
+  initialZoom: string;
+  onZoom: (zoom: string) => void;
   marks: PdfPageMark[];
   marksStatus: StudyPdf['marksStatus'];
   onLoadMarks: () => void;
@@ -28,24 +30,27 @@ type ViewerRuntime = { events: EventBus; viewer: PDFViewer; links: PDFLinkServic
 type Matches = { current: number; total: number };
 const assets = '/pdfjs/';
 
-export function PdfReader({ url, title, initialPage, marks, marksStatus, onLoadMarks, autoFocus = true, onPage, onMark, onFailure }: Props) {
+export function PdfReader({ url, title, initialPage, initialZoom, onZoom, marks, marksStatus, onLoadMarks, autoFocus = true, onPage, onMark, onFailure }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const pageSurface = useRef<HTMLDivElement>(null);
   const searchInput = useRef<HTMLInputElement>(null);
   const runtime = useRef<ViewerRuntime | null>(null);
   const startPage = useRef(initialPage);
+  const startZoom = useRef(initialZoom);
+  const onZoomRef = useRef(onZoom);
   const focusAtOpen = useRef(autoFocus);
   const lastReportedPage = useRef(initialPage);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [page, setPage] = useState(initialPage);
   const [draft, setDraft] = useState(String(initialPage));
-  const [scale, setScale] = useState('page-width');
+  const [scale, setScale] = useState(initialZoom);
   const [scalePercent, setScalePercent] = useState(100);
   const [panel, setPanel] = useState<'pages' | 'outline' | 'marks' | null>(null);
   const [query, setQuery] = useState('');
   const [findStatus, setFindStatus] = useState('');
   const [matches, setMatches] = useState<Matches>({ current: 0, total: 0 });
   const [firstPaint, setFirstPaint] = useState(false);
+  useEffect(() => { onZoomRef.current = onZoom; }, [onZoom]);
 
   useEffect(() => {
     const scrolling = container.current;
@@ -56,6 +61,27 @@ export function PdfReader({ url, title, initialPage, marks, marksStatus, onLoadM
     let task: PDFDocumentLoadingTask | undefined;
     let viewer: PDFViewer | undefined;
     let painted = false;
+    let resizeTimer = 0;
+    const resize = new ResizeObserver(() => {
+      window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(() => {
+        if (!viewer?.pagesCount) return;
+        const preset = viewer.currentScaleValue;
+        if (preset === 'page-width' || preset === 'page-fit') viewer.currentScaleValue = preset;
+      }, 80);
+    });
+    resize.observe(scrolling, { box: 'border-box' });
+    scrolling.addEventListener('wheel', event => {
+      if ((!event.ctrlKey && !event.metaKey) || !event.deltaY) return;
+      event.preventDefault();
+      if (!viewer || !painted) return;
+      const units = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? scrolling.clientHeight : 1;
+      const delta = Math.min(175, Math.max(-175, event.deltaY * units));
+      const current = viewer.currentScale;
+      if ((delta < 0 && current >= maxPdfZoom) || (delta > 0 && current <= minPdfZoom)) return;
+      const next = Math.min(maxPdfZoom, Math.max(minPdfZoom, current * Math.exp(-delta / 640)));
+      viewer.updateScale({ scaleFactor: next / current, origin: [event.clientX, event.clientY], drawingDelay: 90 });
+    }, { passive: false, signal });
     const fallback = () => { if (!signal.aborted) onFailure(); };
     const timer = window.setTimeout(fallback, 25000);
     if (focusAtOpen.current) scrolling.focus({ preventScroll: true });
@@ -94,10 +120,13 @@ export function PdfReader({ url, title, initialPage, marks, marksStatus, onLoadM
       }, { signal });
       events.on('scalechanging', ({ scale, presetValue }: { scale: number; presetValue?: string }) => {
         setScalePercent(Math.round(scale * 100));
-        setScale(presetValue || String(scale));
+        const next = presetValue || String(scale);
+        setScale(next);
+        const remembered = normalizePdfZoom(next);
+        if (remembered) onZoomRef.current(remembered);
       }, { signal });
       events.on('pagesinit', () => {
-        activeViewer.currentScaleValue = 'page-width';
+        activeViewer.currentScaleValue = startZoom.current || defaultPdfZoom;
         const target = Math.min(activeViewer.pagesCount, Math.max(1, startPage.current));
         activeViewer.currentPageNumber = target;
         setPage(target);
@@ -142,6 +171,8 @@ export function PdfReader({ url, title, initialPage, marks, marksStatus, onLoadM
     void load().catch(fallback);
     return () => {
       window.clearTimeout(timer);
+      window.clearTimeout(resizeTimer);
+      resize.disconnect();
       lifetime.abort();
       runtime.current = null;
       viewer?.setDocument(null);
@@ -183,11 +214,19 @@ export function PdfReader({ url, title, initialPage, marks, marksStatus, onLoadM
     });
   }
 
+  function chooseZoom(zoom: string) {
+    const viewer = runtime.current?.viewer;
+    if (!viewer?.pagesCount) return;
+    viewer.currentScaleValue = zoom;
+    setScale(zoom);
+    onZoomRef.current(zoom);
+  }
+
   function changeZoom(direction: -1 | 1) {
     const viewer = runtime.current?.viewer;
     if (!viewer?.pagesCount) return;
     const next = viewer.currentScale * (direction > 0 ? 1.2 : 1 / 1.2);
-    viewer.currentScaleValue = String(Number(Math.max(.25, Math.min(4, next)).toFixed(2)));
+    chooseZoom(String(Number(Math.max(minPdfZoom, Math.min(maxPdfZoom, next)).toFixed(2))));
   }
 
   function shortcuts(event: KeyboardEvent<HTMLElement>) {
@@ -199,7 +238,7 @@ export function PdfReader({ url, title, initialPage, marks, marksStatus, onLoadM
       searchInput.current?.select();
     } else if (firstPaint && command && ['=', '+', '-', '0'].includes(key)) {
       event.preventDefault();
-      if (key === '0' && runtime.current) runtime.current.viewer.currentScaleValue = 'page-width';
+      if (key === '0') chooseZoom(defaultPdfZoom);
       else changeZoom(key === '-' ? -1 : 1);
     } else if (firstPaint && event.target === container.current && !command && (key === 'arrowleft' || key === 'arrowright')) {
       event.preventDefault();
@@ -209,18 +248,20 @@ export function PdfReader({ url, title, initialPage, marks, marksStatus, onLoadM
 
   return <section className="pdfjs-reader" aria-label={autoFocus ? 'PDF.js reader' : `PDF.js reader for ${title}`} onKeyDown={shortcuts}>
     <div className="pdfjs-toolbar" aria-label="PDF controls">
-      <button type="button" className="btn secondary small" disabled={!firstPaint} aria-expanded={panel === 'pages'} onClick={() => setPanel(value => value === 'pages' ? null : 'pages')}>
-        <PanelLeft size={15} aria-hidden="true"/> Pages
+      <div className="pdfjs-panel-tools" role="group" aria-label="Document panels">
+      <button type="button" className="btn secondary small" aria-label="Pages" title="Pages" disabled={!firstPaint} aria-expanded={panel === 'pages'} onClick={() => setPanel(value => value === 'pages' ? null : 'pages')}>
+        <PanelLeft size={15} aria-hidden="true"/><span>Pages</span>
       </button>
-      <button type="button" className="btn secondary small" disabled={!firstPaint} aria-expanded={panel === 'outline'} onClick={() => setPanel(value => value === 'outline' ? null : 'outline')}>
-        <ListTree size={15} aria-hidden="true"/> Outline
+      <button type="button" className="btn secondary small" aria-label="Outline" title="Outline" disabled={!firstPaint} aria-expanded={panel === 'outline'} onClick={() => setPanel(value => value === 'outline' ? null : 'outline')}>
+        <ListTree size={15} aria-hidden="true"/><span>Outline</span>
       </button>
-      <button type="button" className="btn secondary small" disabled={!firstPaint} aria-expanded={panel === 'marks'} onClick={() => {
+      <button type="button" className="btn secondary small" aria-label="Bookmarks &amp; notes" title="Bookmarks &amp; notes" disabled={!firstPaint} aria-expanded={panel === 'marks'} onClick={() => {
         setPanel(panel === 'marks' ? null : 'marks');
         if (panel !== 'marks' && marksStatus === 'idle') onLoadMarks();
       }}>
-        <Bookmark size={15} aria-hidden="true"/> Bookmarks &amp; notes
+        <Bookmark size={15} aria-hidden="true"/><span>Bookmarks &amp; notes</span>
       </button>
+      </div>
       <form className="pdfjs-page-controls" aria-label="Page navigation" onSubmit={event => {
         event.preventDefault();
         const value = Number(draft);
@@ -228,19 +269,25 @@ export function PdfReader({ url, title, initialPage, marks, marksStatus, onLoadM
         else setDraft(String(page));
       }}>
         <button type="button" className="btn secondary small" aria-label="Previous page" disabled={!firstPaint || page <= 1} onClick={() => go(page - 1)}><ChevronLeft size={15}/></button>
-        <input aria-label="Current PDF page" type="text" inputMode="numeric" disabled={!firstPaint} value={draft} onChange={event => setDraft(event.target.value)} onBlur={() => setDraft(String(page))}/>
+        <input aria-label="Current PDF page" type="text" inputMode="numeric" disabled={!firstPaint} value={draft}
+          style={{ width: `calc(${Math.min(5, Math.max(3, draft.length))}ch + 10px)` }}
+          onChange={event => setDraft(event.target.value)} onBlur={() => setDraft(String(page))}/>
         <span aria-label={pdf ? `of ${pdf.numPages} pages` : undefined}>/ {pdf?.numPages ?? '–'}</span>
         <button type="button" className="btn secondary small" aria-label="Next page" disabled={!firstPaint || page >= (pdf?.numPages ?? 0)} onClick={() => go(page + 1)}><ChevronRight size={15}/></button>
       </form>
       <div className="pdfjs-zoom" role="group" aria-label="PDF zoom">
         <button type="button" className="btn secondary small" aria-label="Zoom out" disabled={!firstPaint || scalePercent <= 25} onClick={() => changeZoom(-1)}><Minus size={14}/></button>
-        <select aria-label="Zoom level" value={scale} disabled={!firstPaint} onChange={event => { if (runtime.current) runtime.current.viewer.currentScaleValue = event.target.value; }}>
-          <option value="page-width">Fit width</option><option value="page-fit">Fit page</option><option value="1">100%</option>
-          {!['page-width', 'page-fit', '1'].includes(scale) && <option value={scale}>{scalePercent}%</option>}
-        </select>
+        <span className="pdfjs-select">
+          <select aria-label="Zoom level" value={scale} disabled={!firstPaint} onChange={event => chooseZoom(event.target.value)}>
+            <option value="page-width">Fit width</option><option value="page-fit">Fit page</option><option value="1">100%</option>
+            {!['page-width', 'page-fit', '1'].includes(scale) && <option value={scale}>{scalePercent}%</option>}
+          </select>
+          <ChevronDown size={13} aria-hidden="true"/>
+        </span>
         <button type="button" className="btn secondary small" aria-label="Zoom in" disabled={!firstPaint || scalePercent >= 400} onClick={() => changeZoom(1)}><Plus size={14}/></button>
       </div>
       <form className="pdfjs-find" role="search" aria-label="Find in PDF" onSubmit={event => { event.preventDefault(); find(); }}>
+        <Search className="pdfjs-find-icon" size={15} aria-hidden="true"/>
         <input ref={searchInput} type="search" aria-label="Find in PDF" placeholder="Find in PDF" value={query} disabled={!firstPaint}
           onChange={event => {
             runtime.current?.events.dispatch('findbarclose', { source: searchInput.current });
@@ -249,9 +296,9 @@ export function PdfReader({ url, title, initialPage, marks, marksStatus, onLoadM
             setMatches({ current: 0, total: 0 });
           }}
           onKeyDown={event => { if (event.key === 'Enter' && event.shiftKey) { event.preventDefault(); find(true); } }}/>
-        <button type="button" className="btn secondary small" aria-label="Previous match" disabled={!firstPaint || !query.trim()} onClick={() => find(true)}><ChevronLeft size={15}/></button>
-        <button type="submit" className="btn secondary small" aria-label="Find next match" disabled={!firstPaint || !query.trim()}><Search size={15}/></button>
         <output aria-live="polite">{findStatus || (matches.total ? `${matches.current} / ${matches.total}` : '')}</output>
+        <button type="button" className="btn secondary small" aria-label="Previous match" disabled={!firstPaint || !query.trim()} onClick={() => find(true)}><ChevronUp size={15}/></button>
+        <button type="submit" className="btn secondary small" aria-label="Find next match" disabled={!firstPaint || !query.trim()}><ChevronDown size={15}/></button>
       </form>
     </div>
     <div className="pdfjs-stage">
