@@ -21,6 +21,7 @@ client_secret*.json
 # Local state and generated files
 **/node_modules/
 **/.next/
+/web/public/pdfjs/
 **/__pycache__/
 **/.pytest_cache/
 **/.venv/

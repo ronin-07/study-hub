@@ -1,10 +1,11 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ArrowLeft, ArrowRight, BookOpen, ChevronDown, ExternalLink, FileText, LoaderCircle, PanelRightClose, PanelRightOpen, RotateCcw, Timer, X } from 'lucide-react';
 import type { Course, Item, Resource } from '@/lib/types';
 import { activityResources, isExamResource, readerMaterials } from '@/lib/resource-links';
 import { examName } from '@/lib/exam-prep';
 import { sortWeeklyActivities } from '@/lib/task-view';
+import { PdfReader } from './pdf-reader';
 
 type Pdf = { url: string; title: string; page: number; resourceId?: string; courseId?: string; weekNumber?: number };
 type Props = {
@@ -20,6 +21,13 @@ const materialLabels: Record<Resource['kind'],string> = {
   exam_paper:'Question paper',exam_solution:'Solution',other:'Resource',
 };
 const materialPreviewCount=4;
+const pdfReaderPreference = 'studyhub.pdfjs-reader';
+
+function prefersPdfJs() {
+  try { return window.localStorage.getItem(pdfReaderPreference) === 'enabled'; }
+  catch { return false; }
+}
+
 /** Native browser PDF iframe: preserves PDF annotations/links in original PDFs.
  * The saved page is explicit; native PDF scrolling is not accessible across the iframe.
  */
@@ -30,6 +38,23 @@ export function PdfWorkspace({ pdf, items, course, resource, resources, pendingI
   const [frameSlow,setFrameSlow] = useState(false);
   const [frameError,setFrameError] = useState(false);
   const [frameRevision,setFrameRevision] = useState(0);
+  const [pdfJs,setPdfJs] = useState(prefersPdfJs);
+  const [pdfJsFailed,setPdfJsFailed] = useState(false);
+  const usePdfJs = pdfJs && !pdfJsFailed;
+  const handlePdfJsFailure = useCallback(() => {
+    setFrameReady(false);
+    setPdfJsFailed(true);
+  }, []);
+  const changeViewer = () => {
+    const enabled = !usePdfJs;
+    setPdfJs(enabled);
+    setPdfJsFailed(false);
+    setFrameReady(false);
+    setFrameSlow(false);
+    setFrameError(false);
+    try { window.localStorage.setItem(pdfReaderPreference, enabled ? 'enabled' : 'disabled'); }
+    catch { /* The choice still applies to this open reader. */ }
+  };
   useEffect(()=>setDraft(String(pdf.page)),[pdf.page]);
   useEffect(()=>{
     if(window.matchMedia('(max-width: 690px)').matches)setStudyOpen(false);
@@ -38,10 +63,10 @@ export function PdfWorkspace({ pdf, items, course, resource, resources, pendingI
     // The onLoad event can be quicker than a passive effect for small documents.
     // Do not reset an already-ready frame after onLoad.
     setFrameSlow(false);setFrameError(false);
-    if(frameReady)return;
+    if(frameReady||usePdfJs)return;
     const timer=window.setTimeout(()=>setFrameSlow(true),20000);
     return ()=>window.clearTimeout(timer);
-  },[pdf.url,frameRevision,frameReady]);
+  },[pdf.url,frameRevision,frameReady,usePdfJs]);
   useEffect(()=>{
     const handler=(event:KeyboardEvent)=>{if(event.key==='Escape')onClose();};
     document.addEventListener('keydown',handler);
@@ -75,18 +100,24 @@ export function PdfWorkspace({ pdf, items, course, resource, resources, pendingI
     <div className="pdf-topbar">
       <div className="pdf-file-title"><BookOpen size={18} aria-hidden="true"/><div><strong title={pdf.title}>{title}</strong><span>{course?`${course.code} · ${context}`:context}</span></div></div>
       <div className="pdf-actions">
-        <div className="pdf-bookmark" role="group" aria-label="PDF bookmark">
+        {!usePdfJs&&<div className="pdf-bookmark" role="group" aria-label="PDF bookmark">
           <button type="button" className="btn secondary small" title="Previous bookmarked page" aria-label="Previous bookmarked page" disabled={pdf.page<=1} onClick={()=>onPage(pdf.page-1)}><ArrowLeft size={15}/></button>
           <label>{pdf.resourceId?'Saved page':'Page'} <input aria-label={pdf.resourceId?'Bookmarked PDF page':'PDF page'} type="number" min={1} max={20000} value={draft} onChange={e=>setDraft(e.target.value)} onBlur={savePage} onKeyDown={e=>{if(e.key==='Enter')e.currentTarget.blur();}}/></label>
           <button type="button" className="btn secondary small" title="Next bookmarked page" aria-label="Next bookmarked page" disabled={pdf.page>=20000} onClick={()=>onPage(pdf.page+1)}><ArrowRight size={15}/></button>
-        </div>
+        </div>}
+        <button type="button" className="btn secondary small pdf-viewer-choice" onClick={changeViewer}>
+          {usePdfJs ? 'Browser viewer' : pdfJsFailed ? 'Retry PDF.js' : 'Try PDF.js'}
+        </button>
         <button type="button" className="btn secondary small pdf-toggle-study" title={studyOpen?'Hide Study Mode':'Show Study Mode'} aria-label={studyOpen?'Hide Study Mode sidebar':'Show Study Mode sidebar'} aria-expanded={studyOpen} onClick={()=>setStudyOpen(value=>!value)}>{studyOpen?<PanelRightClose size={17}/>:<PanelRightOpen size={17}/>}<span>Study panel</span></button>
         <button type="button" className="btn secondary small pdf-close-reader" onClick={onClose}><X size={16} aria-hidden="true"/> Close</button>
       </div>
     </div>
     <div className="pdf-reading-layout">
       <div className="pdf-document-panel">
-        <div className="pdf-document-scroll">
+        {pdfJsFailed&&<p className="pdfjs-fallback" role="status">PDF.js couldn’t display this document. The browser viewer is open.</p>}
+        {usePdfJs ? <PdfReader key={pdf.url} url={pdf.url} title={pdf.title} initialPage={pdf.page}
+          savedPage={pdf.resourceId ? pdf.page : undefined} onSavePage={onPage} onFailure={handlePdfJsFailure}/>
+        : <div className="pdf-document-scroll">
           <div className="pdf-frame-wrap">
             <iframe key={`${pdf.url}-${pdf.page}-${frameRevision}`} title={pdf.title} src={`${pdf.url}#page=${pdf.page}`} className="pdf-frame"
               onLoad={()=>{setFrameReady(true);setFrameError(false);}} onError={()=>{setFrameError(true);setFrameReady(false);}}/>
@@ -97,12 +128,12 @@ export function PdfWorkspace({ pdf, items, course, resource, resources, pendingI
               <div className="pdf-frame-loading-actions"><button type="button" className="btn secondary small" onClick={()=>{setFrameReady(false);setFrameSlow(false);setFrameError(false);setFrameRevision(value=>value+1);}}><RotateCcw size={15}/> Retry viewer</button><button type="button" className="btn secondary small" onClick={onClose}>Close</button></div>
             </div>}
           </div>
-        </div>
+        </div>}
       </div>
       {studyOpen&&<aside className="pdf-study-side" aria-label="Study activity sidebar">
         <div className="pdf-side-block pdf-study-header">
           <h3>Study panel</h3>
-          {pdf.resourceId&&<p>Enter a PDF page number in Saved page to return to it later.</p>}
+          {pdf.resourceId&&<p>{usePdfJs ? 'Select Save page to return to the current page later.' : 'Enter a PDF page number in Saved page to return to it later.'}</p>}
           <button type="button" className="btn primary full" disabled={course?.archived} onClick={()=>onFocus(focusItem)}><Timer size={16} aria-hidden="true"/> Start Focus</button>
           {focusItem&&<small>Next activity · {focusItem.title}</small>}
         </div>
