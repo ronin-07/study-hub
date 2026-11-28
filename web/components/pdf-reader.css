@@ -1,5 +1,4 @@
 .pdfjs-reader {
-  container-type: inline-size;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -7,6 +6,7 @@
   min-width: 0;
 }
 
+.pdfjs-toolbar-host { container-type: inline-size; flex: none; }
 .pdfjs-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -14,6 +14,8 @@
   gap: 7px;
   padding: 8px 12px;
   color: var(--text);
+  font-size: .72rem;
+  line-height: 1.35;
   background: var(--paper);
   border-bottom: 1px solid var(--line);
 }
@@ -27,7 +29,7 @@
 }
 
 .pdfjs-panel-tools { flex-wrap: wrap; }
-.pdfjs-toolbar :is(.pdfjs-page-controls,.pdfjs-zoom,.pdfjs-find), .pdfjs-split-picker {
+.pdfjs-toolbar :is(.pdfjs-page-controls,.pdfjs-zoom,.pdfjs-find) {
   min-height: 36px;
   border: 1px solid var(--line);
   border-radius: 9px;
@@ -43,7 +45,7 @@
 .pdfjs-toolbar .btn:where(:hover:not(:disabled)), .pdfjs-panel-tools .btn[aria-expanded=true] {
   background: color-mix(in srgb, #83b997 18%, var(--soft));
 }
-.pdfjs-toolbar :is(input,select), .pdfjs-split-picker select {
+.pdfjs-toolbar :is(input,select) {
   min-height: 34px;
   min-width: 0;
   padding: 0 5px;
@@ -53,12 +55,11 @@
   border-radius: 5px;
   font: inherit;
 }
-.pdfjs-toolbar :is(.pdfjs-page-controls,.pdfjs-zoom,.pdfjs-find):has(:is(input,select):focus),
-.pdfjs-split-picker:focus-within {
+.pdfjs-toolbar :is(.pdfjs-page-controls,.pdfjs-zoom,.pdfjs-find):has(:is(input,select):focus) {
   border-color: #83b997;
   box-shadow: 0 0 0 1px #83b997;
 }
-.pdfjs-toolbar :is(input,select):focus-visible, .pdfjs-split-picker select:focus-visible { outline: none !important; }
+.pdfjs-toolbar :is(input,select):focus-visible { outline: none !important; }
 .pdfjs-select { display: flex; position: relative; min-width: 0; }
 .pdfjs-select select { appearance: none; padding-inline-end: 21px; }
 .pdfjs-select svg { position: absolute; inset-inline-end: 5px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--muted); }
@@ -66,8 +67,8 @@
 
 .pdfjs-page-controls input { width: 35px; text-align: center; font-variant-numeric: tabular-nums; }
 .pdfjs-page-controls span { font-variant-numeric: tabular-nums; }
-.pdfjs-page-controls span, .pdfjs-find output { white-space: nowrap; font-size: .75rem; color: var(--muted); }
-.pdfjs-find { flex: 1 1 210px; margin-inline-start: auto; padding-inline-start: 8px; }
+.pdfjs-page-controls span, .pdfjs-find output { white-space: nowrap; color: var(--muted); }
+.pdfjs-find { flex: 1 1 180px; max-width: 360px; margin-inline-start: auto; padding-inline-start: 8px; }
 .pdfjs-find-icon { flex: none; color: var(--muted); }
 .pdfjs-find input { flex: 1; width: 0; }
 .pdfjs-find input::placeholder { color: var(--muted); opacity: 1; }
@@ -126,27 +127,40 @@
   border-bottom: 1px solid var(--line);
 }
 
+.pdfjs-reader-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
 .pdfjs-tab-list { display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: center; min-width: 0; gap: 3px; }
 .pdfjs-tab { display: flex; min-width: 0; border: 1px solid transparent; border-radius: 8px; }
 .pdfjs-tab[data-active=true] { background: var(--paper); border-color: var(--line); box-shadow: inset 0 -2px #83b997; }
 .pdfjs-tab .btn, .pdfjs-tab-list .pdfjs-open-tab { min-height: 34px; border-color: transparent; background: transparent; box-shadow: none; }
 .pdfjs-tab button:first-child { display: flex; min-width: 0; justify-content: flex-start; }
-.pdfjs-tab button:first-child span {
+.pdfjs-tab-text { display: grid; min-width: 0; text-align: start; gap: 2px; }
+.pdfjs-tab-text strong, .pdfjs-tab-text small {
   max-width: min(220px, 58vw);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.pdfjs-tab-text small { color: var(--muted); font-size: .64rem; }
+.pdfjs-tab[data-active=true] button:first-child { min-height: 38px; }
 .pdfjs-tab svg { flex: none; }
-.pdfjs-tabs label { display: flex; align-items: center; gap: 6px; padding-inline-start: 8px; font-size: .78rem; white-space: nowrap; }
-.pdfjs-tabs select { max-width: min(225px, 56vw); }
+.pdfjs-tabs :is(button,summary):focus-visible {
+  outline: 2px solid #83b997 !important;
+  outline-offset: -2px !important;
+}
 
-.pdf-workspace .pdf-file-title .pdfjs-file-icon { display: grid; place-items: center; flex: 0 0 33px; height: 33px; border-radius: 8px; color: var(--text); background: color-mix(in srgb,#83b997 20%,var(--soft)); }
 .pdfjs-options { position: relative; }
 .pdfjs-options summary { list-style: none; }
 .pdfjs-options summary::-webkit-details-marker { display: none; }
 .pdf-workspace .pdf-toggle-study[aria-expanded=true] { background: color-mix(in srgb,#83b997 18%,var(--soft)); }
 .pdfjs-options-popover { padding: 5px; position: absolute; z-index: 3; top: calc(100% + 5px); inset-inline-end: 0; border: 1px solid var(--line); border-radius: 9px; background: var(--paper); box-shadow: 0 8px 18px #20162137; white-space: nowrap; }
+.pdfjs-split-picker .pdfjs-options-popover { display: grid; gap: 3px; min-width: 100%; max-width: min(270px, 84vw); }
+.pdfjs-split-picker .pdfjs-options-popover button { justify-content: space-between; min-width: 0; text-align: start; }
+.pdfjs-split-picker .pdfjs-options-popover button span { overflow: hidden; text-overflow: ellipsis; }
+.pdfjs-split-picker .pdfjs-options-popover button svg { flex: none; color: #83b997; }
+.pdfjs-split-picker .pdfjs-options-popover button[aria-pressed=true] { background: color-mix(in srgb,#83b997 22%,var(--paper)); }
+.pdfjs-split-state { color: var(--muted); }
+.pdfjs-native-toolbar { padding: 6px 12px; font-size: .72rem; border-bottom: 1px solid var(--line); background: var(--paper); }
+.pdfjs-native-toolbar input { width: 48px; text-align: center; font-size: inherit; color: var(--text); background: var(--soft); border: 1px solid var(--line); border-radius: 7px; }
 .pdf-related-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .pdf-related-row .pdf-related { flex: 1; min-width: 0; }
 .pdf-related-row .pdf-open-beside { flex: none; padding-inline: 6px; }
@@ -158,7 +172,8 @@
 .pdfjs-split-divider::after { content: ''; width: 3px; height: 32px; border-radius: 6px; background: var(--muted); }
 .pdfjs-split-divider:is(:hover,:focus-visible,:active) { background: color-mix(in srgb,#83b997 25%,var(--soft)); }
 .pdfjs-split-divider:focus-visible { outline-offset: -2px; }
-.pdfjs-pane > h3 { margin: 0; padding: 6px 12px; color: var(--text); background: var(--paper); overflow-wrap: anywhere; font-size: .85rem; }
+.pdfjs-panes.is-split .pdfjs-pane { border-block-start: 2px solid transparent; }
+.pdfjs-panes.is-split .pdfjs-pane[data-active=true] { border-block-start-color: #83b997; }
 .pdfjs-split-fallback { border: 0; width: 100%; flex: 1; min-height: 0; }
 
 .pdfjs-outline, .pdfjs-marks {
@@ -185,15 +200,17 @@
 
 @media (max-width: 690px) {
   .pdfjs-toolbar { gap: 5px; padding: 5px 8px; }
-  .pdfjs-toolbar :is(input,select) { font-size: 16px; }
   .pdfjs-thumbnails { flex-basis: 88px; }
-  .pdf-workspace .pdf-viewer-choice { grid-column: 1; grid-row: 3; justify-self: start; }
-  .pdf-workspace .pdfjs-options { grid-column: 1; grid-row: 2; justify-self: start; }
-  .pdfjs-options-popover { inset-inline: 0 auto; }
+  .pdfjs-tabs { padding: 6px 8px; }
+  .pdfjs-split-picker .pdfjs-options-popover { inset-inline: 0 auto; }
   .pdfjs-panes.is-split { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0,var(--pdf-split-first,1fr)) 14px minmax(0,var(--pdf-split-second,1fr)); }
   .pdfjs-split-divider { grid-area: 2 / 1; cursor: row-resize; }
   .pdfjs-split-divider::after { width: 32px; height: 3px; }
   .pdfjs-outline, .pdfjs-marks { flex-basis: 130px; }
+}
+
+@media (max-width: 690px) and (pointer: coarse) {
+  .pdfjs-toolbar input, .pdfjs-native-toolbar input { font-size: 16px; }
 }
 
 @container (max-width: 415px) {
