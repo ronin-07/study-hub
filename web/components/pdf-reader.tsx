@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { Bookmark, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ListTree, LoaderCircle, Minus, PanelLeft, Plus, Search } from 'lucide-react';
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 import { createPortal } from 'react-dom';
@@ -19,6 +19,7 @@ type Props = {
   title: string;
   initialPage: number;
   initialZoom: string;
+  compact?: boolean;
   onZoom: (zoom: string) => void;
   marks: PdfPageMark[];
   marksStatus: StudyPdf['marksStatus'];
@@ -32,15 +33,17 @@ type ViewerRuntime = { events: EventBus; viewer: PDFViewer; links: PDFLinkServic
 type Matches = { current: number; total: number };
 const assets = '/pdfjs/';
 
-export function PdfReader({ toolbarHost, url, title, initialPage, initialZoom, onZoom, marks, marksStatus, onLoadMarks, autoFocus = true, onPage, onMark, onFailure }: Props) {
+export function PdfReader({ toolbarHost, url, title, initialPage, initialZoom, compact = false, onZoom, marks, marksStatus, onLoadMarks, autoFocus = true, onPage, onMark, onFailure }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const pageSurface = useRef<HTMLDivElement>(null);
   const searchInput = useRef<HTMLInputElement>(null);
   const runtime = useRef<ViewerRuntime | null>(null);
   const startPage = useRef(initialPage);
-  const startZoom = useRef(initialZoom);
+  const fullZoom = useRef(initialZoom);
+  const compactRef = useRef(compact);
+  const modePage = useRef<number | null>(null);
   const onZoomRef = useRef(onZoom);
-  const focusAtOpen = useRef(autoFocus);
+  const focusAtOpen = useRef(autoFocus && !compact);
   const lastReportedPage = useRef(initialPage);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [page, setPage] = useState(initialPage);
@@ -53,6 +56,29 @@ export function PdfReader({ toolbarHost, url, title, initialPage, initialZoom, o
   const [matches, setMatches] = useState<Matches>({ current: 0, total: 0 });
   const [firstPaint, setFirstPaint] = useState(false);
   useEffect(() => { onZoomRef.current = onZoom; }, [onZoom]);
+  const restoreModePage = useCallback(() => {
+    const target = modePage.current;
+    const viewer = runtime.current?.viewer;
+    if (target === null || !viewer?.pagesCount) return;
+    modePage.current = null;
+    viewer.currentPageNumber = target;
+    setPage(target);
+    setDraft(String(target));
+  }, []);
+
+  useLayoutEffect(() => {
+    if (compactRef.current === compact) return;
+    compactRef.current = compact;
+    const viewer = runtime.current?.viewer;
+    if (!viewer?.pagesCount) return;
+    const target = modePage.current ?? viewer.currentPageNumber;
+    modePage.current = target;
+    // Fit the mini-reader without overwriting the document's saved full-size zoom.
+    viewer.currentScaleValue = compact ? defaultPdfZoom : fullZoom.current;
+    viewer.currentPageNumber = target;
+    const settle = window.setTimeout(restoreModePage, 380);
+    return () => window.clearTimeout(settle);
+  }, [compact, restoreModePage]);
 
   useEffect(() => {
     const scrolling = container.current;
@@ -70,13 +96,14 @@ export function PdfReader({ toolbarHost, url, title, initialPage, initialZoom, o
         if (!viewer?.pagesCount) return;
         const preset = viewer.currentScaleValue;
         if (preset === 'page-width' || preset === 'page-fit') viewer.currentScaleValue = preset;
+        restoreModePage();
       }, 80);
     });
     resize.observe(scrolling, { box: 'border-box' });
     scrolling.addEventListener('wheel', event => {
       if ((!event.ctrlKey && !event.metaKey) || !event.deltaY) return;
       event.preventDefault();
-      if (!viewer || !painted) return;
+      if (!viewer || !painted || compactRef.current) return;
       const units = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? scrolling.clientHeight : 1;
       const delta = Math.min(175, Math.max(-175, event.deltaY * units));
       const current = viewer.currentScale;
@@ -117,6 +144,7 @@ export function PdfReader({ toolbarHost, url, title, initialPage, initialZoom, o
       links.setViewer(activeViewer);
       runtime.current = { events, viewer: activeViewer, links };
       events.on('pagechanging', ({ pageNumber }: { pageNumber: number }) => {
+        if (modePage.current !== null) return;
         setPage(pageNumber);
         setDraft(String(pageNumber));
       }, { signal });
@@ -125,10 +153,13 @@ export function PdfReader({ toolbarHost, url, title, initialPage, initialZoom, o
         const next = presetValue || String(scale);
         setScale(next);
         const remembered = normalizePdfZoom(next);
-        if (remembered) onZoomRef.current(remembered);
+        if (remembered && !compactRef.current) {
+          fullZoom.current = remembered;
+          onZoomRef.current(remembered);
+        }
       }, { signal });
       events.on('pagesinit', () => {
-        activeViewer.currentScaleValue = startZoom.current || defaultPdfZoom;
+        activeViewer.currentScaleValue = compactRef.current ? defaultPdfZoom : fullZoom.current || defaultPdfZoom;
         const target = Math.min(activeViewer.pagesCount, Math.max(1, startPage.current));
         activeViewer.currentPageNumber = target;
         setPage(target);
@@ -177,11 +208,12 @@ export function PdfReader({ toolbarHost, url, title, initialPage, initialZoom, o
       resize.disconnect();
       lifetime.abort();
       runtime.current = null;
+      modePage.current = null;
       viewer?.setDocument(null);
       void viewer?.l10n?.destroy().catch(() => {});
       if (task) void task.destroy().catch(() => {});
     };
-  }, [url, onFailure]);
+  }, [url, onFailure, restoreModePage]);
 
   useEffect(() => {
     if (firstPaint && page <= maxPdfPage && lastReportedPage.current !== page) {
@@ -194,7 +226,9 @@ export function PdfReader({ toolbarHost, url, title, initialPage, initialZoom, o
     const viewer = runtime.current?.viewer;
     if (!viewer?.pagesCount) return;
     const target = Math.max(1, Math.min(viewer.pagesCount, Math.floor(number)));
+    modePage.current = null;
     viewer.currentPageNumber = target;
+    setPage(target);
     setDraft(String(target));
   }, []);
   const finishThumbnail = useCallback((pageNumber: number) => {
@@ -234,11 +268,11 @@ export function PdfReader({ toolbarHost, url, title, initialPage, initialZoom, o
   function shortcuts(event: KeyboardEvent<HTMLElement>) {
     const command = event.ctrlKey || event.metaKey;
     const key = event.key.toLowerCase();
-    if (command && key === 'f' && toolbarHost) {
+    if (!compact && command && key === 'f' && toolbarHost) {
       event.preventDefault();
       searchInput.current?.focus();
       searchInput.current?.select();
-    } else if (firstPaint && command && ['=', '+', '-', '0'].includes(key)) {
+    } else if (!compact && firstPaint && command && ['=', '+', '-', '0'].includes(key)) {
       event.preventDefault();
       if (key === '0') chooseZoom(defaultPdfZoom);
       else changeZoom(key === '-' ? -1 : 1);

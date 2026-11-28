@@ -15,7 +15,7 @@ test('a bookmark and note share a page without replacing each other', () => {
 test('selecting the other split document preserves pane order and closing selects a neighbor', () => {
   const state = { tabs: [{ key: 'paper' }, { key: 'solution' }, { key: 'textbook' }], active: 'paper', split: 'solution', splitFirst: 'paper', minimized: true };
   const selected = selectPdf(state, 'solution');
-  assert.deepEqual([selected.active, selected.split, selected.splitFirst, selected.minimized], ['solution', 'paper', 'paper', false]);
+  assert.deepEqual([selected.active, selected.split, selected.splitFirst, selected.minimized], ['solution', 'paper', 'paper', true]);
   assert.equal(setPdfSplit(selected, 'textbook').splitFirst, 'textbook');
   assert.equal(selectPdf(state, 'textbook').splitFirst, 'textbook');
   const closed = removePdf(selected, 'solution');

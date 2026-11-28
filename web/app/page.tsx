@@ -14,6 +14,8 @@ import { applyMutation, bulkMutationRows, resourceRemovalRows, resourceDetachRow
 import { createSnapshotCoordinator, describeSnapshotFailure, fetchSnapshotWithRetry, type SnapshotLoadProblem } from '@/lib/snapshot-loading';
 import { Badge, Card, EmptyState, FormRow, SectionTitle } from '@/components/common';
 import { PdfOpeningOverlay } from '@/components/pdf-opening-overlay';
+import { PdfFilePicker } from '@/components/pdf-file-picker';
+import type { PdfChoice } from '@/lib/pdf-library';
 import { createPdfRequestGate, createPdfSessionCache } from '@/lib/pdf-preview';
 import { applyPdfMark, maxPdfPage, maxPdfTabBytes, maxPdfTabs, normalizePdfZoom, placePdf, readLocalPdf, readPdfZoom, removePdf, savePdfZoom, selectPdf, setPdfSplit, writeLocalPdf, type PdfMarkChange, type PdfSession, type StudyPdf } from '@/lib/pdf-study';
 import type { PdfPageMark } from '@/lib/types';
@@ -51,7 +53,8 @@ type DriveStatus = { connected: boolean; configured: boolean };
 type DriveRead = 'status' | 'index' | 'folder';
 type ReadState = 'idle' | 'loading' | 'ready' | 'error';
 const empty: Snapshot = {courses:[], weeks:[], items:[], resources:[], sessions:[], semesters:[]};
-type PdfOpening = {requestId:number;fileId:string;title:string;resourceId?:string;page:number;weekContext?:number;beside?:string;status:'loading'|'error';message?:string};
+type PdfOpenContext = { weekNumber?: number; beside?: string; activity?: Item };
+type PdfOpening = {requestId:number;fileId:string;title:string;resourceId?:string;page:number;context:PdfOpenContext;status:'loading'|'error';message?:string};
 type OpenPdf = StudyPdf & {
   Workspace:typeof import('@/components/pdf-workspace').PdfWorkspace;
 };
@@ -148,6 +151,7 @@ export default function Page() {
   const [now,setNow] = useState(Math.floor(Date.now()/1000));
   const [clockReady,setClockReady] = useState(false);
   const [pdfSession,setPdfSession] = useState(emptyPdfSession);
+  const [pdfPickerOpen,setPdfPickerOpen] = useState(false);
   const pdfSessionRef = useRef(pdfSession);
   const updatePdfSession = useCallback((change: (state: PdfSession<OpenPdf>) => PdfSession<OpenPdf>) => {
     const next = change(pdfSessionRef.current);
@@ -159,7 +163,7 @@ export default function Page() {
   const [pdfOpening,setPdfOpening] = useState<PdfOpening|null>(null);
   const pdfRequestGateRef = useRef(createPdfRequestGate());
   const [pdfCache] = useState(createPdfSessionCache);
-  const pdfPendingFileRef = useRef<string|null>(null);
+  const pdfPendingRequestRef = useRef<string|null>(null);
   const pdfBookmarkTimerRef=useRef<ReturnType<typeof setTimeout>|null>(null);
   const pdfBookmarkPendingRef=useRef(new Map<string,number>());
   const pdfBookmarkInFlightRef=useRef(new Map<string,object>());
@@ -271,14 +275,14 @@ export default function Page() {
       setFinishReview(false);setQuickFocusOpen(false);
       setPracticeMode(null);
       // A previous account's pending PDF must never appear after an auth switch.
-      pdfRequestGateRef.current.cancel();pdfPendingFileRef.current=null;
+      pdfRequestGateRef.current.cancel();pdfPendingRequestRef.current=null;
       pdfCache.clear();resetDriveDiscovery();
       if(pdfBookmarkTimerRef.current){clearTimeout(pdfBookmarkTimerRef.current);pdfBookmarkTimerRef.current=null;}
       pdfOwnerVersion.current++;
       pdfBookmarkPendingRef.current.clear();
       pdfBookmarkInFlightRef.current.clear();
       for (const document of pdfSessionRef.current.tabs) URL.revokeObjectURL(document.url);
-      updatePdfSession(()=>emptyPdfSession);setPdfOpening(null);
+      updatePdfSession(()=>emptyPdfSession);setPdfOpening(null);setPdfPickerOpen(false);
       snapshotCoordinator.cancel();
       loadedUserRef.current=null;lastLoadedAtRef.current=0;
       setSnapshotReady(false);setRefreshing(false);
@@ -875,12 +879,13 @@ export default function Page() {
     },()=>setDriveIndexState('error'));
   },[readDrive]);
   const resourcesActive=tab==='library'&&snapshotReady&&authReady&&(!useFirebase||!!user);
+  const driveDiscoveryActive=resourcesActive||pdfPickerOpen;
   useEffect(()=>{
-    if(resourcesActive&&driveStatusState==='idle')loadDriveStatus();
-  },[resourcesActive,driveStatusState,loadDriveStatus]);
+    if(driveDiscoveryActive&&driveStatusState==='idle')loadDriveStatus();
+  },[driveDiscoveryActive,driveStatusState,loadDriveStatus]);
   useEffect(()=>{
-    if(resourcesActive&&drive.connected&&driveIndexState==='idle')loadIndex();
-  },[resourcesActive,drive.connected,driveIndexState,loadIndex]);
+    if(driveDiscoveryActive&&drive.connected&&driveIndexState==='idle')loadIndex();
+  },[driveDiscoveryActive,drive.connected,driveIndexState,loadIndex]);
   const browseDrive=useCallback((folderId:string,token?:string)=>{
     setDriveBusy(true);setDriveFolderError('');
     void readDrive<DriveList>('folder',
@@ -900,20 +905,28 @@ export default function Page() {
   const connectDrive=()=>void act(async()=>{const result=await api<{authorization_url:string}>('/api/drive/connect',user);window.location.assign(result.authorization_url);},{collection:'none'});
   // Opening a document is a read, not a mutation. Show feedback immediately, and
   // keep it independent of the global save lock. Only the newest request can win.
-  const previewPdf=(fileId:string,title:string,resourceId?:string,lastPage=1,weekContext?:number,beside?:string)=>{
+  const previewPdf=(fileId:string,title:string,resourceId?:string,lastPage=1,context:PdfOpenContext={})=>{
     const key=resourceId ? `resource:${resourceId}` : `drive:${fileId}`;
+    const resource=data.resources.find(entry=>entry.id===resourceId);
+    const activity=context.activity&&context.activity.course_id===resource?.course_id?context.activity:undefined;
+    const readingWeek=activity?.week_number??(resource&&!isExamResource(resource.kind)
+      ? resource.week_number??context.weekNumber??(tab==='courses'&&resource.course_id===courseId?weekNumber:undefined)
+      : undefined);
+    const activityId=activity?.id;
     if(pdfSessionRef.current.tabs.some(tab=>tab.key===key)){
       cancelPdfOpening();
-      updatePdfSession(state=>placePdf(state,key,beside));
+      updatePdfSession(state=>placePdf({...state,tabs:state.tabs.map(tab=>tab.key===key
+        ? {...tab,weekNumber:readingWeek,activityId} : tab)},key,context.beside));
       return;
     }
     // Avoid unnecessary repeated downloads when the identical file is loading.
-    if(pdfPendingFileRef.current===fileId)return;
-    pdfPendingFileRef.current=fileId;
+    const requestKey=JSON.stringify([key,readingWeek,activityId,context.beside]);
+    if(pdfPendingRequestRef.current===requestKey)return;
+    pdfPendingRequestRef.current=requestKey;
     const {requestId,controller}=pdfRequestGateRef.current.begin();
     const local = resourceId ? undefined : readLocalPdf(user?.uid ?? 'local', key);
     const page=Math.max(1,Math.floor(local?.page ?? lastPage)||1);
-    setPdfOpening({requestId,fileId,title,resourceId,page,weekContext,beside,status:'loading'});
+    setPdfOpening({requestId,fileId,title,resourceId,page,context,status:'loading'});
     void (async()=>{
       let timedOut=false;
       const timeout=window.setTimeout(()=>{timedOut=true;controller.abort();},PDF_FETCH_TIMEOUT_MS);
@@ -929,14 +942,10 @@ export default function Page() {
         if(body.etag)pdfCache.store(fileId,{blob:body.blob,etag:body.etag});
         else pdfCache.remove(fileId);
         const url=URL.createObjectURL(body.blob);
-        const resource=data.resources.find(entry=>entry.id===resourceId);
-        const readingWeek=resource&&!isExamResource(resource.kind)
-          ? resource.week_number??weekContext??(tab==='courses'&&resource.course_id===courseId?weekNumber:undefined)
-          : undefined;
         const zoom=pdfSessionRef.current.tabs.find(tab=>tab.fileId===fileId)?.zoom??readPdfZoom(user?.uid??'local',fileId);
-        const document: OpenPdf={key,fileId,url,title,resourceId,courseId:resource?.course_id,weekNumber:readingWeek,page,zoom,
+        const document: OpenPdf={key,fileId,url,title,resourceId,courseId:resource?.course_id,weekNumber:readingWeek,activityId,page,zoom,
           bytes:body.blob.size,marks:local?.marks??[],marksStatus:resourceId?'idle':'ready',Workspace:reader.PdfWorkspace};
-        updatePdfSession(state=>placePdf({...state,tabs:[...state.tabs,document]},key,beside));
+        updatePdfSession(state=>placePdf({...state,tabs:[...state.tabs,document]},key,context.beside));
         setPdfOpening(null);
       }catch(e){
         if(!pdfRequestGateRef.current.isCurrent(requestId))return;
@@ -946,10 +955,10 @@ export default function Page() {
         pdfCache.remove(fileId);
         const message=timedOut?'The PDF took too long to download. Try again, or open it from Google Drive.':
           e instanceof Error?e.message:'Could not open this PDF.';
-        setPdfOpening({requestId,fileId,title,resourceId,page,weekContext,beside,status:'error',message});
+        setPdfOpening({requestId,fileId,title,resourceId,page,context,status:'error',message});
       }finally{
         window.clearTimeout(timeout);
-        if(pdfRequestGateRef.current.isCurrent(requestId))pdfPendingFileRef.current=null;
+        if(pdfRequestGateRef.current.isCurrent(requestId))pdfPendingRequestRef.current=null;
         pdfRequestGateRef.current.release(requestId,controller);
       }
     })();
@@ -978,11 +987,12 @@ export default function Page() {
     });
   },[user]);
   const cancelPdfOpening=()=>{
-    pdfRequestGateRef.current.cancel();pdfPendingFileRef.current=null;
+    pdfRequestGateRef.current.cancel();pdfPendingRequestRef.current=null;
     setPdfOpening(null);
   };
   const closePdf=()=>{
     cancelPdfOpening();
+    setPdfPickerOpen(false);
     flushPdfBookmark();
     for(const document of pdfSessionRef.current.tabs)URL.revokeObjectURL(document.url);
     updatePdfSession(()=>emptyPdfSession);
@@ -1002,18 +1012,31 @@ export default function Page() {
   },{collection:'none'},{title:'Google Drive disconnected',detail:'Existing linked resources are kept.'});
   // Prevent old requests and blob URLs surviving page unmount.
   useEffect(()=>()=>{
-    pdfRequestGateRef.current.cancel();pdfPendingFileRef.current=null;
+    pdfRequestGateRef.current.cancel();pdfPendingRequestRef.current=null;
     pdfCache.clear();
     if(pdfBookmarkTimerRef.current)clearTimeout(pdfBookmarkTimerRef.current);
     pdfOwnerVersion.current++;
     for(const document of pdfSessionRef.current.tabs)URL.revokeObjectURL(document.url);
   },[pdfCache]);
+  const openStudyResource=(r:Resource,activity?:Item)=>{
+    if(r.source==='drive'&&r.drive_file_id)previewPdf(r.drive_file_id,r.title,r.id,r.last_page,{activity});
+    else if(r.url)window.open(r.url,'_blank','noopener,noreferrer');
+  };
   const openTaskResource=(item:Item)=>{
     const documents=activityResources(item,data.resources);
     const r=documents.find(entry=>entry.id===item.resource_id)||documents[0];
     if(!r){setError('The linked document is no longer available. Check the Course Library.');return;}
-    if(r.source==='drive'&&r.drive_file_id)previewPdf(r.drive_file_id,r.title,r.id,r.last_page,item.week_number??undefined);
-    else if(r.url)window.open(r.url,'_blank','noopener,noreferrer');
+    openStudyResource(r,item);
+  };
+  const chooseReaderPdf=(choice:PdfChoice)=>{
+    setPdfPickerOpen(false);
+    if(choice.openKey)updatePdfSession(state=>selectPdf(state,choice.openKey!));
+    else if(choice.resource)openStudyResource(choice.resource);
+    else if(choice.fileId)previewPdf(choice.fileId,choice.title);
+  };
+  const minimizeReading=()=>{
+    flushPdfBookmark();
+    updatePdfSession(state=>({...state,minimized:true}));
   };
 
   useEffect(()=>{
@@ -1172,7 +1195,6 @@ export default function Page() {
     <div className="main-area">
       <header className={'topbar'+(tab==='today'?' dashboard-topbar':'')}><div className="mobile-topbar-brand"><BookOpen size={19} aria-hidden="true"/><span>Study Hub</span></div><div className="breadcrumb"><Sparkles size={16} aria-hidden="true"/> STUDY HUB <span>/</span> <strong>{pageNames[tab]}</strong></div><div className="topbar-right">
           <span className="topbar-datetime"><span className="topbar-date-section"><CalendarDays size={15} aria-hidden="true"/>{dateLabel}</span><span className="topbar-datetime-divider" aria-hidden="true"/><span title="Your local time (24-hour clock)" aria-label={`Local time ${timeLabel}`}><Clock3 size={15} aria-hidden="true"/><time dateTime={clockReady?new Date(now*1000).toISOString():undefined}>{timeLabel}</time></span></span>
-          {pdfSession.minimized&&pdf&&<button type="button" className="btn secondary small" onClick={()=>updatePdfSession(state=>({...state,minimized:false}))}><BookOpen size={16}/> Resume reading</button>}
           <div className="topbar-focus-wrap" ref={quickFocusRef}>
             {active?<>
               <button type="button" className="topbar-focus-session" aria-expanded={quickFocusOpen} aria-controls="active-focus-menu" onClick={()=>setQuickFocusOpen(value=>!value)} title="Manage focus session" aria-label={`${active.status==='paused'?'Paused':'Running'} focus session; manage session`}>
@@ -1292,7 +1314,7 @@ export default function Page() {
             courseId={courseId} weekNumber={weekNumber} landingItem={courseLandingItem} sectionJump={courseSectionJump} selectCourse={rememberCourse} selectWeek={rememberWeek}
             run={act} toggleItem={toggle} focusOn={startFrom} preparePractice={prepareExamPractice}
             activeFocus={!!active} focusBusy={focusBusy} openFocus={()=>setTab('focus')}
-            openResource={r=>{if(r.source==='drive'&&r.drive_file_id)previewPdf(r.drive_file_id,r.title,r.id,r.last_page);else if(r.url)window.open(r.url,'_blank','noopener,noreferrer');}}
+            openResource={openStudyResource}
             openDrive={(id,week,kind,scope,paperId)=>{linkIntentRef.current={courseId:id,week,kind,scope,paperId};setSelectedPdfId(null);setLinkCourse(id);setLinkWeek(week);setLinkScope(scope);setLinkKind(kind);setLinkItem('');setLinkPaper(paperId||'');clearBulk();setTab('library');}}
           />}
 
@@ -1438,18 +1460,25 @@ export default function Page() {
       {finishReview&&active&&<div className="dialog-backdrop" role="presentation"><div className="dialog focus-review-dialog" role="dialog" aria-modal="true" aria-label="Review focus session"><button className="dialog-close" onClick={()=>setFinishReview(false)} aria-label="Cancel and keep paused"><X size={18}/></button><h2>Review focus session</h2><p>How much of this session was focused study?</p><div className="focus-review-duration"><span>Recorded active time</span><strong>{duration(reviewLimit)}</strong></div><FocusDurationFields seconds={finishSeconds} maximum={reviewLimit} onChange={setFinishSeconds}/><p className="focus-review-help">Adjust for idle time if needed. Maximum: {formatFocusDuration(reviewLimit)}.</p><div className="dialog-actions"><button className="btn secondary" onClick={()=>setFinishReview(false)}>Keep paused</button><button className="btn primary" disabled={focusBusy||active.status!=='paused'||!Number.isInteger(Number(finishSeconds))||Number(finishSeconds)<0||Number(finishSeconds)>reviewLimit} onClick={finish}>{focusBusy?(Number(finishSeconds)===0?'Discarding…':'Saving timer…'):(Number(finishSeconds)===0?'Discard empty session':'Save session')}</button></div></div></div>}
     </div>
     <nav className="mobile-nav" aria-label="Mobile navigation">{tabs.map(t=><button key={t.id} className={tab===t.id?'current':''} onClick={()=>navigate(t.id)}><t.icon size={19}/><span>{t.label}</span></button>)}</nav>
-    {pdf&&!pdfSession.minimized&&<pdf.Workspace pdf={pdf} session={pdfSession} opening={!!pdfOpening} items={presentedItems} pendingItems={pendingItems} completingIds={completingIds}
+    {pdf&&<pdf.Workspace pdf={pdf} session={pdfSession} opening={!!pdfOpening||pdfPickerOpen} items={presentedItems} pendingItems={pendingItems} completingIds={completingIds}
       resource={readerResource} course={readerCourse} resources={data.resources}
-      onBrowseCourse={readerCourse&&!readerCourse.archived?()=>{closePdf();openCourse(readerCourse.id,pdf.weekNumber,undefined,readerResource&&isExamResource(readerResource.kind)?'exam':'course-library');}:undefined}
+      onBrowseCourse={readerCourse&&!readerCourse.archived?()=>{minimizeReading();openCourse(readerCourse.id,pdf.weekNumber,undefined,readerResource&&isExamResource(readerResource.kind)?'exam':'course-library');}:undefined}
       onClose={closePdf} onCloseTab={closePdfTab} onSelectTab={key=>updatePdfSession(state=>selectPdf(state,key))}
       onSplit={key=>updatePdfSession(state=>setPdfSplit(state,key))}
       onResizeSplit={splitPercent=>updatePdfSession(state=>state.splitPercent===splitPercent?state:{...state,splitPercent})}
-      onMinimize={()=>{flushPdfBookmark();updatePdfSession(state=>({...state,minimized:true}));}}
+      onOpenPicker={()=>setPdfPickerOpen(true)} onMinimize={minimizeReading}
+      onExpand={()=>updatePdfSession(state=>({...state,minimized:false}))}
       onPage={changePdfPage} onZoom={changePdfZoom} onMark={changePdfMark} onLoadMarks={loadPdfMarks} onToggleItem={toggle}
-      onFocus={item=>{flushPdfBookmark();updatePdfSession(state=>({...state,minimized:true}));startFrom(item,pdf.courseId);}}
-      onOpenResource={(r,beside)=>{if(r.source==='drive'&&r.drive_file_id)previewPdf(r.drive_file_id,r.title,r.id,r.last_page,pdf.weekNumber,beside?pdf.key:undefined);else if(!beside&&r.url)window.open(r.url,'_blank','noopener,noreferrer');}}/>}
+      onFocus={item=>{minimizeReading();startFrom(item,pdf.courseId);}}
+      onOpenResource={(r,beside)=>{if(r.source==='drive'&&r.drive_file_id)previewPdf(r.drive_file_id,r.title,r.id,r.last_page,{weekNumber:pdf.weekNumber,beside:beside?pdf.key:undefined});else if(!beside&&r.url)window.open(r.url,'_blank','noopener,noreferrer');}}/>}
+    {pdf&&pdfPickerOpen&&<PdfFilePicker resources={data.resources} courses={data.courses} indexed={indexedFiles} tabs={pdfSession.tabs}
+      currentCourseId={(tab==='courses'?courseId:undefined)||pdf.courseId} user={user} driveConnected={drive.connected}
+      driveLoading={driveStatusState==='loading'||driveIndexState==='loading'}
+      driveError={driveStatusState==='error'||driveIndexState==='error'}
+      onRetryDrive={driveStatusState==='error'?loadDriveStatus:loadIndex}
+      onClose={()=>setPdfPickerOpen(false)} onChoose={chooseReaderPdf}/>}
     {pdfOpening&&<PdfOpeningOverlay title={pdfOpening.title} status={pdfOpening.status} error={pdfOpening.message}
-      requestId={pdfOpening.requestId} onCancel={cancelPdfOpening}
-      onRetry={()=>previewPdf(pdfOpening.fileId,pdfOpening.title,pdfOpening.resourceId,pdfOpening.page,pdfOpening.weekContext,pdfOpening.beside)}/>}
+      requestId={pdfOpening.requestId} compact={!!pdf&&pdfSession.minimized} onCancel={cancelPdfOpening}
+      onRetry={()=>previewPdf(pdfOpening.fileId,pdfOpening.title,pdfOpening.resourceId,pdfOpening.page,pdfOpening.context)}/>}
   </div>;
 }

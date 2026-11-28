@@ -1,10 +1,11 @@
 'use client';
 import { useCallback, useEffect, useId, useRef, useState, type CSSProperties } from 'react';
-import { ArrowLeft, ArrowRight, BookOpen, Check, ChevronDown, Columns2, Ellipsis, ExternalLink, Files, FileText, LoaderCircle, PanelRightClose, PanelRightOpen, Plus, RotateCcw, Timer, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, BookOpen, Check, ChevronDown, Columns2, Ellipsis, ExternalLink, Files, FileText, LoaderCircle, Maximize2, Minimize2, PanelRightClose, PanelRightOpen, Plus, RotateCcw, Timer, X } from 'lucide-react';
 import type { Course, Item, Resource } from '@/lib/types';
 import { activityResources, isExamResource, readerMaterials } from '@/lib/resource-links';
 import { examName } from '@/lib/exam-prep';
 import { sortWeeklyActivities } from '@/lib/task-view';
+import { activityReference } from '@/lib/activity-display';
 import { PdfReader } from './pdf-reader';
 import { type PdfMarkChange, type PdfSession, type StudyPdf } from '@/lib/pdf-study';
 
@@ -16,6 +17,7 @@ type Props = {
   onZoom: (key: string, zoom: string) => void;
   onCloseTab: (key: string) => void; onSelectTab: (key: string) => void;
   onSplit: (key: string | null) => void; onResizeSplit: (percent: number) => void; onMinimize: () => void;
+  onOpenPicker: () => void; onExpand: () => void;
   onMark: (key: string, change: PdfMarkChange) => Promise<void>;
   onLoadMarks: (key: string) => void;
   onOpenResource: (resource: Resource, beside?: boolean) => void;
@@ -40,7 +42,8 @@ function prefersPdfJs() {
  * The saved page is explicit; native PDF scrolling is not accessible across the iframe.
  */
 export function PdfWorkspace({ pdf, session, opening, items, course, resource, resources, pendingItems, completingIds,
-  onClose, onPage, onZoom, onCloseTab, onSelectTab, onSplit, onResizeSplit, onMinimize, onMark, onLoadMarks, onOpenResource, onBrowseCourse, onToggleItem, onFocus }: Props) {
+  onClose, onPage, onZoom, onCloseTab, onSelectTab, onSplit, onResizeSplit, onMinimize, onOpenPicker, onExpand,
+  onMark, onLoadMarks, onOpenResource, onBrowseCourse, onToggleItem, onFocus }: Props) {
   const [draft,setDraft] = useState(String(pdf.page));
   const [studyOpen,setStudyOpen] = useState(!!course);
   const [frameReady,setFrameReady] = useState(false);
@@ -55,18 +58,19 @@ export function PdfWorkspace({ pdf, session, opening, items, course, resource, r
   const otherTabsRef=useRef<HTMLDetailsElement>(null);
   const activeTabRef=useRef<HTMLButtonElement>(null);
   const restoreTabFocus=useRef(false);
+  const restoreModeFocus=useRef(false);
   const workspaceId=useId();
   const [toolbarHost,setToolbarHost]=useState<HTMLDivElement|null>(null);
   const panesRef=useRef<HTMLDivElement>(null);
   const dragRef=useRef<{id:number;offset:number}|null>(null);
-  const {splitPercent}=session;
+  const {splitPercent,minimized}=session;
   const [stacked,setStacked]=useState(false);
   const sizeSplit=(value:number)=>onResizeSplit(Math.max(splitMin,Math.min(splitMax,Math.round(value))));
   const pdfJsFailed=failedKey===pdf.key;
   const usePdfJs = pdfJs && !pdfJsFailed;
   const split = usePdfJs ? session.tabs.find(tab=>tab.key===session.split && tab.key!==pdf.key) : undefined;
   const panes=split?(session.splitFirst===split.key?[split,pdf]:[pdf,split]):[pdf];
-  const otherTabs=split?session.tabs.filter(tab=>tab.key!==pdf.key&&tab.key!==split.key):[];
+  const otherTabs=split&&!minimized?session.tabs.filter(tab=>tab.key!==pdf.key&&tab.key!==split.key):[];
   const splitStyle=split?{
     '--pdf-split-ratio':splitPercent/100,
     '--pdf-split-first':`${splitPercent}fr`,
@@ -99,6 +103,12 @@ export function PdfWorkspace({ pdf, session, opening, items, course, resource, r
     activeTabRef.current?.focus();
   },[pdf.key,session.tabs.length]);
   useEffect(()=>{
+    if(!restoreModeFocus.current)return;
+    restoreModeFocus.current=false;
+    dialogRef.current?.querySelector<HTMLButtonElement>(minimized?'.pdfjs-expand-reader':'.pdfjs-minimize-reader')
+      ?.focus({preventScroll:true});
+  },[minimized]);
+  useEffect(()=>{
     const narrow=window.matchMedia('(max-width: 690px)');
     if(narrow.matches)setStudyOpen(false);
     const measure=()=>setStacked(narrow.matches);
@@ -122,20 +132,21 @@ export function PdfWorkspace({ pdf, session, opening, items, course, resource, r
   },[]);
   useEffect(()=>{
     const handler=(event:KeyboardEvent)=>{
-      if(opening)return;
+      if(opening||event.defaultPrevented)return;
+      if(minimized&&(!(event.target instanceof Node)||!dialogRef.current?.contains(event.target)))return;
       if(event.key==='Escape'){
         const options=[optionsRef.current,splitPickerRef.current,otherTabsRef.current].find(menu=>menu?.open);
         if(options?.open){options.open=false;options.querySelector('summary')?.focus();}
         else onClose();
         return;
       }
-      if(!event.defaultPrevented&&(event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='f'
+      if(!minimized&&(event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='f'
         && event.target instanceof Node&&dialogRef.current?.contains(event.target)){
         const search=toolbarHost?.querySelector<HTMLInputElement>('input[type="search"]:not(:disabled)');
         if(search){event.preventDefault();search.focus();search.select();}
         return;
       }
-      if(event.key!=='Tab')return;
+      if(event.key!=='Tab'||minimized)return;
       const controls=Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(
         'button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),a[href],iframe,summary,[tabindex="0"]'
       )??[]).filter(control=>control.tabIndex>=0&&control.getClientRects().length>0);
@@ -151,7 +162,7 @@ export function PdfWorkspace({ pdf, session, opening, items, course, resource, r
     document.addEventListener('keydown',handler);
     document.addEventListener('pointerdown',dismiss);
     return ()=>{document.removeEventListener('keydown',handler);document.removeEventListener('pointerdown',dismiss);};
-  },[onClose,opening,toolbarHost]);
+  },[minimized,onClose,opening,toolbarHost]);
   const savePage=()=>{
     const page=Number(draft);
     if(!draft.trim()||!Number.isFinite(page)){setDraft(String(pdf.page));return;}
@@ -162,10 +173,21 @@ export function PdfWorkspace({ pdf, session, opening, items, course, resource, r
   const exam=!!resource&&isExamResource(resource.kind);
   const sameWeekItems=pdf.weekNumber==null?[]:sortWeeklyActivities(items.filter(item=>item.course_id===pdf.courseId&&item.week_number===pdf.weekNumber));
   const related=readerMaterials(resource,pdf.weekNumber,sameWeekItems,resources);
-  const linkedTask=resource&&items.find(item=>!item.done&&activityResources(item,[resource]).length>0
+  const linkedItems=resource?sameWeekItems.filter(item=>activityResources(item,[resource]).length>0):[];
+  const assignments=linkedItems.flatMap(item=>{
+    const pages=item.page_start!=null||item.page_end!=null
+      ? `Pages ${item.page_start??'…'}${item.page_end!=null&&item.page_end!==item.page_start?`–${item.page_end}`:''}`
+      : undefined;
+    const reference=[activityReference(item),pages].filter(Boolean).join(' · ');
+    return reference?[{id:item.id,title:item.title,reference}]:[];
+  });
+  const openingActivity=linkedItems.find(item=>item.id===pdf.activityId);
+  const linkedTask=openingActivity&&!openingActivity.done?openingActivity:resource&&items.find(item=>!item.done&&activityResources(item,[resource]).length>0
     && (exam?item.kind==='revision':item.week_number===pdf.weekNumber));
   const focusItem=linkedTask||sameWeekItems.find(item=>!item.done);
-  const context=exam?'Exam Prep':pdf.weekNumber!=null?`Week ${pdf.weekNumber}`:course?'Course Library':'Drive preview';
+  const context=pdf.weekNumber!=null?`Week ${pdf.weekNumber}`:exam?'Exam Prep':course?'Course Library':'Drive preview';
+  const miniReference=(assignments.find(item=>item.id===pdf.activityId)??assignments[0])?.reference
+    ?? (course?`${course.code} · ${context}`:context);
   const title=resource?.kind==='exam_paper'?examName(resource):pdf.title;
   const renderTab=(tab:StudyPdf,pane?:'first'|'second')=>{
     const selected=tab.key===pdf.key;
@@ -193,7 +215,7 @@ export function PdfWorkspace({ pdf, session, opening, items, course, resource, r
     </div>;
   };
   const openTabButton=<button type="button" className="btn secondary small pdfjs-open-tab"
-    aria-label="Open PDF" title="Open PDF" onClick={onMinimize}><Plus size={15} aria-hidden="true"/><span>Open PDF</span></button>;
+    aria-label="Open PDF" title="Open PDF" onClick={onOpenPicker}><Plus size={15} aria-hidden="true"/><span>Open PDF</span></button>;
   const materialRow=(entry:Resource)=>{
     const name=entry.kind==='exam_paper'?examName(entry):entry.title;
     const Icon=entry.source==='drive'&&entry.drive_file_id?BookOpen:ExternalLink;
@@ -208,14 +230,15 @@ export function PdfWorkspace({ pdf, session, opening, items, course, resource, r
           onClick={()=>onOpenResource(entry,true)}><Columns2 size={14} aria-hidden="true"/> Open beside</button>}
     </div>;
   };
-  return <div ref={dialogRef} className={'pdf-overlay pdf-workspace'+(studyOpen?'':' pdf-expanded')}
-    style={splitStyle} role="dialog" aria-modal="true" aria-label={`Reading ${pdf.title}`}>
-    <div className={'pdfjs-tabs'+(split?' is-split':'')}>
+  return <div ref={dialogRef} className={'pdf-overlay pdf-workspace'+(studyOpen?'':' pdf-expanded')+(minimized?' pdf-docked':'')}
+    style={splitStyle} role={minimized?'region':'dialog'} aria-modal={minimized?undefined:true} aria-label={`Reading ${pdf.title}`}>
+    <div className={'pdfjs-tabs'+(split&&!minimized?' is-split':'')}>
       <nav className="pdfjs-tab-list" aria-label="Open PDFs">
-        {split?renderTab(panes[0],'first'):session.tabs.map(tab=>renderTab(tab))}
-        {!split&&openTabButton}
+        {minimized?<div className="pdfjs-dock-title" title={title}><BookOpen size={16} aria-hidden="true"/><strong>{title}</strong></div>
+          :split?renderTab(panes[0],'first'):session.tabs.map(tab=>renderTab(tab))}
+        {!split&&!minimized&&openTabButton}
         <div className="pdfjs-tab-end">
-          {split&&renderTab(panes[1],'second')}
+          {split&&!minimized&&renderTab(panes[1],'second')}
           <div className="pdfjs-reader-actions">
             {otherTabs.length>0&&<details className="pdfjs-options pdfjs-other-tabs" ref={otherTabsRef}>
               <summary className="btn secondary small" aria-label="Other open PDFs" title="Other open PDFs"><Files size={15} aria-hidden="true"/></summary>
@@ -223,8 +246,8 @@ export function PdfWorkspace({ pdf, session, opening, items, course, resource, r
                 {otherTabs.map(tab=>renderTab(tab))}
               </div>
             </details>}
-            {split&&openTabButton}
-            {usePdfJs&&session.tabs.length>1&&<details className="pdfjs-options pdfjs-split-picker" ref={splitPickerRef} onKeyDown={event=>{
+            {(split||minimized)&&openTabButton}
+            {!minimized&&usePdfJs&&session.tabs.length>1&&<details className="pdfjs-options pdfjs-split-picker" ref={splitPickerRef} onKeyDown={event=>{
               if(!['ArrowDown','ArrowUp','Home','End'].includes(event.key))return;
               const picker=event.currentTarget;
               if(!picker.open&&(event.key==='Home'||event.key==='End'))return;
@@ -250,21 +273,26 @@ export function PdfWorkspace({ pdf, session, opening, items, course, resource, r
                 </button>)}
               </div>
             </details>}
-            {!usePdfJs&&<button type="button" className="btn secondary small pdf-viewer-choice" onClick={changeViewer}>
+            {!minimized&&!usePdfJs&&<button type="button" className="btn secondary small pdf-viewer-choice" onClick={changeViewer}>
               {pdfJsFailed ? 'Retry PDF.js' : 'Try PDF.js'}
             </button>}
-            <button type="button" className="btn secondary small pdf-toggle-study" title={studyOpen?'Hide Study Mode':'Show Study Mode'} aria-label={studyOpen?'Hide Study Mode sidebar':'Show Study Mode sidebar'} aria-expanded={studyOpen} onClick={()=>setStudyOpen(value=>!value)}>{studyOpen?<PanelRightClose size={17}/>:<PanelRightOpen size={17}/>}<span>Study panel</span></button>
-            {usePdfJs&&<details className="pdfjs-options" ref={optionsRef}>
+            {!minimized&&<button type="button" className="btn secondary small pdf-toggle-study" title={studyOpen?'Hide Study Mode':'Show Study Mode'} aria-label={studyOpen?'Hide Study Mode sidebar':'Show Study Mode sidebar'} aria-expanded={studyOpen} onClick={()=>setStudyOpen(value=>!value)}>{studyOpen?<PanelRightClose size={17}/>:<PanelRightOpen size={17}/>}<span>Study panel</span></button>}
+            {!minimized&&usePdfJs&&<details className="pdfjs-options" ref={optionsRef}>
               <summary className="btn secondary small" aria-label="Reader options" title="Reader options"><Ellipsis size={17} aria-hidden="true"/></summary>
               <div className="pdfjs-options-popover"><button type="button" className="btn secondary small" onClick={changeViewer}><ExternalLink size={15} aria-hidden="true"/> Use browser viewer</button></div>
             </details>}
+            {minimized?<button type="button" className="btn secondary small pdfjs-expand-reader" title="Expand reader" aria-label="Expand"
+              onClick={()=>{restoreModeFocus.current=true;onExpand();}}><Maximize2 size={15} aria-hidden="true"/><span>Expand</span></button>
+              :<button type="button" className="btn secondary small pdfjs-minimize-reader" title="Minimize reader" aria-label="Minimize"
+                onClick={()=>{restoreModeFocus.current=true;onMinimize();}}><Minimize2 size={15} aria-hidden="true"/><span>Minimize</span></button>}
             <button type="button" className="btn secondary small pdf-close-reader" aria-label="Close" title="Close reader" onClick={onClose}><X size={16} aria-hidden="true"/></button>
           </div>
         </div>
       </nav>
     </div>
-    {usePdfJs ? <div className="pdfjs-toolbar-host" ref={setToolbarHost}/> :
+    {usePdfJs ? <div className="pdfjs-toolbar-host" ref={setToolbarHost}>{minimized&&<small className="pdfjs-dock-reference" title={miniReference}>{miniReference}</small>}</div> :
       <div className="pdfjs-native-toolbar">
+        {minimized&&<small className="pdfjs-dock-reference" title={miniReference}>{miniReference}</small>}
         <div className="pdf-bookmark" role="group" aria-label="PDF bookmark">
           <button type="button" className="btn secondary small" title="Previous bookmarked page" aria-label="Previous bookmarked page" disabled={pdf.page<=1} onClick={()=>onPage(pdf.key,pdf.page-1)}><ArrowLeft size={15}/></button>
           <label>{pdf.resourceId?'Saved page':'Page'} <input aria-label={pdf.resourceId?'Bookmarked PDF page':'PDF page'} type="number" min={1} max={20000} value={draft} onChange={e=>setDraft(e.target.value)} onBlur={savePage} onKeyDown={e=>{if(e.key==='Enter')e.currentTarget.blur();}}/></label>
@@ -275,10 +303,10 @@ export function PdfWorkspace({ pdf, session, opening, items, course, resource, r
       <div className="pdf-document-panel">
         {pdfJsFailed&&<p className="pdfjs-fallback" role="status">PDF.js couldn’t display this document. The browser viewer is open.</p>}
         {usePdfJs ? <div ref={panesRef} className={split ? 'pdfjs-panes is-split' : 'pdfjs-panes'}>
-          {panes.map((tab,index)=><PdfPane key={tab.url} id={split?`${workspaceId}-${index===0?'first':'second'}`:undefined} pdf={tab} primary={tab.key===pdf.key}
+          {panes.map((tab,index)=><PdfPane key={tab.url} id={split?`${workspaceId}-${index===0?'first':'second'}`:undefined} pdf={tab} primary={tab.key===pdf.key} compact={minimized}
             toolbarHost={tab.key===pdf.key?toolbarHost:null}
             onPrimaryFailure={handlePdfJsFailure} onPage={onPage} onZoom={onZoom} onMark={onMark} onLoadMarks={onLoadMarks}/>)}
-          {split&&<div className="pdfjs-split-divider" role="separator" tabIndex={0} aria-label="Resize PDF panes"
+          {split&&!minimized&&<div className="pdfjs-split-divider" role="separator" tabIndex={0} aria-label="Resize PDF panes"
             aria-orientation={stacked?'horizontal':'vertical'} aria-valuemin={splitMin} aria-valuemax={splitMax} aria-valuenow={splitPercent}
             aria-valuetext={`First PDF ${splitPercent} percent`} title="Drag to resize. Double-click to reset."
             onDoubleClick={()=>sizeSplit(50)}
@@ -326,6 +354,12 @@ export function PdfWorkspace({ pdf, session, opening, items, course, resource, r
           <button type="button" className="btn primary full" disabled={course?.archived} onClick={()=>onFocus(focusItem)}><Timer size={16} aria-hidden="true"/> Start Focus</button>
           {focusItem&&<small>Next activity · {focusItem.title}</small>}
         </div>
+        {assignments.length>0&&<section className="pdf-side-block pdf-study-references" aria-label="References for this PDF">
+          <h3>This PDF · Week {pdf.weekNumber}</h3>
+          <ul>{assignments.map(item=><li key={item.id} aria-current={item.id===pdf.activityId?true:undefined}>
+            <strong>{item.title}</strong><span>{item.reference}</span>
+          </li>)}</ul>
+        </section>}
         {sameWeekItems.length>0&&<div className="pdf-side-block">
           <h3>Week {pdf.weekNumber} checklist <small>{sameWeekItems.filter(i=>i.done||completingIds.has(i.id)).length}/{sameWeekItems.length}</small></h3>
           {sameWeekItems.map(i=><label className={'pdf-check task-completion-row'+(completingIds.has(i.id)?' is-completing':'')} key={i.id}><input type="checkbox" className="task-completion-check" checked={i.done||completingIds.has(i.id)} disabled={!!course?.archived||pendingItems.has(i.id)||completingIds.has(i.id)} onChange={()=>onToggleItem(i)}/><span>{i.title}</span></label>)}
@@ -346,19 +380,19 @@ export function PdfWorkspace({ pdf, session, opening, items, course, resource, r
   </div>;
 }
 
-function PdfPane({ id, pdf, primary, toolbarHost, onPrimaryFailure, onPage, onZoom, onMark, onLoadMarks }: {
-  id?: string; pdf: StudyPdf; primary: boolean; toolbarHost: HTMLDivElement|null; onPrimaryFailure: () => void;
+function PdfPane({ id, pdf, primary, compact, toolbarHost, onPrimaryFailure, onPage, onZoom, onMark, onLoadMarks }: {
+  id?: string; pdf: StudyPdf; primary: boolean; compact: boolean; toolbarHost: HTMLDivElement|null; onPrimaryFailure: () => void;
   onPage: Props['onPage']; onZoom: Props['onZoom']; onMark: Props['onMark']; onLoadMarks: Props['onLoadMarks'];
 }) {
   const [failed,setFailed] = useState(false);
   const fallback = useCallback(()=>setFailed(true),[]);
   useEffect(()=>{if(failed&&primary)onPrimaryFailure();},[failed,primary,onPrimaryFailure]);
-  return <div id={id} className="pdfjs-pane" data-active={primary} data-pdf-title={pdf.title}>
+  return <div id={id} className="pdfjs-pane" data-active={primary} data-pdf-title={pdf.title} inert={compact&&!primary}>
     {failed ? <>
       <p className="pdfjs-fallback" role="status">PDF.js couldn’t display this document. The browser viewer is open.</p>
       <button type="button" className="btn secondary small" onClick={()=>setFailed(false)}>Retry PDF.js</button>
       <iframe className="pdfjs-split-fallback" title={pdf.title} src={`${pdf.url}#page=${pdf.page}`}/>
-    </> : <PdfReader toolbarHost={toolbarHost} url={pdf.url} title={pdf.title} initialPage={pdf.page} initialZoom={pdf.zoom}
+    </> : <PdfReader toolbarHost={toolbarHost} url={pdf.url} title={pdf.title} initialPage={pdf.page} initialZoom={pdf.zoom} compact={compact}
       onZoom={zoom=>onZoom(pdf.key,zoom)} marks={pdf.marks} autoFocus={primary}
       marksStatus={pdf.marksStatus} onLoadMarks={()=>onLoadMarks(pdf.key)}
       onPage={page=>onPage(pdf.key,page)} onMark={change=>onMark(pdf.key,change)} onFailure={fallback}/>}
