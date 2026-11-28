@@ -25,6 +25,38 @@ def course(client, semester=None):
     return resp.json()
 
 
+def test_pdf_page_marks_merge_with_position_and_resource_edits(client):
+    from app.security import User, current_user
+    c = course(client)
+    result = client.post('/api/resources', json={'course_id': c['id'], 'title': 'Lecture',
+        'source': 'drive', 'drive_file_id': 'drive123'})
+    assert result.status_code == 201, result.text
+    resource = '/api/resources/' + result.json()['id']
+    marks = resource + '/pdf-mark'
+    assert client.patch(marks, json={'page': 3, 'bookmarked': True}).status_code == 200
+    assert client.patch(marks, json={'page': 3, 'note': 'Check derivation'}).json() == {
+        'page': 3, 'bookmarked': True, 'note': 'Check derivation',
+    }
+    assert client.patch(marks, json={'page': 7, 'bookmarked': True}).status_code == 200
+    assert client.patch(resource + '/reading-position', json={'page': 9}).status_code == 200
+    assert client.patch(resource, json={'title': 'Revised lecture'}).status_code == 200
+    assert client.patch(marks, json={'page': 3, 'bookmarked': False}).json()['note'] == 'Check derivation'
+    assert client.patch(marks, json={'page': 3, 'note': ''}).status_code == 200
+    assert client.patch(marks, json={'page': 0, 'note': 'invalid'}).status_code == 422
+    assert client.patch(marks, json={'page': 4, 'note': 'x' * 1201}).status_code == 422
+    result = client.get('/api/snapshot').json()['resources'][0]
+    assert result['last_page'] == 9
+    assert result['title'] == 'Revised lecture'
+    assert 'pdf_marks' not in result
+    assert client.get(resource + '/pdf-marks').json() == [{'page': 7, 'bookmarked': True, 'note': ''}]
+    client.app.dependency_overrides[current_user] = lambda: User('another-reader')
+    try:
+        assert client.get(resource + '/pdf-marks').status_code == 404
+        assert client.patch(marks, json={'page': 7, 'note': 'wrong owner'}).status_code == 404
+    finally:
+        client.app.dependency_overrides.pop(current_user)
+
+
 def test_archive_preserves_history_and_restore(client):
     c = course(client)
     i = client.post('/api/items', json={'title': 'Revise Lecture 10', 'kind':'revision',

@@ -18,7 +18,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, Field, ValidationError
 
 from .workspace_models import Semester
-from .models import ExamAttempt, GenerateActivities, GenerationResult, ItemUpdateResult, Course, FocusSession, FinishFocus, Item, ItemPatch, PauseFocus, ResumeFocus, ReadingPosition, Resource, StartFocus, Week
+from .models import ExamAttempt, GenerateActivities, GenerationResult, ItemUpdateResult, Course, FocusSession, FinishFocus, Item, ItemPatch, PauseFocus, PdfPageMark, ResumeFocus, ReadingPosition, Resource, StartFocus, Week
 from .security import User, current_user, firebase_app
 from .deployment import validate_deployment_environment
 from .storage import (ActiveSessionExists, DocumentAlreadyExists, DocumentMissing,
@@ -108,6 +108,7 @@ async def snapshot(user: User = Depends(current_user), compact: bool = False,
         if compact:
             rows.append(app_store.focus_overview(user.uid, week_start))
     result = dict(zip(kinds, rows))
+    result['resources'] = [{key: value for key, value in entry.items() if key != 'pdf_marks'} for entry in result['resources']]
     if compact:
         result.update(rows[-1])
     return result
@@ -509,7 +510,7 @@ def record_exam_attempt(identifier: str, value: ExamAttempt, user: User = Depend
             raise HTTPException(409, 'Maximum 100 attempts per paper')
         entry['exam_attempts'] = [*attempts, payload]
         result = Resource.model_validate(entry)
-        tx.put('resources', result.model_dump(mode='json'))
+        tx.put('resources', result.storage_document(entry))
         return result
     return app_store.workspace_atomic(user.uid, operation)
 
@@ -525,7 +526,7 @@ def delete_exam_attempt(identifier: str, attempt_id: str, user: User = Depends(c
             raise HTTPException(409, 'Course is unavailable or archived')
         entry['exam_attempts'] = [a for a in entry.get('exam_attempts', []) if a['id'] != attempt_id]
         result = Resource.model_validate(entry)
-        tx.put('resources', result.model_dump(mode='json'))
+        tx.put('resources', result.storage_document(entry))
         return result
     return app_store.workspace_atomic(user.uid, operation)
 
@@ -541,6 +542,34 @@ def update_reading_position(identifier: str, value: ReadingPosition, user: User 
         entry['last_page'] = value.page
         tx.put('resources', entry)
         return Resource.model_validate(entry)
+
+    return app_store.workspace_atomic(user.uid, operation)
+
+
+@app.get('/api/resources/{identifier}/pdf-marks', response_model=list[PdfPageMark])
+def get_pdf_marks(identifier: str, user: User = Depends(current_user)):
+    entry = app_store.get(user.uid, 'resources', identifier)
+    if not entry or entry.get('source') != 'drive' or not entry.get('drive_file_id'):
+        raise HTTPException(404, 'Linked PDF not found')
+    return entry.get('pdf_marks', [])
+
+
+@app.patch('/api/resources/{identifier}/pdf-mark', response_model=PdfPageMark)
+def update_pdf_mark(identifier: str, value: PdfPageMark, user: User = Depends(current_user)):
+    def operation(tx):
+        entry = tx.get('resources', identifier)
+        if not entry or entry.get('source') != 'drive' or not entry.get('drive_file_id'):
+            raise HTTPException(404, 'Linked PDF not found')
+        previous = next((mark for mark in entry.get('pdf_marks', []) if mark['page'] == value.page), {})
+        updated = PdfPageMark.model_validate({**previous, **value.model_dump(exclude_unset=True)})
+        marks = [mark for mark in entry.get('pdf_marks', []) if mark['page'] != value.page]
+        if updated.bookmarked or updated.note.strip():
+            if len(marks) >= 80:
+                raise HTTPException(409, 'This PDF has 80 marked pages. Remove a bookmark or note to add another.')
+            marks.append(updated.model_dump())
+        entry['pdf_marks'] = sorted(marks, key=lambda mark: mark['page'])
+        tx.put('resources', entry)
+        return updated
 
     return app_store.workspace_atomic(user.uid, operation)
 

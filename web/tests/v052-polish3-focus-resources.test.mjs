@@ -46,6 +46,6 @@ test('PDF viewer keeps saved-page navigation and native reader controls without 
   assert.match(pdf,/Bookmarked PDF page/);
   assert.match(pdf,/<iframe[\s\S]*?src=\{\`\$\{pdf\.url}#page=\$\{pdf\.page}\`\}/);
   assert.doesNotMatch(pdf,/Increase zoom|Decrease zoom/);
-  assert.match(pdf,/onPage\(pdf\.page\+1\)/);
+  assert.match(pdf,/onPage\(pdf\.key,pdf\.page\+1\)/);
   assert.match(pdf,/onClose/);
 });

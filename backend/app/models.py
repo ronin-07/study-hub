@@ -137,6 +137,12 @@ class ExamAttempt(BaseDocument):
     notes: str = Field(default='', max_length=1000)
 
 
+class PdfPageMark(BaseModel):
+    page: int = Field(ge=1, le=20000)
+    bookmarked: bool = False
+    note: str = Field(default='', max_length=1200)
+
+
 class Resource(BaseDocument):
     course_id: str
     week_number: int | None = Field(default=None, ge=1, le=30)  # None = shared Course Library.
@@ -150,10 +156,17 @@ class Resource(BaseDocument):
     exam_display_name: str | None = Field(default=None, min_length=1, max_length=160)
     exam_year: int | None = Field(default=None, ge=1900, le=2100)
     last_page: int = Field(default=1, ge=1, le=20000)
+    pdf_marks: list[PdfPageMark] = Field(default_factory=list, max_length=80, exclude=True)
     exam_attempts: list[ExamAttempt] = Field(default_factory=list, max_length=100)
     chapter: str = Field(default='', max_length=120)
     page_start: int | None = Field(default=None, ge=1, le=20000)
     page_end: int | None = Field(default=None, ge=1, le=20000)
+
+    def storage_document(self, previous: dict) -> dict:
+        document = self.model_dump(mode='json')
+        if 'pdf_marks' in previous:
+            document['pdf_marks'] = previous['pdf_marks']
+        return document
 
     @model_validator(mode='after')
     def valid_location(self):

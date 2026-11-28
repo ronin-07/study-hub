@@ -1,37 +1,47 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { Bookmark, ChevronLeft, ChevronRight, LoaderCircle, Minus, PanelLeft, Plus, Search } from 'lucide-react';
+import { Bookmark, ChevronLeft, ChevronRight, ListTree, LoaderCircle, Minus, PanelLeft, Plus, Search } from 'lucide-react';
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
-import type { EventBus, PDFViewer } from 'pdfjs-dist/web/pdf_viewer.mjs';
+import type { EventBus, PDFLinkService, PDFViewer } from 'pdfjs-dist/web/pdf_viewer.mjs';
+import type { PdfPageMark } from '@/lib/types';
+import { maxPdfPage, safePdfLink, type PdfMarkChange, type StudyPdf } from '@/lib/pdf-study';
 import 'pdfjs-dist/web/pdf_viewer.css';
 import './pdf-reader.css';
 import { PdfThumbnails } from './pdf-thumbnails';
+import { PdfOutline, type PdfDestination } from './pdf-outline';
+import { PdfMarks } from './pdf-marks';
 
 type Props = {
   url: string;
   title: string;
   initialPage: number;
-  savedPage?: number;
-  onSavePage: (page: number) => void;
+  marks: PdfPageMark[];
+  marksStatus: StudyPdf['marksStatus'];
+  onLoadMarks: () => void;
+  autoFocus?: boolean;
+  onPage: (page: number) => void;
+  onMark: (change: PdfMarkChange) => Promise<void>;
   onFailure: () => void;
 };
-type ViewerRuntime = { events: EventBus; viewer: PDFViewer };
+type ViewerRuntime = { events: EventBus; viewer: PDFViewer; links: PDFLinkService };
 type Matches = { current: number; total: number };
 const assets = '/pdfjs/';
 
-export function PdfReader({ url, title, initialPage, savedPage, onSavePage, onFailure }: Props) {
+export function PdfReader({ url, title, initialPage, marks, marksStatus, onLoadMarks, autoFocus = true, onPage, onMark, onFailure }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const pageSurface = useRef<HTMLDivElement>(null);
   const searchInput = useRef<HTMLInputElement>(null);
   const runtime = useRef<ViewerRuntime | null>(null);
   const startPage = useRef(initialPage);
+  const focusAtOpen = useRef(autoFocus);
+  const lastReportedPage = useRef(initialPage);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [page, setPage] = useState(initialPage);
   const [draft, setDraft] = useState(String(initialPage));
   const [scale, setScale] = useState('page-width');
   const [scalePercent, setScalePercent] = useState(100);
-  const [thumbnails, setThumbnails] = useState(false);
+  const [panel, setPanel] = useState<'pages' | 'outline' | 'marks' | null>(null);
   const [query, setQuery] = useState('');
   const [findStatus, setFindStatus] = useState('');
   const [matches, setMatches] = useState<Matches>({ current: 0, total: 0 });
@@ -48,7 +58,7 @@ export function PdfReader({ url, title, initialPage, savedPage, onSavePage, onFa
     let painted = false;
     const fallback = () => { if (!signal.aborted) onFailure(); };
     const timer = window.setTimeout(fallback, 25000);
-    scrolling.focus({ preventScroll: true });
+    if (focusAtOpen.current) scrolling.focus({ preventScroll: true });
 
     async function load() {
       // The viewer loads after the API module initializes its shared browser runtime.
@@ -61,7 +71,7 @@ export function PdfReader({ url, title, initialPage, savedPage, onSavePage, onFa
       const links = new PDFLinkService({ eventBus: events, externalLinkTarget: LinkTarget.BLANK, externalLinkRel: 'noopener noreferrer nofollow' });
       const linkAttributes = links.addLinkAttributes.bind(links);
       links.addLinkAttributes = (link, url, newWindow) => {
-        if (/^https?:\/\//i.test(url) || /^mailto:/i.test(url)) linkAttributes(link, url, newWindow);
+        if (safePdfLink(url)) linkAttributes(link, url, newWindow);
         else link.setAttribute('aria-disabled', 'true');
       };
       const finder = new PDFFindController({ eventBus: events, linkService: links });
@@ -77,7 +87,7 @@ export function PdfReader({ url, title, initialPage, savedPage, onSavePage, onFa
       const activeViewer = new PDFViewer(options);
       viewer = activeViewer;
       links.setViewer(activeViewer);
-      runtime.current = { events, viewer: activeViewer };
+      runtime.current = { events, viewer: activeViewer, links };
       events.on('pagechanging', ({ pageNumber }: { pageNumber: number }) => {
         setPage(pageNumber);
         setDraft(String(pageNumber));
@@ -135,9 +145,17 @@ export function PdfReader({ url, title, initialPage, savedPage, onSavePage, onFa
       lifetime.abort();
       runtime.current = null;
       viewer?.setDocument(null);
+      void viewer?.l10n?.destroy().catch(() => {});
       if (task) void task.destroy().catch(() => {});
     };
   }, [url, onFailure]);
+
+  useEffect(() => {
+    if (firstPaint && page <= maxPdfPage && lastReportedPage.current !== page) {
+      lastReportedPage.current = page;
+      onPage(page);
+    }
+  }, [firstPaint, onPage, page]);
 
   const go = useCallback((number: number) => {
     const viewer = runtime.current?.viewer;
@@ -151,6 +169,9 @@ export function PdfReader({ url, title, initialPage, savedPage, onSavePage, onFa
     if (!active) return;
     const view = active.viewer.getPageView(pageNumber - 1);
     if (view?.pdfPage && !active.viewer.getCachedPageViews().has(view)) view.pdfPage.cleanup();
+  }, []);
+  const jumpToOutline = useCallback((destination: PdfDestination) => {
+    void runtime.current?.links.goToDestination(destination).catch(() => {});
   }, []);
 
   function find(previous = false) {
@@ -186,11 +207,19 @@ export function PdfReader({ url, title, initialPage, savedPage, onSavePage, onFa
     }
   }
 
-  return <section className="pdfjs-reader" aria-label="PDF.js reader" onKeyDown={shortcuts}>
+  return <section className="pdfjs-reader" aria-label={autoFocus ? 'PDF.js reader' : `PDF.js reader for ${title}`} onKeyDown={shortcuts}>
     <div className="pdfjs-toolbar" aria-label="PDF controls">
-      <button type="button" className="btn secondary small" disabled={!firstPaint} aria-expanded={thumbnails}
-        aria-controls={thumbnails ? 'pdf-reader-thumbnails' : undefined} onClick={() => setThumbnails(value => !value)}>
+      <button type="button" className="btn secondary small" disabled={!firstPaint} aria-expanded={panel === 'pages'} onClick={() => setPanel(value => value === 'pages' ? null : 'pages')}>
         <PanelLeft size={15} aria-hidden="true"/> Pages
+      </button>
+      <button type="button" className="btn secondary small" disabled={!firstPaint} aria-expanded={panel === 'outline'} onClick={() => setPanel(value => value === 'outline' ? null : 'outline')}>
+        <ListTree size={15} aria-hidden="true"/> Outline
+      </button>
+      <button type="button" className="btn secondary small" disabled={!firstPaint} aria-expanded={panel === 'marks'} onClick={() => {
+        setPanel(panel === 'marks' ? null : 'marks');
+        if (panel !== 'marks' && marksStatus === 'idle') onLoadMarks();
+      }}>
+        <Bookmark size={15} aria-hidden="true"/> Bookmarks &amp; notes
       </button>
       <form className="pdfjs-page-controls" aria-label="Page navigation" onSubmit={event => {
         event.preventDefault();
@@ -224,10 +253,17 @@ export function PdfReader({ url, title, initialPage, savedPage, onSavePage, onFa
         <button type="submit" className="btn secondary small" aria-label="Find next match" disabled={!firstPaint || !query.trim()}><Search size={15}/></button>
         <output aria-live="polite">{findStatus || (matches.total ? `${matches.current} / ${matches.total}` : '')}</output>
       </form>
-      {savedPage !== undefined && <button type="button" className="btn secondary small pdfjs-save" disabled={!firstPaint || page === savedPage || page > 20000} onClick={() => onSavePage(page)}><Bookmark size={14} aria-hidden="true"/>{page === savedPage ? 'Page saved' : 'Save page'}</button>}
     </div>
     <div className="pdfjs-stage">
-      {pdf && thumbnails && <PdfThumbnails pdf={pdf} current={page} onPage={go} onRendered={finishThumbnail}/>}
+      {pdf && panel === 'pages' && <PdfThumbnails pdf={pdf} current={page} onPage={go} onRendered={finishThumbnail}/>}
+      {pdf && panel === 'outline' && <PdfOutline pdf={pdf} onJump={jumpToOutline}/>}
+      {pdf && panel === 'marks' && (marksStatus === 'ready'
+        ? <PdfMarks page={page} pages={pdf.numPages} marks={marks} onJump={go} onChange={onMark}/>
+        : <aside className="pdfjs-marks" aria-label="Bookmarks and page notes">
+          {marksStatus === 'error' ? <><p role="alert">Couldn’t load bookmarks and notes.</p>
+            <button type="button" className="btn secondary small" onClick={onLoadMarks}>Retry</button></>
+            : <p role="status">Loading bookmarks and notes…</p>}
+        </aside>)}
       <div className="pdfjs-document">
         <div className="pdfjs-scroll" aria-label={`${title}, page ${page}`} tabIndex={0} ref={container}><div className="pdfViewer" ref={pageSurface}/></div>
         {!firstPaint && <div className="pdf-frame-loading pdfjs-loading" role="status">
