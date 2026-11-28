@@ -39,7 +39,6 @@
 .pdfjs-page-controls span { font-variant-numeric: tabular-nums; }
 .pdfjs-find input { width: min(135px, 43vw); }
 .pdfjs-find output { font-size: .75rem; color: var(--muted); }
-.pdfjs-save { margin-left: auto; }
 
 .pdfjs-stage {
   display: flex;
@@ -83,10 +82,64 @@
 .pdfjs-thumbnail-paper .is-ready { visibility: visible; }
 .pdfjs-fallback { margin: 0; padding: 7px 12px; color: var(--text); background: var(--paper); font-size: .78rem; }
 
+.pdfjs-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 6px 12px;
+  color: var(--text);
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+}
+
+.pdfjs-tab { display: flex; min-width: 0; gap: 2px; }
+.pdfjs-tab button:first-child {
+  display: block;
+  max-width: min(170px, 61vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pdfjs-tab button[aria-pressed=true] { border-color: #83b997; }
+.pdfjs-tabs label { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: .78rem; }
+.pdfjs-tabs select { max-width: min(225px, 56vw); }
+
+.pdfjs-panes { flex: 1; display: grid; min-width: 0; min-height: 0; grid-template-columns: minmax(0, 1fr); }
+.pdfjs-panes.is-split { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.pdfjs-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.pdfjs-pane + .pdfjs-pane { border-inline-start: 1px solid var(--line); }
+.pdfjs-pane > h3 { margin: 0; padding: 6px 12px; color: var(--text); background: var(--paper); overflow-wrap: anywhere; font-size: .85rem; }
+.pdfjs-split-fallback { border: 0; width: 100%; flex: 1; min-height: 0; }
+
+.pdfjs-outline, .pdfjs-marks {
+  flex: 0 0 clamp(128px, 23%, 240px);
+  min-width: 0;
+  overflow: auto;
+  padding: 8px;
+  background: var(--paper);
+  color: var(--text);
+  border-inline-end: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.pdfjs-outline ul, .pdfjs-marks ul { list-style: none; padding: 0; margin: 0; }
+.pdfjs-outline ul ul { padding-inline-start: 10px; border-inline-start: 1px solid var(--line); }
+.pdfjs-outline-row { display: flex; align-items: flex-start; gap: 3px; margin-block: 3px; }
+.pdfjs-outline-row :is(a,span), .pdfjs-outline-jump { padding: 5px 3px; font-size: .8rem; }
+.pdfjs-outline-jump { border: 0; color: inherit; text-align: start; background: transparent; overflow-wrap: anywhere; }
+.pdfjs-outline-jump:hover { text-decoration: underline; }
+.pdfjs-outline-expand { flex: 0 0 auto; min-width: 25px; }
+.pdfjs-mark-controls { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
+.pdfjs-marks textarea { display: block; width: 100%; margin-block: 4px; }
+.pdfjs-marks li { margin-block: 7px; }
+.pdfjs-marks p { font-size: .78rem; margin-block: 4px; white-space: pre-wrap; }
+
 @media (max-width: 690px) {
   .pdfjs-toolbar { gap: 5px; padding: 5px 8px; }
   .pdfjs-toolbar :is(input,select) { font-size: 16px; }
   .pdfjs-thumbnails { flex-basis: 88px; }
-  .pdfjs-save { margin-left: 0; }
   .pdf-workspace .pdf-viewer-choice { grid-column: 1; grid-row: 3; justify-self: start; }
+  .pdfjs-panes.is-split { grid-template-columns: minmax(0, 1fr); grid-template-rows: repeat(2, minmax(0, 1fr)); }
+  .pdfjs-pane + .pdfjs-pane { border-inline-start: 0; border-block-start: 1px solid var(--line); }
+  .pdfjs-outline, .pdfjs-marks { flex-basis: 130px; }
 }

@@ -349,7 +349,7 @@ def edit_resource(identifier: str, patch: ResourcePatch, user: User = Depends(cu
             raise HTTPException(409, 'Unpair solutions before changing the question paper type')
         value = validate(Resource, merged)
         validate_exam_pair(tx, value.model_dump(mode='json'), old.get('exam_paper_id'))
-        tx.put('resources', value.model_dump(mode='json'))
+        tx.put('resources', value.storage_document(old))
         return value
 
     return store().workspace_atomic(user.uid, operation)
@@ -378,7 +378,7 @@ def edit_exam_details(identifier: str, patch: ExamDetailsPatch, user: User = Dep
             raise HTTPException(409, 'Course is unavailable or archived')
         result = validate(Resource, {**paper, 'exam_display_name': name, 'exam_year': patch.year})
         if paper.get('exam_display_name') != name or paper.get('exam_year') != patch.year:
-            tx.put('resources', result.model_dump(mode='json'))
+            tx.put('resources', result.storage_document(paper))
         return result
     return store().workspace_atomic(user.uid, operation)
 
@@ -400,7 +400,7 @@ def pair_existing_solution(identifier: str, value: PairExistingSolution, user: U
         result = validate(Resource, {**solution, 'exam_paper_id': identifier})
         if solution.get('exam_paper_id') != identifier:
             validate_exam_pair(tx, result.model_dump(mode='json'))
-            tx.put('resources', result.model_dump(mode='json'))
+            tx.put('resources', result.storage_document(solution))
         return result
     return store().workspace_atomic(user.uid, operation)
 
@@ -421,6 +421,6 @@ def unpair_existing_solution(identifier: str, solution_id: str, user: User = Dep
             raise HTTPException(409, 'This solution is now paired with a different paper')
         result = validate(Resource, {**solution, 'exam_paper_id': None})
         if solution.get('exam_paper_id') == identifier:
-            tx.put('resources', result.model_dump(mode='json'))
+            tx.put('resources', result.storage_document(solution))
         return result
     return store().workspace_atomic(user.uid, operation)

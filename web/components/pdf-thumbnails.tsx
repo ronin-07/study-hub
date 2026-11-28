@@ -74,7 +74,7 @@ export function PdfThumbnails({ pdf, current, onPage, onRendered }: {
   const pages = Array.from({ length: visible.last - visible.first }, (_, index) => visible.first + index + 1);
   if (focused !== null && !pages.includes(focused)) pages.push(focused);
 
-  return <div ref={ref} id="pdf-reader-thumbnails" className="pdfjs-thumbnails" role="region" aria-label="Page thumbnails">
+  return <div ref={ref} className="pdfjs-thumbnails" role="region" aria-label="Page thumbnails">
     <div style={{ height: pdf.numPages * rowHeight }} className="pdfjs-thumbnail-list">
       {pages.map(number => <button key={number} type="button" className="btn secondary small pdfjs-thumbnail"
         style={{ top: (number - 1) * rowHeight }} aria-label={`Go to page ${number}`}
